@@ -91,7 +91,7 @@ class TransactionCreate(TransactionBase):
     """
     Schema for creating a new transaction.
 
-    Requires portfolio_id, asset_id, and type which cannot be changed after creation.
+    Requires portfolio_id, asset_id, and transaction_type which cannot be changed after creation.
     """
 
     portfolio_id: int = Field(
@@ -106,7 +106,7 @@ class TransactionCreate(TransactionBase):
         description="ID of the asset being traded"
     )
 
-    type: TransactionType = Field(
+    transaction_type: TransactionType = Field(
         ...,
         description="Type of transaction",
         examples=[TransactionType.BUY, TransactionType.SELL]
@@ -119,7 +119,7 @@ class TransactionUpdate(BaseModel):
 
     All fields are optional — client only sends fields to update.
 
-    Note: portfolio_id, asset_id, and type CANNOT be changed.
+    Note: portfolio_id, asset_id, and transaction_type CANNOT be changed.
     To change these, delete the transaction and create a new one.
     """
 
@@ -183,7 +183,7 @@ class TransactionResponse(TransactionBase):
     id: int = Field(..., description="Unique identifier")
     portfolio_id: int = Field(..., description="ID of the portfolio")
     asset_id: int = Field(..., description="ID of the asset")
-    type: TransactionType = Field(..., description="Transaction type (BUY/SELL)")
+    transaction_type: TransactionType = Field(..., description="Transaction type (BUY/SELL)")
     created_at: datetime = Field(..., description="When the transaction was recorded")
 
     model_config = ConfigDict(from_attributes=True)

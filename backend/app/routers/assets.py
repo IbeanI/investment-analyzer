@@ -8,13 +8,13 @@ Note: An asset is uniquely identified by the combination of ticker + exchange.
 The same ticker can exist on different exchanges (e.g., VUAA on XETRA vs LSE).
 """
 
-from app.schema.assets import AssetCreate, AssetUpdate, AssetResponse
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Asset, AssetClass
+from app.schema.assets import AssetCreate, AssetUpdate, AssetResponse, AssetListResponse
 
 # =============================================================================
 # ROUTER SETUP
@@ -149,7 +149,7 @@ def create_asset(
 
 @router.get(
     "/",
-    response_model=list[AssetResponse],
+    response_model=AssetListResponse,
     summary="List all assets",
     response_description="List of assets matching the filters"
 )
@@ -179,7 +179,7 @@ def list_assets(
         # Pagination
         skip: int = Query(default=0, ge=0, description="Number of records to skip"),
         limit: int = Query(default=100, ge=1, le=1000, description="Maximum records to return"),
-) -> list[Asset]:
+) -> AssetListResponse:
     """
     Retrieve a list of assets with optional filtering.
     
@@ -210,15 +210,23 @@ def list_assets(
     if search is not None:
         search_pattern = f"%{search}%"
         query = query.where(
-            Asset.ticker.ilike(search_pattern) |
-            Asset.name.ilike(search_pattern)
+            or_(
+                Asset.ticker.ilike(search_pattern),
+                Asset.name.ilike(search_pattern)
+            )
         )
 
     # Order by exchange first, then ticker (logical grouping)
-    query = query.order_by(Asset.exchange, Asset.ticker).offset(skip).limit(limit)
+    query = query.order_by(Asset.exchange, Asset.ticker)
 
-    result = db.execute(query).scalars().all()
-    return list(result)
+    # Get total count BEFORE applying pagination (for the metadata)
+    count_query = select(func.count()).select_from(query.subquery())
+    total = db.scalar(count_query)
+
+    # Apply pagination
+    assets = db.scalars(query.offset(skip).limit(limit)).all()
+
+    return AssetListResponse(items=list(assets), total=total, skip=skip, limit=limit)
 
 
 @router.get(

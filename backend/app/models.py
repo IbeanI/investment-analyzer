@@ -42,6 +42,7 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, index=True)
     hashed_password: Mapped[str] = mapped_column(String)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationship: One User has Many Portfolios
     portfolios: Mapped[list["Portfolio"]] = relationship(back_populates="owner")
@@ -55,6 +56,7 @@ class Portfolio(Base):
     name: Mapped[str] = mapped_column(String)
     currency: Mapped[str] = mapped_column(String, default="EUR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     owner: Mapped["User"] = relationship(back_populates="portfolios")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="portfolio")
@@ -85,6 +87,8 @@ class Asset(Base):
     currency: Mapped[str] = mapped_column(String, default="EUR")  # e.g. "EUR", "USD" (Critical for valuation)
     sector: Mapped[str | None] = mapped_column(String)
     region: Mapped[str | None] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     # Relationship to prices

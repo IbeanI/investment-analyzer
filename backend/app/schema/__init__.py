@@ -3,9 +3,9 @@
 Pydantic schemas for API request/response validation.
 
 Usage:
-    from app.schemas import AssetCreate, AssetResponse
-    from app.schemas import PortfolioCreate, PortfolioResponse
-    from app.schemas import TransactionCreate, TransactionResponse
+    from app.schema import AssetCreate, AssetResponse
+    from app.schema import PortfolioCreate, PortfolioResponse
+    from app.schema import TransactionCreate, TransactionResponse
 """
 
 from app.schema.assets import (
@@ -13,12 +13,13 @@ from app.schema.assets import (
     AssetCreate,
     AssetUpdate,
     AssetResponse,
+    AssetListResponse,
 )
 
 # Will be added as we create them:
-# from app.schemas.portfolio import (...)
-# from app.schemas.transaction import (...)
-# from app.schemas.user import (...)
+# from app.schema.portfolio import (...)
+# from app.schema.transaction import (...)
+# from app.schema.user import (...)
 
 __all__ = [
     # Asset
@@ -26,4 +27,5 @@ __all__ = [
     "AssetCreate",
     "AssetUpdate",
     "AssetResponse",
+    "AssetListResponse",
 ]

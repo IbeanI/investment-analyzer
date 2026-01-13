@@ -7,10 +7,11 @@ These schemas define:
 - What data the API returns (Response)
 """
 
+from pydantic import BaseModel, ConfigDict, Field
+
 # Import the enum from models to reuse it
 # This ensures API accepts same values as database
 from app.models import AssetClass
-from pydantic import BaseModel, ConfigDict, Field
 
 
 class AssetBase(BaseModel):
@@ -112,6 +113,12 @@ class AssetUpdate(BaseModel):
         max_length=10
     )
 
+    exchange: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=10
+    )
+
     asset_class: AssetClass | None = Field(default=None)
 
     isin: str | None = Field(
@@ -122,7 +129,6 @@ class AssetUpdate(BaseModel):
     )
 
     name: str | None = Field(default=None, max_length=255)
-    exchange: str | None = Field(default=None, max_length=50)
 
     currency: str | None = Field(
         default=None,
@@ -150,3 +156,11 @@ class AssetResponse(AssetBase):
     # This tells Pydantic to read data from SQLAlchemy models
     # Without this, returning a SQLAlchemy object would fail
     model_config = ConfigDict(from_attributes=True)
+
+
+class AssetListResponse(BaseModel):
+    """Response schema for paginated asset list."""
+    items: list[AssetResponse]
+    total: int
+    skip: int
+    limit: int

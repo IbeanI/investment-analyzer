@@ -66,9 +66,9 @@ class Asset(Base):
     __tablename__ = "assets"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    isin: Mapped[str | None] = mapped_column(String, unique=True, index=True)  # ISIN (International Securities Identification Number)
     ticker: Mapped[str] = mapped_column(String, unique=True, index=True)  # e.g. "AAPL"
     exchange: Mapped[str] = mapped_column(String)  # e.g. "XETRA", "LSE"
+    isin: Mapped[str | None] = mapped_column(String, unique=True, index=True)  # ISIN (International Securities Identification Number)
     name: Mapped[str | None] = mapped_column(String)
     asset_class: Mapped[AssetClass] = mapped_column(Enum(AssetClass))
     currency: Mapped[str] = mapped_column(String, default="EUR")  # e.g. "EUR", "USD" (Critical for valuation)

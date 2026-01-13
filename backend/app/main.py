@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.routers import assets_router
+from app.routers import assets_router, portfolios_router, transactions_router
 
 # =============================================================================
 # APPLICATION SETUP
@@ -31,11 +31,11 @@ app = FastAPI(
 # =============================================================================
 
 app.include_router(assets_router)
+app.include_router(portfolios_router)
+app.include_router(transactions_router)
 
 
 # Will be added as we create them:
-# app.include_router(portfolios_router)
-# app.include_router(transactions_router)
 # app.include_router(users_router)
 
 
@@ -49,7 +49,7 @@ def read_root() -> dict[str, str]:
     return {
         "message": f"Welcome to {settings.app_name}",
         "status": "operational",
-        "docs": "/docs"
+        "docs": "/docs",
     }
 
 

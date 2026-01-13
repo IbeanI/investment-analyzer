@@ -1,5 +1,5 @@
-from app import models
-from app.database import get_db
+import models
+from database import get_db
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 

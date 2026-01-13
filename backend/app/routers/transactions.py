@@ -328,7 +328,7 @@ def get_portfolio_transactions(
         db: Session = Depends(get_db),
         # Optional filters
         asset_id: int | None = Query(default=None, description="Filter by asset"),
-        type: TransactionType | None = Query(default=None, description="Filter by type"),
+        transaction_type: TransactionType | None = Query(default=None, description="Filter by type"),
         date_from: datetime | None = Query(default=None, description="From date"),
         date_to: datetime | None = Query(default=None, description="To date"),
         # Pagination
@@ -352,8 +352,8 @@ def get_portfolio_transactions(
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)
 
-    if type is not None:
-        query = query.where(Transaction.type == type)
+    if transaction_type is not None:
+        query = query.where(Transaction.type == transaction_type)
 
     if date_from is not None:
         query = query.where(Transaction.date >= date_from)

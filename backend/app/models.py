@@ -49,7 +49,7 @@ class Portfolio(Base):
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     name = Column(String, nullable=False)
     currency = Column(String, default="USD", nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     owner = relationship("User", back_populates="portfolios")
     transactions = relationship("Transaction", back_populates="portfolio")

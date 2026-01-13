@@ -68,9 +68,9 @@ class Asset(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     isin: Mapped[str | None] = mapped_column(String, unique=True, index=True)  # ISIN (International Securities Identification Number)
     ticker: Mapped[str] = mapped_column(String, unique=True, index=True)  # e.g. "AAPL"
+    exchange: Mapped[str] = mapped_column(String)  # e.g. "XETRA", "LSE"
     name: Mapped[str | None] = mapped_column(String)
     asset_class: Mapped[AssetClass] = mapped_column(Enum(AssetClass))
-    exchange: Mapped[str | None] = mapped_column(String)  # e.g. "XETRA", "LSE"
     currency: Mapped[str] = mapped_column(String, default="EUR")  # e.g. "EUR", "USD" (Critical for valuation)
     sector: Mapped[str | None] = mapped_column(String)
     region: Mapped[str | None] = mapped_column(String)
@@ -87,7 +87,6 @@ class Transaction(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"))
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
-
     type: Mapped[TransactionType] = mapped_column(Enum(TransactionType))
     date: Mapped[datetime] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
@@ -123,5 +122,4 @@ class MarketData(Base):
 
     # Metadata (Data Lineage)
     provider: Mapped[str] = mapped_column(String, default="yahoo")  # e.g. "yahoo", "alpha_vantage"
-
     asset: Mapped["Asset"] = relationship(back_populates="prices")

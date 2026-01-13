@@ -98,8 +98,8 @@ class Transaction(Base):
     price_per_share: Mapped[Decimal] = mapped_column(Numeric(18, 8))
     currency: Mapped[str] = mapped_column(String, default="EUR")
     fee: Mapped[Decimal] = mapped_column(Numeric(18, 8), default=0)
-    fee_currency: Mapped[str | None] = mapped_column(String)  # If different from trade currency (e.g. EUR)
-    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))  # Conversion rate to Portfolio Base Currency at time of trade
+    fee_currency: Mapped[str | None] = mapped_column(String, default="EUR")  # If different from trade currency (e.g. EUR)
+    exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), default=Decimal(1))  # Conversion rate to Portfolio Base Currency at time of trade
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="transactions")
     asset: Mapped["Asset"] = relationship(back_populates="transactions")

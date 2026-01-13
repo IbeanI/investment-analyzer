@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.routers import assets_router, portfolios_router, transactions_router
+from app.routers import assets_router, portfolios_router
 
 # =============================================================================
 # APPLICATION SETUP

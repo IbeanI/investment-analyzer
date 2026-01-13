@@ -32,7 +32,6 @@ app = FastAPI(
 
 app.include_router(assets_router)
 app.include_router(portfolios_router)
-app.include_router(transactions_router)
 
 
 # Will be added as we create them:

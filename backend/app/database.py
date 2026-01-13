@@ -1,23 +1,25 @@
+import os
+
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy.orm import sessionmaker
 
-# 1. Construct the Database URL
-# Format: postgresql://user:password@host:port/database_name
-# Note: In a real app, we would read these from os.environ (Environment Variables)
-SQLALCHEMY_DATABASE_URL = "postgresql://admin:password123@localhost:5432/investment_portfolio"
+# 1. Load environment variables from the .env file
+load_dotenv()
 
-# 2. Create the Engine
-# This is the actual connection pool to the database
+# 2. Get the URL from the environment (or crash if it's missing)
+SQLALCHEMY_DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not SQLALCHEMY_DATABASE_URL:
+    raise ValueError("DATABASE_URL is not set. Please check your .env file.")
+
+# 3. Create the Engine
 engine = create_engine(SQLALCHEMY_DATABASE_URL)
 
-# 3. Create a Session Factory
-# Each request will create a new "Session" to interact with the DB
+# 4. Create Session Factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-# 4. Dependency Injection Helper
-# This is a Best Practice for FastAPI. It ensures that when a request finishes,
-# the database connection is closed, preventing memory leaks.
 def get_db():
     db = SessionLocal()
     try:

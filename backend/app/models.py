@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Numeric
 from sqlalchemy.orm import relationship, declarative_base
@@ -36,7 +36,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationship: One User has Many Portfolios
     portfolios = relationship("Portfolio", back_populates="owner")
@@ -83,6 +83,7 @@ class Transaction(Base):
 
     type = Column(Enum(TransactionType), nullable=False)
     date = Column(DateTime, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
 
     # Use Numeric for financial calculations to avoid floating point errors
     quantity = Column(Numeric(10, 4), nullable=False)

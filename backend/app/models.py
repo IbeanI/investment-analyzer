@@ -1,7 +1,7 @@
 import enum
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Numeric
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint
 from sqlalchemy.orm import relationship, declarative_base
 
 # The Base class for all our models
@@ -99,6 +99,9 @@ class MarketData(Base):
     Historical price data cache.
     """
     __tablename__ = "market_data"
+    __table_args__ = (
+        UniqueConstraint('asset_id', 'date', name='uq_asset_date'),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False)

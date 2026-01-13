@@ -16,7 +16,7 @@ class TransactionType(str, enum.Enum):
     BUY = "BUY"
     SELL = "SELL"
 
-    # Not yet implemented
+    # Not yet supported
     DEPOSIT = "DEPOSIT"
     WITHDRAWAL = "WITHDRAWAL"
     DIVIDEND = "DIVIDEND"

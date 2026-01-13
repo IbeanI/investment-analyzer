@@ -1,3 +1,4 @@
+# backend/app/schema/assets.py
 """
 Pydantic schemas for Asset validation.
 

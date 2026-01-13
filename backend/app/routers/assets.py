@@ -1,3 +1,4 @@
+# backend/app/routers/assets.py
 """
 Asset management endpoints.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# backend/init_db.py
 """
 Database initialization script.
 

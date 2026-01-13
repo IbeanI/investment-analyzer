@@ -8,7 +8,7 @@ Usage:
     from app.schemas import TransactionCreate, TransactionResponse
 """
 
-from app.schemas.asset import (
+from app.schema.assets import (
     AssetBase,
     AssetCreate,
     AssetUpdate,

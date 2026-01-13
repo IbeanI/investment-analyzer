@@ -31,6 +31,8 @@ class AssetClass(str, enum.Enum):
     OPTION = "OPTION"
     CRYPTO = "CRYPTO"
     CASH = "CASH"
+    INDEX = "INDEX"
+    OTHER = "OTHER"
 
 
 class User(Base):
@@ -60,14 +62,23 @@ class Portfolio(Base):
 
 class Asset(Base):
     """
-    Global table of assets (AAPL, MSFT, etc.) shared by all users.
-    This prevents storing duplicate data for 'Apple' for every user.
+    Global table of assets shared by all users.
+
+    An asset is uniquely identified by the combination of ticker AND exchange.
+    Example: VUAA on XETRA is different from VUAA on LSE (different currency, price).
     """
     __tablename__ = "assets"
+    __table_args__ = (
+        UniqueConstraint('ticker', 'exchange', name='uq_ticker_exchange'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    ticker: Mapped[str] = mapped_column(String, unique=True, index=True)  # e.g. "AAPL"
-    exchange: Mapped[str] = mapped_column(String)  # e.g. "XETRA", "LSE"
+
+    # Ticker is NOT unique alone — must be combined with exchange
+    ticker: Mapped[str] = mapped_column(String, index=True)  # e.g. "AAPL"
+    # Exchange is required — together with ticker forms unique identity
+    exchange: Mapped[str] = mapped_column(String, index=True)  # e.g. "XETRA", "LSE"
+
     isin: Mapped[str | None] = mapped_column(String, unique=True, index=True)  # ISIN (International Securities Identification Number)
     name: Mapped[str | None] = mapped_column(String)
     asset_class: Mapped[AssetClass] = mapped_column(Enum(AssetClass))

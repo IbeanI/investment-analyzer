@@ -28,8 +28,9 @@ class AssetBase(BaseModel):
         description="Trading symbol (e.g., 'AAPL' for Apple)"
     )
 
-    exchange: str | None = Field(
+    exchange: str = Field(
         ...,
+        min_length=1,
         max_length=10,
         examples=["NASDAQ", "NYSE", "XETRA"],
         description="Stock exchange where the asset is traded"

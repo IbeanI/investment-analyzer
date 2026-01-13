@@ -11,14 +11,14 @@ Each router handles a specific domain:
 
 from app.routers.assets import router as assets_router
 from app.routers.portfolios import router as portfolios_router
+from app.routers.transactions import router as transactions_router
 
 # Will be added as we create them:
-# from app.routers.transactions import router as transactions_router
 # from app.routers.users import router as users_router
 
 __all__ = [
     "assets_router",
     "portfolios_router",
-    # "transactions_router",
+    "transactions_router",
     # "users_router",
 ]

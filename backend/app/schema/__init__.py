@@ -24,8 +24,16 @@ from app.schema.portfolios import (
     PortfolioListResponse
 )
 
+from app.schema.transactions import (
+    TransactionBase,
+    TransactionCreate,
+    TransactionUpdate,
+    TransactionResponse,
+    TransactionListResponse,
+    TransactionWithTotalsResponse,
+)
+
 # Will be added as we create them:
-# from app.schema.transaction import (...)
 # from app.schema.user import (...)
 
 __all__ = [
@@ -41,5 +49,13 @@ __all__ = [
     "PortfolioCreate",
     "PortfolioUpdate",
     "PortfolioResponse",
-    "PortfolioListResponse"
+    "PortfolioListResponse",
+
+    # Transaction
+    "TransactionBase",
+    "TransactionCreate",
+    "TransactionUpdate",
+    "TransactionResponse",
+    "TransactionListResponse",
+    "TransactionWithTotalsResponse",
 ]

@@ -60,7 +60,10 @@ class Portfolio(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     owner: Mapped["User"] = relationship(back_populates="portfolios")
-    transactions: Mapped[list["Transaction"]] = relationship(back_populates="portfolio")
+    transactions: Mapped[list["Transaction"]] = relationship(
+        back_populates="portfolio",
+        cascade="all, delete-orphan"
+    )
 
 
 class Asset(Base):

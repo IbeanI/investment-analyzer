@@ -1,11 +1,14 @@
 import enum
 from datetime import datetime, timezone
+from decimal import Decimal
 
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint
-from sqlalchemy.orm import relationship, declarative_base
+from sqlalchemy import String, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-# The Base class for all our models
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    """Base class for all SQLAlchemy models."""
+    pass
 
 
 # Enums help enforce data integrity at the database level
@@ -33,26 +36,32 @@ class AssetClass(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
-    hashed_password = Column(String, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    hashed_password: Mapped[str] = mapped_column(String)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
 
     # Relationship: One User has Many Portfolios
-    portfolios = relationship("Portfolio", back_populates="owner")
+    portfolios: Mapped[list["Portfolio"]] = relationship(back_populates="owner")
 
 
 class Portfolio(Base):
     __tablename__ = "portfolios"
 
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    name = Column(String, nullable=False)
-    currency = Column(String, default="USD", nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    name: Mapped[str] = mapped_column(String)
+    currency: Mapped[str] = mapped_column(String, default="USD")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
 
-    owner = relationship("User", back_populates="portfolios")
-    transactions = relationship("Transaction", back_populates="portfolio")
+    owner: Mapped["User"] = relationship(back_populates="portfolios")
+    transactions: Mapped[list["Transaction"]] = relationship(back_populates="portfolio")
 
 
 class Asset(Base):
@@ -62,36 +71,40 @@ class Asset(Base):
     """
     __tablename__ = "assets"
 
-    id = Column(Integer, primary_key=True, index=True)
-    ticker = Column(String, unique=True, index=True, nullable=False)  # e.g. "AAPL"
-    name = Column(String, nullable=True)
-    asset_class = Column(Enum(AssetClass), nullable=False)
-    sector = Column(String, nullable=True)
-    region = Column(String, nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    ticker: Mapped[str] = mapped_column(String, unique=True, index=True)  # e.g. "AAPL"
+    name: Mapped[str | None] = mapped_column(String)
+    asset_class: Mapped[AssetClass] = mapped_column(Enum(AssetClass))
+    sector: Mapped[str | None] = mapped_column(String)
+    region: Mapped[str | None] = mapped_column(String)
 
     # Relationship to prices
-    prices = relationship("MarketData", back_populates="asset")
-    transactions = relationship("Transaction", back_populates="asset")
+    prices: Mapped[list["MarketData"]] = relationship(back_populates="asset")
+    transactions: Mapped[list["Transaction"]] = relationship(back_populates="asset")
 
 
 class Transaction(Base):
     __tablename__ = "transactions"
 
-    id = Column(Integer, primary_key=True, index=True)
-    portfolio_id = Column(Integer, ForeignKey("portfolios.id"), nullable=False)
-    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False)
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"))
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
 
-    type = Column(Enum(TransactionType), nullable=False)
-    date = Column(DateTime, nullable=False)
-    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
+    type: Mapped[TransactionType] = mapped_column(Enum(TransactionType))
+    date: Mapped[datetime] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )  # When it was recorded
 
-    # Use Numeric for financial calculations to avoid floating point errors
-    quantity = Column(Numeric(10, 4), nullable=False)
-    price_per_share = Column(Numeric(10, 2), nullable=False)
-    currency = Column(String, default="USD")
+    # Use Decimal with high precision to support crypto (up to 8 decimal places)
+    # Numeric(18, 8) supports values up to 9,999,999,999.99999999
+    quantity: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    price_per_share: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    currency: Mapped[str] = mapped_column(String, default="USD")
 
-    portfolio = relationship("Portfolio", back_populates="transactions")
-    asset = relationship("Asset", back_populates="transactions")
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="transactions")
+    asset: Mapped["Asset"] = relationship(back_populates="transactions")
 
 
 class MarketData(Base):
@@ -103,10 +116,10 @@ class MarketData(Base):
         UniqueConstraint('asset_id', 'date', name='uq_asset_date'),
     )
 
-    id = Column(Integer, primary_key=True, index=True)
-    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=False)
-    date = Column(DateTime, nullable=False, index=True)
-    close_price = Column(Numeric(10, 2), nullable=False)
-    adjusted_close = Column(Numeric(10, 2), nullable=True)
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
+    date: Mapped[datetime] = mapped_column(DateTime, index=True)
+    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
+    adjusted_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
 
-    asset = relationship("Asset", back_populates="prices")
+    asset: Mapped["Asset"] = relationship(back_populates="prices")

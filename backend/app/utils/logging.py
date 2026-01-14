@@ -163,29 +163,3 @@ def _suppress_noisy_loggers() -> None:
     """
     for logger_name in NOISY_LOGGERS:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
-
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
-
-def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger with the specified name.
-
-    This is a convenience function that's equivalent to logging.getLogger()
-    but provides a single import point.
-
-    Args:
-        name: Logger name, typically __name__ of the calling module
-
-    Returns:
-        Configured logger instance
-
-    Example:
-        from app.utils.logging import get_logger
-
-        logger = get_logger(__name__)
-        logger.info("Something happened")
-    """
-    return logging.getLogger(name)

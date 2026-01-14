@@ -18,7 +18,7 @@ Design Principles:
 
 import logging
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TypeVar, Callable, Any
 
 from tenacity import (
@@ -40,6 +40,10 @@ logger = logging.getLogger(__name__)
 # Type variable for generic return type in retry method
 T = TypeVar('T')
 
+
+# =============================================================================
+# DATA CLASSES
+# =============================================================================
 
 @dataclass(frozen=True)
 class AssetInfo:
@@ -82,6 +86,95 @@ class AssetInfo:
             raise ValueError("currency is required")
 
 
+@dataclass
+class BatchResult:
+    """
+    Result of a batch asset info fetch operation.
+
+    Supports partial success: some tickers may succeed while others fail.
+    This allows the caller to decide how to handle failures (skip, retry, abort).
+
+    Attributes:
+        successful: Dict mapping (ticker, exchange) to AssetInfo for found assets
+        failed: Dict mapping (ticker, exchange) to Exception for failed lookups
+
+    Example:
+        result = provider.get_asset_info_batch([
+            ("NVDA", "NASDAQ"),
+            ("INVALID", "NYSE"),
+            ("AAPL", "NASDAQ"),
+        ])
+
+        # result.successful = {
+        #     ("NVDA", "NASDAQ"): AssetInfo(...),
+        #     ("AAPL", "NASDAQ"): AssetInfo(...),
+        # }
+        # result.failed = {
+        #     ("INVALID", "NYSE"): TickerNotFoundError(...),
+        # }
+
+        print(f"Found {result.success_count}/{result.total_count} assets")
+    """
+
+    successful: dict[tuple[str, str], AssetInfo] = field(default_factory=dict)
+    failed: dict[tuple[str, str], Exception] = field(default_factory=dict)
+
+    @property
+    def success_count(self) -> int:
+        """Number of successfully fetched assets."""
+        return len(self.successful)
+
+    @property
+    def failure_count(self) -> int:
+        """Number of failed asset lookups."""
+        return len(self.failed)
+
+    @property
+    def total_count(self) -> int:
+        """Total number of assets requested."""
+        return self.success_count + self.failure_count
+
+    @property
+    def all_successful(self) -> bool:
+        """True if all requests succeeded."""
+        return self.failure_count == 0
+
+    @property
+    def all_failed(self) -> bool:
+        """True if all requests failed."""
+        return self.success_count == 0
+
+    def get_asset(self, ticker: str, exchange: str) -> AssetInfo | None:
+        """
+        Get AssetInfo for a specific ticker/exchange, or None if not found.
+
+        Args:
+            ticker: Trading symbol
+            exchange: Exchange code
+
+        Returns:
+            AssetInfo if found, None otherwise
+        """
+        return self.successful.get((ticker.upper(), exchange.upper()))
+
+    def get_error(self, ticker: str, exchange: str) -> Exception | None:
+        """
+        Get the error for a specific ticker/exchange, or None if successful.
+
+        Args:
+            ticker: Trading symbol
+            exchange: Exchange code
+
+        Returns:
+            Exception if failed, None otherwise
+        """
+        return self.failed.get((ticker.upper(), exchange.upper()))
+
+
+# =============================================================================
+# ABSTRACT BASE CLASS
+# =============================================================================
+
 class MarketDataProvider(ABC):
     """
     Abstract base class for market data providers.
@@ -116,11 +209,19 @@ class MarketDataProvider(ABC):
                 return "yahoo"
 
             def get_asset_info(self, ticker: str, exchange: str) -> AssetInfo:
-                # Use inherited retry mechanism
                 return self._execute_with_retry(
                     self._fetch_from_api,
                     ticker,
                     exchange,
+                )
+
+            def get_asset_info_batch(
+                self,
+                tickers: list[tuple[str, str]]
+            ) -> BatchResult:
+                return self._execute_with_retry(
+                    self._fetch_batch_from_api,
+                    tickers,
                 )
     """
 
@@ -132,6 +233,12 @@ class MarketDataProvider(ABC):
     RETRY_MIN_WAIT: int = 1  # Minimum wait between retries (seconds)
     RETRY_MAX_WAIT: int = 10  # Maximum wait between retries (seconds)
     RETRY_MULTIPLIER: int = 1  # Multiplier for exponential backoff
+
+    # =========================================================================
+    # BATCH CONFIGURATION (can be overridden by subclasses)
+    # =========================================================================
+
+    MAX_BATCH_SIZE: int = 100  # Maximum tickers per batch request
 
     # =========================================================================
     # ABSTRACT PROPERTIES AND METHODS
@@ -153,7 +260,7 @@ class MarketDataProvider(ABC):
     @abstractmethod
     def get_asset_info(self, ticker: str, exchange: str) -> AssetInfo:
         """
-        Fetch metadata for an asset.
+        Fetch metadata for a single asset.
 
         This method retrieves static information about an asset such as
         its name, sector, currency, and asset class. It does NOT fetch
@@ -175,6 +282,55 @@ class MarketDataProvider(ABC):
             TickerNotFoundError: The ticker is not recognized by this provider.
             ProviderUnavailableError: The provider API is unreachable (after retries).
             RateLimitError: Too many requests to the provider (after retries).
+        """
+        pass
+
+    @abstractmethod
+    def get_asset_info_batch(
+            self,
+            tickers: list[tuple[str, str]],
+    ) -> BatchResult:
+        """
+        Fetch metadata for multiple assets in a single operation.
+
+        This method is optimized for bulk operations like CSV imports.
+        It supports partial success - some tickers may be found while
+        others fail.
+
+        Implementations SHOULD:
+        - Use batch API calls where available (e.g., yf.Tickers)
+        - Handle partial failures gracefully
+        - Respect MAX_BATCH_SIZE and chunk large requests
+        - Use `_execute_with_retry` for API calls
+
+        Args:
+            tickers: List of (ticker, exchange) tuples to fetch.
+                     Example: [("NVDA", "NASDAQ"), ("BMW", "XETRA")]
+
+        Returns:
+            BatchResult containing:
+            - successful: Dict of (ticker, exchange) -> AssetInfo
+            - failed: Dict of (ticker, exchange) -> Exception
+
+        Raises:
+            ProviderUnavailableError: Provider completely unreachable (after retries).
+            RateLimitError: Rate limit exceeded (after retries).
+
+        Note:
+            Individual ticker failures (TickerNotFoundError) are captured
+            in BatchResult.failed, not raised as exceptions.
+
+        Example:
+            result = provider.get_asset_info_batch([
+                ("NVDA", "NASDAQ"),
+                ("INVALID", "NYSE"),
+            ])
+
+            if result.all_successful:
+                print("All assets found!")
+            else:
+                for key, error in result.failed.items():
+                    print(f"Failed: {key} - {error}")
         """
         pass
 
@@ -275,4 +431,12 @@ class MarketDataProvider(ABC):
     #     end_date: date,
     # ) -> list[PriceData]:
     #     """Fetch historical price data for an asset."""
+    #     pass
+    #
+    # @abstractmethod
+    # def get_current_prices_batch(
+    #     self,
+    #     tickers: list[tuple[str, str]],
+    # ) -> BatchPriceResult:
+    #     """Fetch current prices for multiple assets."""
     #     pass

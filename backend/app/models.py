@@ -82,6 +82,7 @@ class Asset(Base):
 
     # Ticker is NOT unique alone — must be combined with exchange
     ticker: Mapped[str] = mapped_column(String, index=True)  # e.g. "AAPL"
+
     # Exchange is required — together with ticker forms unique identity
     exchange: Mapped[str] = mapped_column(String, index=True)  # e.g. "XETRA", "LSE"
 

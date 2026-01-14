@@ -13,6 +13,8 @@ Validation layers:
 - Router: existence checks, uniqueness
 """
 
+from datetime import datetime
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import AssetClass
@@ -234,6 +236,8 @@ class AssetResponse(AssetBase):
 
     id: int = Field(..., description="Unique identifier")
     is_active: bool = Field(..., description="Whether the asset is currently active")
+    created_at: datetime = Field(...)
+    updated_at: datetime = Field(...)
 
     model_config = ConfigDict(from_attributes=True)
 

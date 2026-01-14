@@ -147,7 +147,7 @@ class TransactionCreate(TransactionBase):
     ticker: str = Field(
         ...,
         min_length=1,
-        max_length=20,
+        max_length=10,
         description="Trading symbol (e.g., 'AAPL', 'NVDA')",
         examples=["AAPL", "NVDA", "MSFT"]
     )
@@ -155,7 +155,7 @@ class TransactionCreate(TransactionBase):
     exchange: str = Field(
         ...,
         min_length=1,
-        max_length=20,
+        max_length=10,
         description="Stock exchange (e.g., 'NASDAQ', 'XETRA')",
         examples=["NASDAQ", "NYSE", "XETRA"]
     )

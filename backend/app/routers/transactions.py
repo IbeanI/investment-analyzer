@@ -22,7 +22,8 @@ from app.services.exceptions import (
 )
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
+from sqlalchemy.orm import joinedload, contains_eager
 
 from app.database import get_db
 from app.models import Transaction, Portfolio, Asset, TransactionType
@@ -243,8 +244,20 @@ def list_transactions(
 
     Results are ordered by date (newest first).
     """
-    # FIX: Add eager loading for asset relationship
-    query = select(Transaction).options(joinedload(Transaction.asset))
+    # Build base query
+    query = select(Transaction)
+
+    if ticker is not None:
+        # Use explicit join + contains_eager when filtering
+        query = (
+            query
+            .join(Transaction.asset)
+            .options(contains_eager(Transaction.asset))
+            .where(Asset.ticker == ticker.upper())
+        )
+    else:
+        # Use joinedload when not filtering by asset
+        query = query.options(joinedload(Transaction.asset))
 
     # Apply filters
     if portfolio_id is not None:
@@ -405,12 +418,20 @@ def get_portfolio_transactions(
     # Verify portfolio exists
     validate_portfolio_exists(db, portfolio_id)
 
-    # FIX: Add eager loading for asset relationship
-    query = (
-        select(Transaction)
-        .options(joinedload(Transaction.asset))
-        .where(Transaction.portfolio_id == portfolio_id)
-    )
+    # Build base query
+    query = select(Transaction)
+
+    if ticker is not None:
+        # Use explicit join + contains_eager when filtering
+        query = (
+            query
+            .join(Transaction.asset)
+            .options(contains_eager(Transaction.asset))
+            .where(Asset.ticker == ticker.upper())
+        )
+    else:
+        # Use joinedload when not filtering by asset
+        query = query.options(joinedload(Transaction.asset))
 
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)

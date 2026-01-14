@@ -14,9 +14,15 @@ Key concepts:
 
 from datetime import datetime
 
+from app.services.asset_resolution import AssetResolutionService
+from app.services.exceptions import (
+    AssetNotFoundError,
+    AssetDeactivatedError,
+    MarketDataError,
+)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
 from app.models import Transaction, Portfolio, Asset, TransactionType
@@ -38,14 +44,29 @@ router = APIRouter(
 
 
 # =============================================================================
+# DEPENDENCIES
+# =============================================================================
+
+def get_asset_resolution_service() -> AssetResolutionService:
+    """Dependency that provides the asset resolution service."""
+    return AssetResolutionService()
+
+
+# =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
 
 def get_transaction_or_404(db: Session, transaction_id: int) -> Transaction:
     """
-    Fetch a transaction by ID or raise 404 if not found.
+    Fetch a transaction by ID with eager-loaded asset, or raise 404.
     """
-    transaction = db.get(Transaction, transaction_id)
+    # FIX: Use select with joinedload instead of db.get()
+    query = (
+        select(Transaction)
+        .options(joinedload(Transaction.asset))
+        .where(Transaction.id == transaction_id)
+    )
+    transaction = db.scalar(query)
 
     if transaction is None:
         raise HTTPException(
@@ -71,27 +92,6 @@ def validate_portfolio_exists(db: Session, portfolio_id: int) -> Portfolio:
     return portfolio
 
 
-def validate_asset_exists(db: Session, asset_id: int) -> Asset:
-    """
-    Verify that an asset exists and is active, raise error if not.
-    """
-    asset = db.get(Asset, asset_id)
-
-    if asset is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Asset with id {asset_id} not found"
-        )
-
-    if not asset.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Asset with id {asset_id} is inactive and cannot be traded"
-        )
-
-    return asset
-
-
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -105,37 +105,81 @@ def validate_asset_exists(db: Session, asset_id: int) -> Asset:
 )
 def create_transaction(
         transaction: TransactionCreate,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        asset_service: AssetResolutionService = Depends(get_asset_resolution_service),
 ) -> Transaction:
     """
     Record a new buy or sell transaction.
 
+    **Asset Resolution:** You provide ticker + exchange, and the backend
+    automatically resolves this to an asset:
+    - If the asset exists in the database → uses existing asset
+    - If not → fetches details from Yahoo Finance and creates it
+
     - **portfolio_id**: Which portfolio this transaction belongs to
-    - **asset_id**: Which asset is being traded
+    - **ticker**: Trading symbol (e.g., AAPL, NVDA)
+    - **exchange**: Stock exchange (e.g., NASDAQ, XETRA)
     - **transaction_type**: BUY or SELL
     - **date**: When the trade was executed
     - **quantity**: Number of shares/units
     - **price_per_share**: Price per unit at time of trade
-    - **fee**: Optional transaction fee (default: 0)
 
-    The portfolio and asset must exist. The asset must be active.
+    **Errors:**
+    - 404: Portfolio not found, or asset not found on Yahoo Finance
+    - 400: Asset is deactivated
+    - 502: Yahoo Finance API error
+
+    The portfolio must exist.
     """
-    # Validate foreign keys
+    # Validate portfolio exists
     validate_portfolio_exists(db, transaction.portfolio_id)
-    validate_asset_exists(db, transaction.asset_id)
 
-    # Create the transaction
-    txn_data = transaction.model_dump()
-    if txn_data.get("fee_currency") is None:
-        txn_data["fee_currency"] = txn_data["currency"]
+    # Resolve asset (lookup in DB or create from Yahoo Finance)
+    try:
+        asset = asset_service.resolve_asset(
+            db=db,
+            ticker=transaction.ticker,
+            exchange=transaction.exchange,
+        )
+    except AssetNotFoundError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+    except AssetDeactivatedError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except MarketDataError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Market data provider error: {e}"
+        )
 
-    db_transaction = Transaction(**txn_data)
+    # Determine fee_currency (default to transaction currency)
+    fee_currency = transaction.fee_currency if transaction.fee_currency is not None else transaction.currency
+
+    # Create transaction with resolved asset_id
+    db_transaction = Transaction(
+        portfolio_id=transaction.portfolio_id,
+        asset_id=asset.id,
+        transaction_type=transaction.transaction_type,
+        date=transaction.date,
+        quantity=transaction.quantity,
+        price_per_share=transaction.price_per_share,
+        currency=transaction.currency,
+        fee=transaction.fee,
+        fee_currency=fee_currency,
+        exchange_rate=transaction.exchange_rate,
+    )
 
     db.add(db_transaction)
     db.commit()
     db.refresh(db_transaction)
 
-    return db_transaction
+    # Return with eager-loaded asset for response
+    return get_transaction_or_404(db, db_transaction.id)
 
 
 @router.get(
@@ -146,15 +190,18 @@ def create_transaction(
 )
 def list_transactions(
         db: Session = Depends(get_db),
-        # Required filter (for now, until auth)
+        # Filters
         portfolio_id: int | None = Query(
             default=None,
             description="Filter by portfolio ID (recommended)"
         ),
-        # Optional filters
         asset_id: int | None = Query(
             default=None,
             description="Filter by asset ID"
+        ),
+        ticker: str | None = Query(
+            default=None,
+            description="Filter by ticker symbol"
         ),
         transaction_type: TransactionType | None = Query(
             default=None,
@@ -187,6 +234,7 @@ def list_transactions(
     Supports filtering by:
     - **portfolio_id**: Get transactions for a specific portfolio
     - **asset_id**: Get transactions for a specific asset
+    - **ticker**: Filter by ticker symbol
     - **transaction_type**: BUY or SELL
     - **currency**: Trade currency (EUR, USD, etc.)
     - **date_from / date_to**: Date range
@@ -195,7 +243,8 @@ def list_transactions(
 
     Results are ordered by date (newest first).
     """
-    query = select(Transaction)
+    # FIX: Add eager loading for asset relationship
+    query = select(Transaction).options(joinedload(Transaction.asset))
 
     # Apply filters
     if portfolio_id is not None:
@@ -203,6 +252,10 @@ def list_transactions(
 
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)
+
+    # Filter by ticker (through relationship)
+    if ticker is not None:
+        query = query.join(Transaction.asset).where(Asset.ticker == ticker.upper())
 
     if transaction_type is not None:
         query = query.where(Transaction.transaction_type == transaction_type)
@@ -223,8 +276,8 @@ def list_transactions(
     count_query = select(func.count()).select_from(query.subquery())
     total = db.scalar(count_query)
 
-    # Apply pagination
-    transactions = db.scalars(query.offset(skip).limit(limit)).all()
+    # Apply pagination and use .unique() to handle joinedload properly
+    transactions = db.scalars(query.offset(skip).limit(limit)).unique().all()
 
     return TransactionListResponse(
         items=list(transactions),
@@ -289,7 +342,8 @@ def update_transaction(
     db.commit()
     db.refresh(db_transaction)
 
-    return db_transaction
+    # FIX: Return with eager-loaded asset
+    return get_transaction_or_404(db, transaction_id)
 
 
 @router.delete(
@@ -332,6 +386,7 @@ def get_portfolio_transactions(
         db: Session = Depends(get_db),
         # Optional filters
         asset_id: int | None = Query(default=None, description="Filter by asset"),
+        ticker: str | None = Query(default=None, description="Filter by ticker"),
         transaction_type: TransactionType | None = Query(default=None, description="Filter by type"),
         date_from: datetime | None = Query(default=None, description="From date"),
         date_to: datetime | None = Query(default=None, description="To date"),
@@ -350,11 +405,19 @@ def get_portfolio_transactions(
     # Verify portfolio exists
     validate_portfolio_exists(db, portfolio_id)
 
-    # Build query
-    query = select(Transaction).where(Transaction.portfolio_id == portfolio_id)
+    # FIX: Add eager loading for asset relationship
+    query = (
+        select(Transaction)
+        .options(joinedload(Transaction.asset))
+        .where(Transaction.portfolio_id == portfolio_id)
+    )
 
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)
+
+    # Filter by ticker through relationship
+    if ticker is not None:
+        query = query.join(Transaction.asset).where(Asset.ticker == ticker.upper())
 
     if transaction_type is not None:
         query = query.where(Transaction.transaction_type == transaction_type)
@@ -371,7 +434,8 @@ def get_portfolio_transactions(
     count_query = select(func.count()).select_from(query.subquery())
     total = db.scalar(count_query)
 
-    transactions = db.scalars(query.offset(skip).limit(limit)).all()
+    # Use .unique() to handle joinedload properly
+    transactions = db.scalars(query.offset(skip).limit(limit)).unique().all()
 
     return TransactionListResponse(
         items=list(transactions),

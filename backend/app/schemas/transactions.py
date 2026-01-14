@@ -22,6 +22,7 @@ from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import TransactionType
+from app.schemas.assets import AssetResponse
 
 
 # =============================================================================
@@ -82,7 +83,7 @@ class TransactionBase(BaseModel):
         min_length=3,
         max_length=3,
         pattern=r"^[A-Z]{3}$",
-        description="Currency of the fee (may differ from trade currency. Defaults to trade currency if empty)",
+        description="Currency of the fee (defaults to transaction currency if not provided)",
         examples=["EUR", "USD"]
     )
 
@@ -111,10 +112,18 @@ class TransactionBase(BaseModel):
             raise ValueError(f"Transaction date cannot be in the future (sent: {v}, now: {current_time})")
         return v
 
-    @field_validator('currency', 'fee_currency')
+    @field_validator('currency')
     @classmethod
     def normalize_currency(cls, v: str) -> str:
         """Normalize currency: trim whitespace and uppercase."""
+        return v.strip().upper()
+
+    @field_validator('fee_currency')
+    @classmethod
+    def normalize_fee_currency(cls, v: str | None) -> str | None:
+        """Normalize fee_currency: trim whitespace and uppercase, or None."""
+        if v is None:
+            return None
         return v.strip().upper()
 
 
@@ -126,7 +135,7 @@ class TransactionCreate(TransactionBase):
     """
     Schema for creating a new transaction.
 
-    Requires portfolio_id, asset_id, and transaction_type which cannot be changed after creation.
+    Requires portfolio_id, ticker, exchange, and transaction_type which cannot be changed after creation.
     """
 
     portfolio_id: int = Field(
@@ -135,10 +144,20 @@ class TransactionCreate(TransactionBase):
         description="ID of the portfolio this transaction belongs to"
     )
 
-    asset_id: int = Field(
+    ticker: str = Field(
         ...,
-        gt=0,
-        description="ID of the asset being traded"
+        min_length=1,
+        max_length=20,
+        description="Trading symbol (e.g., 'AAPL', 'NVDA')",
+        examples=["AAPL", "NVDA", "MSFT"]
+    )
+
+    exchange: str = Field(
+        ...,
+        min_length=1,
+        max_length=20,
+        description="Stock exchange (e.g., 'NASDAQ', 'XETRA')",
+        examples=["NASDAQ", "NYSE", "XETRA"]
     )
 
     transaction_type: TransactionType = Field(
@@ -146,6 +165,22 @@ class TransactionCreate(TransactionBase):
         description="Type of transaction",
         examples=[TransactionType.BUY, TransactionType.SELL]
     )
+
+    # =========================================================================
+    # FIELD VALIDATORS (Normalization)
+    # =========================================================================
+
+    @field_validator('ticker')
+    @classmethod
+    def normalize_ticker(cls, v: str) -> str:
+        """Normalize ticker: trim whitespace and uppercase."""
+        return v.strip().upper()
+
+    @field_validator('exchange')
+    @classmethod
+    def normalize_exchange(cls, v: str) -> str:
+        """Normalize exchange: trim whitespace and uppercase."""
+        return v.strip().upper()
 
 
 # =============================================================================
@@ -254,6 +289,7 @@ class TransactionResponse(TransactionBase):
     asset_id: int = Field(..., description="ID of the asset")
     transaction_type: TransactionType = Field(..., description="Transaction type (BUY/SELL)")
     created_at: datetime = Field(..., description="When the transaction was recorded")
+    asset: AssetResponse = Field(..., description="Full asset details")
 
     model_config = ConfigDict(from_attributes=True)
 

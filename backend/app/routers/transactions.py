@@ -129,7 +129,7 @@ def create_transaction(
     if txn_data.get("fee_currency") is None:
         txn_data["fee_currency"] = txn_data["currency"]
 
-    db_transaction = Transaction(**transaction.model_dump())
+    db_transaction = Transaction(**txn_data)
 
     db.add(db_transaction)
     db.commit()
@@ -205,7 +205,7 @@ def list_transactions(
         query = query.where(Transaction.asset_id == asset_id)
 
     if transaction_type is not None:
-        query = query.where(Transaction.transaction_type == type)
+        query = query.where(Transaction.transaction_type == transaction_type)
 
     if currency is not None:
         query = query.where(Transaction.currency == currency.upper())

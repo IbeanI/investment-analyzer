@@ -7,6 +7,11 @@ These schemas define:
 - What data clients can update (Update)
 - What data the API returns (Response)
 
+Validation layers:
+- Field constraints: type, length, pattern, numeric limits
+- Field validators: normalization (uppercase, trim), logical checks
+- Router: existence checks, ownership verification
+
 IMPORTANT: All financial values use Decimal for precision.
 Never use float for money!
 """

@@ -7,6 +7,11 @@ These schemas define:
 - What data clients can update (Update)
 - What data the API returns (Response)
 
+Validation layers:
+- Field constraints: type, length, pattern
+- Field validators: normalization (uppercase, trim)
+- Router: existence checks, ownership verification
+
 Note: Currently user_id is provided in the request body.
 When authentication is implemented (Phase 5), user_id will be
 extracted from the JWT token instead.

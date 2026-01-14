@@ -43,10 +43,6 @@ app.include_router(portfolios_router)
 app.include_router(transactions_router)
 
 
-# Will be added as we create them:
-# app.include_router(users_router)
-
-
 # =============================================================================
 # GLOBAL ENDPOINTS
 # =============================================================================

@@ -9,7 +9,7 @@ Key features:
 - Exchange code mapping (our codes → Yahoo's format)
 - Quote type mapping (Yahoo's types → our AssetClass)
 - Comprehensive error handling
-- Timeout configuration
+- Retry mechanism inherited from base class
 
 Limitations:
 - Rate limits (not officially documented, but exist)
@@ -45,11 +45,24 @@ class YahooFinanceProvider(MarketDataProvider):
     Configuration:
         timeout: API request timeout in seconds (default: 10)
 
+    Retry Behavior (inherited from MarketDataProvider):
+        - Retries on ProviderUnavailableError and RateLimitError
+        - Does NOT retry on TickerNotFoundError (permanent failure)
+        - Uses exponential backoff: 1s → 2s → 4s
+        - Maximum 3 attempts (configurable via class attributes)
+
     Example:
         provider = YahooFinanceProvider(timeout=15)
         info = provider.get_asset_info("NVDA", "NASDAQ")
         print(info.name)  # "NVIDIA Corporation"
     """
+
+    # =========================================================================
+    # RETRY CONFIGURATION (override base class if needed)
+    # =========================================================================
+    # Uncomment to customize retry behavior for Yahoo specifically:
+    # MAX_RETRY_ATTEMPTS: int = 5    # Yahoo may need more retries
+    # RETRY_MIN_WAIT: int = 2        # Longer initial wait
 
     # =========================================================================
     # EXCHANGE MAPPING
@@ -135,7 +148,7 @@ class YahooFinanceProvider(MarketDataProvider):
         "CURRENCY": AssetClass.CASH,
         "BOND": AssetClass.BOND,
         "OPTION": AssetClass.OPTION,
-        "FUTURE": AssetClass.FUTURE,
+        "FUTURE": AssetClass.OTHER,
     }
 
     # Default timeout for API requests (seconds)
@@ -159,6 +172,9 @@ class YahooFinanceProvider(MarketDataProvider):
         """
         Fetch asset metadata from Yahoo Finance.
 
+        Uses the inherited retry mechanism for resilience against
+        transient failures.
+
         Args:
             ticker: Trading symbol (e.g., "NVDA")
             exchange: Exchange code (e.g., "NASDAQ")
@@ -167,9 +183,9 @@ class YahooFinanceProvider(MarketDataProvider):
             AssetInfo with metadata from Yahoo Finance.
 
         Raises:
-            TickerNotFoundError: Ticker not recognized by Yahoo.
-            ProviderUnavailableError: Yahoo API is unreachable.
-            RateLimitError: Too many requests to Yahoo.
+            TickerNotFoundError: Ticker not recognized by Yahoo (not retried).
+            ProviderUnavailableError: Yahoo API unreachable (after retries).
+            RateLimitError: Rate limit exceeded (after retries).
         """
         # Normalize inputs
         ticker = ticker.strip().upper()
@@ -177,10 +193,18 @@ class YahooFinanceProvider(MarketDataProvider):
 
         # Build Yahoo symbol
         yahoo_symbol = self._build_yahoo_symbol(ticker, exchange)
-        logger.debug(f"Fetching asset info for {yahoo_symbol} (ticker={ticker}, exchange={exchange})")
+        logger.debug(
+            f"Fetching asset info for {yahoo_symbol} "
+            f"(ticker={ticker}, exchange={exchange})"
+        )
 
-        # Fetch data from Yahoo
-        yahoo_data = self._fetch_ticker_info(yahoo_symbol, ticker, exchange)
+        # Fetch data from Yahoo with retry (inherited from base class)
+        yahoo_data = self._execute_with_retry(
+            self._fetch_ticker_info,
+            yahoo_symbol,
+            ticker,
+            exchange,
+        )
 
         # Map to AssetInfo
         return self._map_to_asset_info(yahoo_data, ticker, exchange)
@@ -240,6 +264,13 @@ class YahooFinanceProvider(MarketDataProvider):
         """
         Fetch raw ticker data from Yahoo Finance API.
 
+        This method is called by `_execute_with_retry` from the base class.
+        It should raise appropriate exceptions that the retry mechanism
+        can handle:
+        - TickerNotFoundError: NOT retried (permanent failure)
+        - ProviderUnavailableError: Retried (transient failure)
+        - RateLimitError: Retried (transient failure)
+
         Args:
             yahoo_symbol: Yahoo-formatted symbol (e.g., "BMW.DE")
             original_ticker: Original ticker for error messages
@@ -249,15 +280,15 @@ class YahooFinanceProvider(MarketDataProvider):
             Dictionary of ticker information from Yahoo.
 
         Raises:
-            TickerNotFoundError: Symbol not found.
-            ProviderUnavailableError: API error or timeout.
-            RateLimitError: Rate limit exceeded.
+            TickerNotFoundError: Symbol not found (not retried).
+            ProviderUnavailableError: API error or timeout (retried).
+            RateLimitError: Rate limit exceeded (retried).
         """
         try:
             yf_ticker = yf.Ticker(yahoo_symbol)
             info = yf_ticker.info
 
-            # yfinance returns an empty dict or minimal info for invalid tickers
+            # yfinance returns empty dict or minimal info for invalid tickers
             if not info or info.get("regularMarketPrice") is None:
                 # Double-check by looking for other indicators
                 if not info.get("shortName") and not info.get("longName"):
@@ -271,7 +302,7 @@ class YahooFinanceProvider(MarketDataProvider):
             return info
 
         except TickerNotFoundError:
-            # Re-raise our own exceptions
+            # Re-raise - this is NOT retried (permanent failure)
             raise
 
         except Exception as e:
@@ -287,10 +318,10 @@ class YahooFinanceProvider(MarketDataProvider):
                     indicator in error_message
                     for indicator in ["timeout", "connection", "network", "unavailable"]
             ):
-                logger.error(f"Yahoo Finance unavailable: {e}")
+                logger.warning(f"Yahoo Finance unavailable (will retry): {e}")
                 raise ProviderUnavailableError(provider=self.name, reason=str(e))
 
-            # Log unexpected errors and treat as unavailable
+            # Unexpected errors - treat as unavailable (will be retried)
             logger.error(f"Unexpected error fetching {yahoo_symbol}: {e}")
             raise ProviderUnavailableError(
                 provider=self.name,

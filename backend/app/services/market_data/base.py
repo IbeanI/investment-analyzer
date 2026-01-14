@@ -7,17 +7,38 @@ Using an abstract base class allows for:
 - Easy addition of new providers (Bloomberg, Alpha Vantage, etc.)
 - Provider fallback strategies
 - Mock implementations for testing
+- Consistent retry behavior across all providers
 
 Design Principles:
 - Interface Segregation: Only essential methods in the base class
 - Dependency Inversion: Services depend on abstractions, not concrete implementations
 - Open/Closed: New providers can be added without modifying existing code
+- DRY: Common retry logic implemented once in base class
 """
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import TypeVar, Callable, Any
+
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+    retry_if_exception_type,
+    before_sleep_log,
+)
 
 from app.models import AssetClass
+from app.services.exceptions import (
+    ProviderUnavailableError,
+    RateLimitError,
+)
+
+logger = logging.getLogger(__name__)
+
+# Type variable for generic return type in retry method
+T = TypeVar('T')
 
 
 @dataclass(frozen=True)
@@ -68,20 +89,53 @@ class MarketDataProvider(ABC):
     All market data providers (Yahoo Finance, Bloomberg, Alpha Vantage, etc.)
     must implement this interface to be usable by the asset resolution service.
 
+    Retry Behavior:
+        The base class provides a `_execute_with_retry` method that implements
+        exponential backoff retry logic. Subclasses can override the retry
+        configuration by setting class attributes:
+
+        - MAX_RETRY_ATTEMPTS: Total attempts (default: 3)
+        - RETRY_MIN_WAIT: Minimum wait in seconds (default: 1)
+        - RETRY_MAX_WAIT: Maximum wait in seconds (default: 10)
+        - RETRY_MULTIPLIER: Exponential multiplier (default: 1)
+
+    Retryable Exceptions:
+        - ProviderUnavailableError: Network issues, timeouts, server errors
+        - RateLimitError: API rate limit exceeded
+
+    Non-Retryable Exceptions:
+        - TickerNotFoundError: Permanent failure (ticker doesn't exist)
+
     Example implementation:
         class YahooFinanceProvider(MarketDataProvider):
+            # Optionally override retry config
+            MAX_RETRY_ATTEMPTS = 5  # More retries for Yahoo
+
             @property
             def name(self) -> str:
                 return "yahoo"
 
             def get_asset_info(self, ticker: str, exchange: str) -> AssetInfo:
-                # Yahoo-specific implementation
-                ...
-
-            def is_available(self) -> bool:
-                # Health check implementation
-                ...
+                # Use inherited retry mechanism
+                return self._execute_with_retry(
+                    self._fetch_from_api,
+                    ticker,
+                    exchange,
+                )
     """
+
+    # =========================================================================
+    # RETRY CONFIGURATION (can be overridden by subclasses)
+    # =========================================================================
+
+    MAX_RETRY_ATTEMPTS: int = 3  # Total attempts (1 initial + 2 retries)
+    RETRY_MIN_WAIT: int = 1  # Minimum wait between retries (seconds)
+    RETRY_MAX_WAIT: int = 10  # Maximum wait between retries (seconds)
+    RETRY_MULTIPLIER: int = 1  # Multiplier for exponential backoff
+
+    # =========================================================================
+    # ABSTRACT PROPERTIES AND METHODS
+    # =========================================================================
 
     @property
     @abstractmethod
@@ -105,6 +159,9 @@ class MarketDataProvider(ABC):
         its name, sector, currency, and asset class. It does NOT fetch
         price data (that will be added in Phase 3).
 
+        Implementations SHOULD use `_execute_with_retry` for API calls
+        to ensure consistent retry behavior.
+
         Args:
             ticker: Trading symbol (e.g., "NVDA", "AAPL")
                     Should be normalized to uppercase by the caller.
@@ -116,8 +173,8 @@ class MarketDataProvider(ABC):
 
         Raises:
             TickerNotFoundError: The ticker is not recognized by this provider.
-            ProviderUnavailableError: The provider API is unreachable.
-            RateLimitError: Too many requests to the provider.
+            ProviderUnavailableError: The provider API is unreachable (after retries).
+            RateLimitError: Too many requests to the provider (after retries).
         """
         pass
 
@@ -135,6 +192,67 @@ class MarketDataProvider(ABC):
             True if the provider is responding normally, False otherwise.
         """
         pass
+
+    # =========================================================================
+    # RETRY MECHANISM (inherited by all subclasses)
+    # =========================================================================
+
+    def _execute_with_retry(
+            self,
+            operation: Callable[..., T],
+            *args: Any,
+            **kwargs: Any,
+    ) -> T:
+        """
+        Execute an operation with retry logic.
+
+        This method wraps any callable with exponential backoff retry.
+        It retries on transient failures (network issues, rate limits)
+        but NOT on permanent failures (ticker not found).
+
+        Subclasses can customize retry behavior by overriding class attributes:
+        - MAX_RETRY_ATTEMPTS
+        - RETRY_MIN_WAIT
+        - RETRY_MAX_WAIT
+        - RETRY_MULTIPLIER
+
+        Args:
+            operation: The callable to execute (e.g., API fetch method)
+            *args: Positional arguments to pass to the operation
+            **kwargs: Keyword arguments to pass to the operation
+
+        Returns:
+            The return value of the operation
+
+        Raises:
+            ProviderUnavailableError: After all retry attempts exhausted
+            RateLimitError: After all retry attempts exhausted
+            Any other exception: Immediately (not retried)
+
+        Example:
+            def get_asset_info(self, ticker, exchange):
+                return self._execute_with_retry(
+                    self._call_api,
+                    ticker,
+                    exchange,
+                )
+        """
+
+        @retry(
+            stop=stop_after_attempt(self.MAX_RETRY_ATTEMPTS),
+            wait=wait_exponential(
+                multiplier=self.RETRY_MULTIPLIER,
+                min=self.RETRY_MIN_WAIT,
+                max=self.RETRY_MAX_WAIT,
+            ),
+            retry=retry_if_exception_type((ProviderUnavailableError, RateLimitError)),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
+        def execute_operation() -> T:
+            return operation(*args, **kwargs)
+
+        return execute_operation()
 
     # =========================================================================
     # PLACEHOLDER FOR PHASE 3 (Price Data)

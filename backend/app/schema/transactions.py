@@ -77,12 +77,12 @@ class TransactionBase(BaseModel):
         examples=["0", "9.99", "0.001"]
     )
 
-    fee_currency: str = Field(
-        default="EUR",
+    fee_currency: str | None = Field(
+        default=None,
         min_length=3,
         max_length=3,
         pattern=r"^[A-Z]{3}$",
-        description="Currency of the fee (may differ from trade currency)",
+        description="Currency of the fee (may differ from trade currency. Defaults to trade currency if empty)",
         examples=["EUR", "USD"]
     )
 

@@ -112,7 +112,7 @@ def create_transaction(
 
     - **portfolio_id**: Which portfolio this transaction belongs to
     - **asset_id**: Which asset is being traded
-    - **type**: BUY or SELL
+    - **transaction_type**: BUY or SELL
     - **date**: When the trade was executed
     - **quantity**: Number of shares/units
     - **price_per_share**: Price per unit at time of trade
@@ -125,6 +125,10 @@ def create_transaction(
     validate_asset_exists(db, transaction.asset_id)
 
     # Create the transaction
+    txn_data = transaction.model_dump()
+    if txn_data.get("fee_currency") is None:
+        txn_data["fee_currency"] = txn_data["currency"]
+
     db_transaction = Transaction(**transaction.model_dump())
 
     db.add(db_transaction)
@@ -152,7 +156,7 @@ def list_transactions(
             default=None,
             description="Filter by asset ID"
         ),
-        type: TransactionType | None = Query(
+        transaction_type: TransactionType | None = Query(
             default=None,
             description="Filter by transaction type (BUY/SELL)"
         ),
@@ -183,7 +187,7 @@ def list_transactions(
     Supports filtering by:
     - **portfolio_id**: Get transactions for a specific portfolio
     - **asset_id**: Get transactions for a specific asset
-    - **type**: BUY or SELL
+    - **transaction_type**: BUY or SELL
     - **currency**: Trade currency (EUR, USD, etc.)
     - **date_from / date_to**: Date range
 
@@ -200,8 +204,8 @@ def list_transactions(
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)
 
-    if type is not None:
-        query = query.where(Transaction.type == type)
+    if transaction_type is not None:
+        query = query.where(Transaction.transaction_type == type)
 
     if currency is not None:
         query = query.where(Transaction.currency == currency.upper())
@@ -268,7 +272,7 @@ def update_transaction(
     **Cannot be changed:**
     - portfolio_id (can't move transaction to different portfolio)
     - asset_id (can't change which asset was traded)
-    - type (can't change BUY to SELL or vice versa)
+    - transaction_type (can't change BUY to SELL or vice versa)
 
     To change these, delete the transaction and create a new one.
 
@@ -353,7 +357,7 @@ def get_portfolio_transactions(
         query = query.where(Transaction.asset_id == asset_id)
 
     if transaction_type is not None:
-        query = query.where(Transaction.type == transaction_type)
+        query = query.where(Transaction.transaction_type == transaction_type)
 
     if date_from is not None:
         query = query.where(Transaction.date >= date_from)

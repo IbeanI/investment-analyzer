@@ -80,8 +80,7 @@ class AssetInfo:
         """Validate required fields after initialization."""
         if not self.ticker:
             raise ValueError("ticker is required")
-        if not self.exchange:
-            raise ValueError("exchange is required")
+        # Note: exchange can be empty for assets without traditional exchanges (e.g., crypto)
         if not self.currency:
             raise ValueError("currency is required")
 

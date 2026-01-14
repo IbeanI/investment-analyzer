@@ -543,8 +543,12 @@ def create_transactions_batch(
             detail=f"Database commit failed: {str(e)}"
         )
 
-    # 5. Refresh to get IDs and relationships
-    for txn in new_transactions:
-        db.refresh(txn)
-
-    return new_transactions
+    # 5. Reload with eager-loaded assets for response
+    result_ids = [txn.id for txn in new_transactions]
+    query = (
+        select(Transaction)
+        .options(joinedload(Transaction.asset))
+        .where(Transaction.id.in_(result_ids))
+        .order_by(Transaction.id)  # Preserve insertion order
+    )
+    return list(db.scalars(query).unique().all())

@@ -11,10 +11,10 @@ IMPORTANT: All financial values use Decimal for precision.
 Never use float for money!
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import TransactionType
 
@@ -85,6 +85,21 @@ class TransactionBase(BaseModel):
         description="Exchange rate to portfolio base currency at time of trade",
         examples=["1", "1.0856", "0.8543"]
     )
+
+    @field_validator('date')
+    @classmethod
+    def validate_date_not_in_future(cls, v: datetime) -> datetime:
+        """
+        Prevents users from recording transactions that haven't happened yet.
+        """
+        # Ensure v has timezone info for comparison
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+
+        current_time = datetime.now(timezone.utc)
+        if v > current_time:
+            raise ValueError(f"Transaction date cannot be in the future (sent: {v}, now: {current_time})")
+        return v
 
 
 class TransactionCreate(TransactionBase):

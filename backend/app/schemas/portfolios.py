@@ -1,4 +1,4 @@
-# backend/app/schema/portfolios.py
+# backend/app/schemas/portfolios.py
 """
 Pydantic schemas for Portfolio validation.
 
@@ -28,7 +28,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class PortfolioBase(BaseModel):
     """
-    Base schema with fields common to Create and Response.
+    Base schemas with fields common to Create and Response.
     """
 
     name: str = Field(
@@ -152,7 +152,7 @@ class PortfolioResponse(PortfolioBase):
 
 class PortfolioListResponse(BaseModel):
     """
-    Response schema for paginated portfolio list.
+    Response schemas for paginated portfolio list.
     """
 
     items: list[PortfolioResponse]

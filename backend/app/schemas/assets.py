@@ -1,4 +1,4 @@
-# backend/app/schema/assets.py
+# backend/app/schemas/assets.py
 """
 Pydantic schemas for Asset validation.
 
@@ -24,7 +24,7 @@ from app.models import AssetClass
 
 class AssetBase(BaseModel):
     """
-    Base schema with fields common to Create and Response.
+    Base schemas with fields common to Create and Response.
     """
 
     ticker: str = Field(
@@ -239,7 +239,7 @@ class AssetResponse(AssetBase):
 
 
 class AssetListResponse(BaseModel):
-    """Response schema for paginated asset list."""
+    """Response schemas for paginated asset list."""
 
     items: list[AssetResponse]
     total: int = Field(..., description="Total number of assets matching filters")

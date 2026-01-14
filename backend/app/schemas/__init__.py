@@ -1,14 +1,14 @@
-# backend/app/schema/__init__.py
+# backend/app/schemas/__init__.py
 """
 Pydantic schemas for API request/response validation.
 
 Usage:
-    from app.schema import AssetCreate, AssetResponse
-    from app.schema import PortfolioCreate, PortfolioResponse
-    from app.schema import TransactionCreate, TransactionResponse
+    from app.schemas import AssetCreate, AssetResponse
+    from app.schemas import PortfolioCreate, PortfolioResponse
+    from app.schemas import TransactionCreate, TransactionResponse
 """
 
-from app.schema.assets import (
+from app.schemas.assets import (
     AssetBase,
     AssetCreate,
     AssetUpdate,
@@ -16,7 +16,7 @@ from app.schema.assets import (
     AssetListResponse,
 )
 
-from app.schema.portfolios import (
+from app.schemas.portfolios import (
     PortfolioBase,
     PortfolioCreate,
     PortfolioUpdate,
@@ -24,7 +24,7 @@ from app.schema.portfolios import (
     PortfolioListResponse
 )
 
-from app.schema.transactions import (
+from app.schemas.transactions import (
     TransactionBase,
     TransactionCreate,
     TransactionUpdate,
@@ -34,7 +34,7 @@ from app.schema.transactions import (
 )
 
 # Will be added as we create them:
-# from app.schema.user import (...)
+# from app.schemas.user import (...)
 
 __all__ = [
     # Asset

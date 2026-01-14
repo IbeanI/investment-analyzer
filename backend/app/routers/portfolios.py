@@ -10,7 +10,7 @@ When auth is implemented (Phase 5), endpoints will automatically use
 the authenticated user's ID from the JWT token.
 """
 
-from app.schema.portfolios import (
+from app.schemas.portfolios import (
     PortfolioCreate,
     PortfolioUpdate,
     PortfolioResponse,

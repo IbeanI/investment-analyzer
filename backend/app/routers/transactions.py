@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Transaction, Portfolio, Asset, TransactionType
-from app.schema.transactions import (
+from app.schemas.transactions import (
     TransactionCreate,
     TransactionUpdate,
     TransactionResponse,

@@ -1,4 +1,4 @@
-# backend/app/schema/transactions.py
+# backend/app/schemas/transactions.py
 """
 Pydantic schemas for Transaction validation.
 
@@ -30,7 +30,7 @@ from app.models import TransactionType
 
 class TransactionBase(BaseModel):
     """
-    Base schema with fields common to Create and Response.
+    Base schemas with fields common to Create and Response.
 
     Financial fields use Decimal for precision.
     """
@@ -260,7 +260,7 @@ class TransactionResponse(TransactionBase):
 
 class TransactionListResponse(BaseModel):
     """
-    Response schema for paginated transaction list.
+    Response schemas for paginated transaction list.
     """
 
     items: list[TransactionResponse]

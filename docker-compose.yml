@@ -1,16 +1,44 @@
 services:
-  db:
-    image: postgres:15
+  # 1. Database
+  investment_db:
+    image: postgres:15-alpine
     container_name: investment_db
     restart: always
     environment:
-      POSTGRES_USER: admin
-      POSTGRES_PASSWORD: password123
-      POSTGRES_DB: investment_portfolio
+      # Docker pulls these values from your .env file
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: investment_backend
+    restart: always
+    depends_on:
+      investment_db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      # We construct the connection string dynamically using the same variables
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@investment_db:5432/${POSTGRES_DB}
+      PYTHONUNBUFFERED: 1
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/init_db.py:/app/init_db.py
+      - ./backend/pyproject.toml:/app/pyproject.toml
 
 volumes:
   postgres_data:

@@ -154,7 +154,7 @@ class TransactionCreate(TransactionBase):
 
     exchange: str = Field(
         ...,
-        min_length=1,
+        min_length=0,
         max_length=10,
         description="Stock exchange (e.g., 'NASDAQ', 'XETRA')",
         examples=["NASDAQ", "NYSE", "XETRA"]

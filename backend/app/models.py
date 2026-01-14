@@ -33,6 +33,7 @@ class AssetClass(str, enum.Enum):
     CRYPTO = "CRYPTO"
     CASH = "CASH"
     INDEX = "INDEX"
+    FUTURE = "FUTURE"
     OTHER = "OTHER"
 
 

@@ -69,6 +69,7 @@ class YahooFinanceProvider(MarketDataProvider):
         "NYSEARCA": "",
         "BATS": "",
         # Germany
+        "TGATE": ".DE",
         "XETRA": ".DE",
         "FRA": ".F",
         "FRANKFURT": ".F",
@@ -134,7 +135,7 @@ class YahooFinanceProvider(MarketDataProvider):
         "CURRENCY": AssetClass.CASH,
         "BOND": AssetClass.BOND,
         "OPTION": AssetClass.OPTION,
-        "FUTURE": AssetClass.OTHER,
+        "FUTURE": AssetClass.FUTURE,
     }
 
     # Default timeout for API requests (seconds)

@@ -118,7 +118,7 @@ class AssetResolutionService:
         """
         # Step 1: Normalize inputs
         ticker = ticker.strip().upper()
-        exchange = exchange.strip().upper() if exchange else "NYSE"  # Explicit default here
+        exchange = exchange.strip().upper() if exchange else ""
 
         logger.debug(f"Resolving asset: {ticker} on {exchange}")
 

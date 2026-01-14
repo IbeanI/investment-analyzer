@@ -16,13 +16,14 @@ Architecture:
     └── AlphaVantageProvider (future)
 """
 
-from app.services.market_data.base import MarketDataProvider, AssetInfo
+from app.services.market_data.base import MarketDataProvider, AssetInfo, BatchResult
 from app.services.market_data.yahoo import YahooFinanceProvider
 
 __all__ = [
     # Abstract interface
     "MarketDataProvider",
     "AssetInfo",
+    "BatchResult",
     # Concrete implementations
     "YahooFinanceProvider",
 ]

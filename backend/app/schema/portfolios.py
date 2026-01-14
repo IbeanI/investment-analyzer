@@ -14,8 +14,12 @@ extracted from the JWT token instead.
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+
+# =============================================================================
+# BASE SCHEMA
+# =============================================================================
 
 class PortfolioBase(BaseModel):
     """
@@ -39,6 +43,26 @@ class PortfolioBase(BaseModel):
         description="Base currency for portfolio valuation (ISO 4217)"
     )
 
+    # =========================================================================
+    # FIELD VALIDATORS (Normalization)
+    # =========================================================================
+
+    @field_validator('name')
+    @classmethod
+    def normalize_name(cls, v: str) -> str:
+        """Normalize name: trim whitespace."""
+        return v.strip()
+
+    @field_validator('currency')
+    @classmethod
+    def normalize_currency(cls, v: str) -> str:
+        """Normalize currency: trim whitespace and uppercase."""
+        return v.strip().upper()
+
+
+# =============================================================================
+# CREATE SCHEMA
+# =============================================================================
 
 class PortfolioCreate(PortfolioBase):
     """
@@ -49,13 +73,16 @@ class PortfolioCreate(PortfolioBase):
     """
 
     # TODO: Remove when auth is implemented (Phase 5)
-    # user_id will come from the authenticated user's token
     user_id: int = Field(
         ...,
         gt=0,
         description="ID of the user who owns this portfolio"
     )
 
+
+# =============================================================================
+# UPDATE SCHEMA
+# =============================================================================
 
 class PortfolioUpdate(BaseModel):
     """
@@ -80,6 +107,28 @@ class PortfolioUpdate(BaseModel):
         description="New base currency (changing this affects all valuations)"
     )
 
+    # =========================================================================
+    # FIELD VALIDATORS (Normalization)
+    # =========================================================================
+
+    @field_validator('name')
+    @classmethod
+    def normalize_name(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip()
+
+    @field_validator('currency')
+    @classmethod
+    def normalize_currency(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return v.strip().upper()
+
+
+# =============================================================================
+# RESPONSE SCHEMAS
+# =============================================================================
 
 class PortfolioResponse(PortfolioBase):
     """

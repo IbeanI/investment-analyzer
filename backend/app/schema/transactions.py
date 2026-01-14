@@ -19,6 +19,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from app.models import TransactionType
 
 
+# =============================================================================
+# BASE SCHEMA
+# =============================================================================
+
 class TransactionBase(BaseModel):
     """
     Base schema with fields common to Create and Response.
@@ -86,13 +90,14 @@ class TransactionBase(BaseModel):
         examples=["1", "1.0856", "0.8543"]
     )
 
+    # =========================================================================
+    # FIELD VALIDATORS (Normalization & Validation)
+    # =========================================================================
+
     @field_validator('date')
     @classmethod
     def validate_date_not_in_future(cls, v: datetime) -> datetime:
-        """
-        Prevents users from recording transactions that haven't happened yet.
-        """
-        # Ensure v has timezone info for comparison
+        """Prevent recording transactions that haven't happened yet."""
         if v.tzinfo is None:
             v = v.replace(tzinfo=timezone.utc)
 
@@ -101,6 +106,16 @@ class TransactionBase(BaseModel):
             raise ValueError(f"Transaction date cannot be in the future (sent: {v}, now: {current_time})")
         return v
 
+    @field_validator('currency', 'fee_currency')
+    @classmethod
+    def normalize_currency(cls, v: str) -> str:
+        """Normalize currency: trim whitespace and uppercase."""
+        return v.strip().upper()
+
+
+# =============================================================================
+# CREATE SCHEMA
+# =============================================================================
 
 class TransactionCreate(TransactionBase):
     """
@@ -127,6 +142,10 @@ class TransactionCreate(TransactionBase):
         examples=[TransactionType.BUY, TransactionType.SELL]
     )
 
+
+# =============================================================================
+# UPDATE SCHEMA
+# =============================================================================
 
 class TransactionUpdate(BaseModel):
     """
@@ -187,6 +206,36 @@ class TransactionUpdate(BaseModel):
         decimal_places=8
     )
 
+    # =========================================================================
+    # FIELD VALIDATORS (Normalization & Validation)
+    # =========================================================================
+
+    @field_validator('date')
+    @classmethod
+    def validate_date_not_in_future(cls, v: datetime | None) -> datetime | None:
+        """Prevent recording transactions that haven't happened yet."""
+        if v is None:
+            return None
+        if v.tzinfo is None:
+            v = v.replace(tzinfo=timezone.utc)
+
+        current_time = datetime.now(timezone.utc)
+        if v > current_time:
+            raise ValueError(f"Transaction date cannot be in the future")
+        return v
+
+    @field_validator('currency', 'fee_currency')
+    @classmethod
+    def normalize_currency(cls, v: str | None) -> str | None:
+        """Normalize currency: trim whitespace and uppercase."""
+        if v is None:
+            return None
+        return v.strip().upper()
+
+
+# =============================================================================
+# RESPONSE SCHEMAS
+# =============================================================================
 
 class TransactionResponse(TransactionBase):
     """
@@ -216,14 +265,12 @@ class TransactionListResponse(BaseModel):
 
 
 # =============================================================================
-# COMPUTED RESPONSE (for convenience)
+# PLACEHOLDER FOR PHASE 3 (Analytics Engine)
 # =============================================================================
 
 class TransactionWithTotalsResponse(TransactionResponse):
     """
     Extended response that includes computed totals.
-
-    Useful for displaying transaction details with calculated values.
 
     TODO: Implement in Phase 3 when building the analytics engine.
     Will be used for transaction details with calculated values.

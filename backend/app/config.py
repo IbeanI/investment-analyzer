@@ -1,4 +1,5 @@
 # backend/app/config.py
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,11 @@ class Settings(BaseSettings):
         - APP_NAME: Application name (default: "Investment Portfolio Analyzer")
         - DEBUG: Enable debug mode (default: False)
     """
+
+    log_level: str = Field(
+        default="DEBUG",
+        description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)"
+    )
 
     # Required - no defaults for sensitive data
     database_url: str

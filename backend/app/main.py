@@ -3,6 +3,7 @@
 FastAPI application entry point.
 
 This file:
+- Configures application-wide logging
 - Creates the FastAPI application
 - Registers all routers
 - Defines global endpoints (health checks)
@@ -15,6 +16,13 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.routers import assets_router, portfolios_router, transactions_router
+from app.utils import setup_logging
+
+# =============================================================================
+# LOGGING SETUP (must be before app creation)
+# =============================================================================
+
+setup_logging()
 
 # =============================================================================
 # APPLICATION SETUP

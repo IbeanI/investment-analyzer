@@ -170,8 +170,11 @@ class AssetResolutionService:
             Map of (ticker, exchange) -> Asset object.
             Failed resolutions are simply omitted from the result.
         """
-        # 1. Normalize inputs
-        normalized_reqs = list(set((t.strip().upper(), e.strip().upper()) for t, e in requests))
+        # 1. Normalize inputs (consistent with resolve_asset: empty exchange -> "")
+        normalized_reqs = list(set(
+            (t.strip().upper(), e.strip().upper() if e else "")
+            for t, e in requests
+        ))
         results = {}
         missing = []
 

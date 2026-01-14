@@ -14,12 +14,6 @@ Key concepts:
 
 from datetime import datetime
 
-from app.services.asset_resolution import AssetResolutionService
-from app.services.exceptions import (
-    AssetNotFoundError,
-    AssetDeactivatedError,
-    MarketDataError,
-)
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -32,6 +26,12 @@ from app.schemas.transactions import (
     TransactionUpdate,
     TransactionResponse,
     TransactionListResponse,
+)
+from app.services.asset_resolution import AssetResolutionService
+from app.services.exceptions import (
+    AssetNotFoundError,
+    AssetDeactivatedError,
+    MarketDataError,
 )
 
 # =============================================================================
@@ -456,3 +456,95 @@ def get_portfolio_transactions(
         skip=skip,
         limit=limit
     )
+
+
+@router.post(
+    "/batch",
+    response_model=list[TransactionResponse],
+    status_code=status.HTTP_201_CREATED,
+    summary="Batch create transactions",
+    response_description="The created transactions"
+)
+def create_transactions_batch(
+        transactions: list[TransactionCreate],
+        db: Session = Depends(get_db),
+        asset_service: AssetResolutionService = Depends(get_asset_resolution_service),
+) -> list[Transaction]:
+    """
+    Create multiple transactions in a single request.
+
+    This is much more efficient than calling POST /transactions/ multiple times.
+    It uses batch asset resolution to minimize database and API calls.
+    """
+    if not transactions:
+        return []
+
+    # 1. Validate Portfolios (Optimization: Check unique IDs once)
+    portfolio_ids = {t.portfolio_id for t in transactions}
+    existing_portfolios = db.scalars(
+        select(Portfolio.id).where(Portfolio.id.in_(portfolio_ids))
+    ).all()
+
+    if len(existing_portfolios) != len(portfolio_ids):
+        missing = portfolio_ids - set(existing_portfolios)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Portfolios not found: {missing}"
+        )
+
+    # 2. Batch Resolve Assets
+    # Extract all (ticker, exchange) tuples to resolve in one go
+    asset_requests = [(t.ticker, t.exchange) for t in transactions]
+
+    # This magic method resolves everything (DB lookup + Yahoo Fetch + Create) in bulk
+    resolved_assets_map = asset_service.resolve_assets_batch(db, asset_requests)
+
+    # 3. Create Transaction Objects
+    new_transactions = []
+
+    for i, txn_data in enumerate(transactions):
+        # Normalize key matches the service logic
+        key = (txn_data.ticker.strip().upper(), txn_data.exchange.strip().upper())
+
+        # Verify resolution
+        if key not in resolved_assets_map:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to resolve asset '{key[0]}' on '{key[1]}' (Index {i})"
+            )
+
+        asset = resolved_assets_map[key]
+
+        # Default fee logic
+        fee_currency = txn_data.fee_currency or txn_data.currency
+
+        new_txn = Transaction(
+            portfolio_id=txn_data.portfolio_id,
+            asset_id=asset.id,
+            transaction_type=txn_data.transaction_type,
+            date=txn_data.date,
+            quantity=txn_data.quantity,
+            price_per_share=txn_data.price_per_share,
+            currency=txn_data.currency,
+            fee=txn_data.fee,
+            fee_currency=fee_currency,
+            exchange_rate=txn_data.exchange_rate,
+        )
+        new_transactions.append(new_txn)
+
+    # 4. Atomic Commit (All or Nothing)
+    try:
+        db.add_all(new_transactions)
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Database commit failed: {str(e)}"
+        )
+
+    # 5. Refresh to get IDs and relationships
+    for txn in new_transactions:
+        db.refresh(txn)
+
+    return new_transactions

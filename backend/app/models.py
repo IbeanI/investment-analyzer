@@ -87,7 +87,7 @@ class Asset(Base):
     # Exchange is required — together with ticker forms unique identity
     exchange: Mapped[str] = mapped_column(String, index=True)  # e.g. "XETRA", "LSE"
 
-    isin: Mapped[str | None] = mapped_column(String, unique=True, index=True)  # ISIN (International Securities Identification Number)
+    isin: Mapped[str | None] = mapped_column(String, index=True)  # ISIN (International Securities Identification Number)
     name: Mapped[str | None] = mapped_column(String)
     asset_class: Mapped[AssetClass] = mapped_column(Enum(AssetClass))
     currency: Mapped[str] = mapped_column(String, default="EUR")  # e.g. "EUR", "USD" (Critical for valuation)

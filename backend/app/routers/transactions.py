@@ -266,10 +266,6 @@ def list_transactions(
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)
 
-    # Filter by ticker (through relationship)
-    if ticker is not None:
-        query = query.join(Transaction.asset).where(Asset.ticker == ticker.upper())
-
     if transaction_type is not None:
         query = query.where(Transaction.transaction_type == transaction_type)
 
@@ -418,8 +414,8 @@ def get_portfolio_transactions(
     # Verify portfolio exists
     validate_portfolio_exists(db, portfolio_id)
 
-    # Build base query
-    query = select(Transaction)
+    # Build base query - filter by portfolio_id
+    query = select(Transaction).where(Transaction.portfolio_id == portfolio_id)
 
     if ticker is not None:
         # Use explicit join + contains_eager when filtering
@@ -435,10 +431,6 @@ def get_portfolio_transactions(
 
     if asset_id is not None:
         query = query.where(Transaction.asset_id == asset_id)
-
-    # Filter by ticker through relationship
-    if ticker is not None:
-        query = query.join(Transaction.asset).where(Asset.ticker == ticker.upper())
 
     if transaction_type is not None:
         query = query.where(Transaction.transaction_type == transaction_type)

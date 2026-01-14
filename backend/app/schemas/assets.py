@@ -173,8 +173,8 @@ class AssetUpdate(BaseModel):
     All fields are optional — client only sends fields to update.
     """
 
-    ticker: str | None = Field(default=None, min_length=1, max_length=20)
-    exchange: str | None = Field(default=None, min_length=1, max_length=20)
+    ticker: str | None = Field(default=None, min_length=1, max_length=10)
+    exchange: str | None = Field(default=None, min_length=1, max_length=10)
     isin: str | None = Field(default=None, min_length=12, max_length=12, pattern=r"^[A-Z]{2}[A-Z0-9]{10}$")
     name: str | None = Field(default=None, max_length=255)
     asset_class: AssetClass | None = Field(default=None)

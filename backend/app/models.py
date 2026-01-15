@@ -1,9 +1,9 @@
 # backend/app/models.py
 import enum
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import String, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean, JSON, Index
+from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean, JSON, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -169,7 +169,7 @@ class MarketData(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
-    date: Mapped[datetime] = mapped_column(DateTime, index=True)
+    date: Mapped[date] = mapped_column(Date, index=True)  # Daily data - no time component
     close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
     adjusted_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
     volume: Mapped[int | None] = mapped_column(Integer)  # Standard market metric
@@ -217,8 +217,8 @@ class ExchangeRate(Base):
     base_currency: Mapped[str] = mapped_column(String(3), index=True)  # e.g., "USD"
     quote_currency: Mapped[str] = mapped_column(String(3), index=True)  # e.g., "EUR"
 
-    # The date for this rate
-    date: Mapped[datetime] = mapped_column(DateTime, index=True)
+    # The date for this rate (daily data - no time component)
+    date: Mapped[date] = mapped_column(Date, index=True)
 
     # The exchange rate (Decimal for precision)
     rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))  # e.g., 0.92610000

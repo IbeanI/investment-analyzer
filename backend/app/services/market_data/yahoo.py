@@ -102,6 +102,8 @@ class YahooFinanceProvider(MarketDataProvider):
         "BATS": "",
         # Germany
         "TGATE": ".DE",
+        "IBIS": ".DE",
+        "IBIS2": ".DE",
         "XETRA": ".DE",
         "FRA": ".F",
         "FRANKFURT": ".F",
@@ -131,6 +133,7 @@ class YahooFinanceProvider(MarketDataProvider):
         "SWX": ".SW",
         "SWISS": ".SW",
         # Italy
+        "BVME": ".MI",
         "MIL": ".MI",
         "MILAN": ".MI",
         # Spain

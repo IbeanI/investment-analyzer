@@ -6,6 +6,7 @@ Usage:
     from app.schemas import AssetCreate, AssetResponse
     from app.schemas import PortfolioCreate, PortfolioResponse
     from app.schemas import TransactionCreate, TransactionResponse
+    from app.schemas import UploadResponse, UploadErrorResponse
 """
 
 from app.schemas.assets import (
@@ -33,6 +34,12 @@ from app.schemas.transactions import (
     TransactionWithTotalsResponse,
 )
 
+from app.schemas.upload import (
+    UploadResponse,
+    UploadErrorResponse,
+    SupportedFormatsResponse,
+)
+
 # Will be added as we create them:
 # from app.schemas.user import (...)
 
@@ -58,4 +65,9 @@ __all__ = [
     "TransactionResponse",
     "TransactionListResponse",
     "TransactionWithTotalsResponse",
+
+    # Upload
+    "UploadResponse",
+    "UploadErrorResponse",
+    "SupportedFormatsResponse",
 ]

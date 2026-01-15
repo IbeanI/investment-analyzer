@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.routers import assets_router, portfolios_router, transactions_router
+from app.routers import (
+    assets_router,
+    portfolios_router,
+    transactions_router,
+    upload_router,
+)
 from app.utils import setup_logging
 
 # =============================================================================
@@ -41,6 +46,7 @@ app = FastAPI(
 app.include_router(assets_router)
 app.include_router(portfolios_router)
 app.include_router(transactions_router)
+app.include_router(upload_router)
 
 
 # =============================================================================

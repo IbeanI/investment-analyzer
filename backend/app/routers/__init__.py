@@ -6,8 +6,10 @@ Each router handles a specific domain:
 - assets: Global asset registry (AAPL, MSFT, etc.)
 - portfolios: User portfolio management
 - transactions: Buy/sell transaction records
-- users: User account management
+- upload: File upload for bulk transaction import
 """
+
+from app.routers.upload import router as upload_router
 
 from app.routers.assets import router as assets_router
 from app.routers.portfolios import router as portfolios_router
@@ -20,5 +22,6 @@ __all__ = [
     "assets_router",
     "portfolios_router",
     "transactions_router",
+    "upload_router",
     # "users_router",
 ]

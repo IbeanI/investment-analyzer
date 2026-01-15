@@ -497,22 +497,28 @@ def create_transactions_batch(
     asset_requests = [(t.ticker, t.exchange) for t in transactions]
 
     # This magic method resolves everything (DB lookup + Yahoo Fetch + Create) in bulk
-    resolved_assets_map = asset_service.resolve_assets_batch(db, asset_requests)
+    resolution_result = asset_service.resolve_assets_batch(db, asset_requests)
 
-    # 3. Create Transaction Objects
+    # 3. Handle Resolution Failures
+    if not resolution_result.all_resolved:
+        errors = []
+        for key in resolution_result.deactivated:
+            errors.append(f"Asset '{key[0]}' on '{key[1]}' is deactivated")
+        for key in resolution_result.not_found:
+            errors.append(f"Asset '{key[0]}' on '{key[1]}' not found")
+        for key, exc in resolution_result.errors.items():
+            errors.append(f"Asset '{key[0]}' on '{key[1]}': {exc}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Some assets could not be resolved", "errors": errors}
+        )
+
+    # 4. Create Transaction Objects
+    resolved_assets_map = resolution_result.resolved
     new_transactions = []
 
     for i, txn_data in enumerate(transactions):
-        # Normalize key matches the service logic
-        key = (txn_data.ticker.strip().upper(), txn_data.exchange.strip().upper())
-
-        # Verify resolution
-        if key not in resolved_assets_map:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to resolve asset '{key[0]}' on '{key[1]}' (Index {i})"
-            )
-
+        key = (txn_data.ticker.strip().upper(), txn_data.exchange.strip().upper() if txn_data.exchange else "")
         asset = resolved_assets_map[key]
 
         # Default fee logic
@@ -532,7 +538,7 @@ def create_transactions_batch(
         )
         new_transactions.append(new_txn)
 
-    # 4. Atomic Commit (All or Nothing)
+    # 5. Atomic Commit (All or Nothing)
     try:
         db.add_all(new_transactions)
         db.commit()
@@ -543,7 +549,7 @@ def create_transactions_batch(
             detail=f"Database commit failed: {str(e)}"
         )
 
-    # 5. Reload with eager-loaded assets for response
+    # 6. Reload with eager-loaded assets for response
     result_ids = [txn.id for txn in new_transactions]
     query = (
         select(Transaction)

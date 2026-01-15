@@ -34,7 +34,7 @@ Architecture:
         └── yahoo.py             # Yahoo Finance implementation
 """
 
-from app.services.asset_resolution import AssetResolutionService
+from app.services.asset_resolution import AssetResolutionService, BatchResolutionResult
 from app.services.exceptions import (
     # Base exceptions
     ServiceError,
@@ -52,6 +52,7 @@ from app.services.exceptions import (
 __all__ = [
     # Services
     "AssetResolutionService",
+    "BatchResolutionResult",
     # Base exceptions
     "ServiceError",
     # Asset resolution exceptions

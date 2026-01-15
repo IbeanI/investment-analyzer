@@ -111,10 +111,12 @@ class YahooFinanceProvider(MarketDataProvider):
         "LSE": ".L",
         "LONDON": ".L",
         # France
+        "SBF": ".PA",
         "EURONEXT": ".PA",
         "EPA": ".PA",
         "PARIS": ".PA",
         # Netherlands
+        "AEB": ".AS",
         "AMS": ".AS",
         "AMSTERDAM": ".AS",
         # Japan
@@ -268,7 +270,7 @@ class YahooFinanceProvider(MarketDataProvider):
 
         # Normalize all inputs
         normalized_tickers = [
-            (ticker.strip().upper(), exchange.strip().upper())
+            (ticker.strip().upper(), exchange.strip().upper() if exchange else "")
             for ticker, exchange in tickers
         ]
 

@@ -24,6 +24,7 @@ Usage:
 """
 
 import logging
+from dataclasses import dataclass
 
 from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import Session
@@ -39,6 +40,19 @@ from app.services.market_data.base import MarketDataProvider, AssetInfo
 from app.services.market_data.yahoo import YahooFinanceProvider
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class BatchResolutionResult:
+    """Result of batch asset resolution."""
+    resolved: dict[tuple[str, str], Asset]  # Successfully resolved
+    deactivated: list[tuple[str, str]]  # Exist but deactivated
+    not_found: list[tuple[str, str]]  # Provider couldn't find
+    errors: dict[tuple[str, str], Exception]  # Other errors
+
+    @property
+    def all_resolved(self) -> bool:
+        return not (self.deactivated or self.not_found or self.errors)
 
 
 class AssetResolutionService:
@@ -156,7 +170,7 @@ class AssetResolutionService:
             self,
             db: Session,
             requests: list[tuple[str, str]]
-    ) -> dict[tuple[str, str], Asset]:
+    ) -> BatchResolutionResult:
         """
         Batch resolve assets (Lookup DB -> Fetch Missing -> Create New).
 
@@ -167,83 +181,100 @@ class AssetResolutionService:
             requests: List of (ticker, exchange) tuples
 
         Returns:
-            Map of (ticker, exchange) -> Asset object.
-            Failed resolutions are simply omitted from the result.
+            BatchResolutionResult with resolved, deactivated, not_found, and errors.
         """
-        # 1. Normalize inputs (consistent with resolve_asset: empty exchange -> "")
+        # Initialize result
+        result = BatchResolutionResult(
+            resolved={},
+            deactivated=[],
+            not_found=[],
+            errors={},
+        )
+
+        if not requests:
+            return result
+
+        # 1. Normalize inputs
         normalized_reqs = list(set(
             (t.strip().upper(), e.strip().upper() if e else "")
             for t, e in requests
         ))
-        results = {}
-        missing = []
-
-        if not normalized_reqs:
-            return {}
 
         # 2. Batch DB Lookup
-        # Build OR conditions to match any of the pairs
         conditions = [
             and_(Asset.ticker == t, Asset.exchange == e)
             for t, e in normalized_reqs
         ]
-
-        # Fetch existing assets (one query instead of N)
         existing_assets = db.scalars(select(Asset).where(or_(*conditions))).all()
 
         # Index existing assets
+        found_keys = set()
         for asset in existing_assets:
             key = (asset.ticker, asset.exchange)
+            found_keys.add(key)
             if asset.is_active:
-                results[key] = asset
+                result.resolved[key] = asset
             else:
-                logger.warning(f"Batch resolve: Asset {key} is deactivated")
+                result.deactivated.append(key)
+                logger.info(f"Batch resolve: Asset {key} is deactivated")
 
-        # 3. Identify Missing
-        for req in normalized_reqs:
-            if req not in results:
-                missing.append(req)
+        # 3. Identify missing (not in DB at all)
+        missing = [req for req in normalized_reqs if req not in found_keys]
 
         if not missing:
-            return results
+            return result
 
-        # 4. Batch Provider Fetch
+        # 4. Check cache for missing assets
         logger.info(f"Batch resolving {len(missing)} missing assets")
-
-        # Check cache first
         really_missing = []
+        cached_infos = []
+
         for req in missing:
             if req in self._cache:
-                # We have the metadata in memory, but need to create the DB object
-                info = self._cache[req]
-                try:
-                    new_asset = self._create_asset(db, info)
-                    results[req] = new_asset
-                except Exception as e:
-                    logger.error(f"Failed to create cached asset {req}: {e}")
+                cached_infos.append(self._cache[req])
             else:
                 really_missing.append(req)
 
-        if not really_missing:
-            return results
+        # 5. Create assets from cache (single transaction)
+        if cached_infos:
+            try:
+                new_assets = self._create_assets_batch(db, cached_infos)
+                for asset in new_assets:
+                    result.resolved[(asset.ticker, asset.exchange)] = asset
+            except Exception as e:
+                logger.error(f"Failed to create cached assets: {e}")
+                for info in cached_infos:
+                    result.errors[(info.ticker, info.exchange)] = e
 
-        # Call Provider (Batch)
+        if not really_missing:
+            return result
+
+        # 6. Batch Provider Fetch
         batch_result = self._provider.get_asset_info_batch(really_missing)
 
-        # 5. Create New Assets from Provider Results
-        for key, info in batch_result.successful.items():
-            self._cache[key] = info  # Update cache
+        # 7. Create new assets from provider results (single transaction)
+        if batch_result.successful:
+            infos_to_create = list(batch_result.successful.values())
+
+            # Update cache
+            for key, info in batch_result.successful.items():
+                self._cache[key] = info
+
             try:
-                new_asset = self._create_asset(db, info)
-                results[key] = new_asset
+                new_assets = self._create_assets_batch(db, infos_to_create)
+                for asset in new_assets:
+                    result.resolved[(asset.ticker, asset.exchange)] = asset
             except Exception as e:
-                logger.error(f"Failed to create new asset {key}: {e}")
+                logger.error(f"Failed to create new assets: {e}")
+                for info in infos_to_create:
+                    result.errors[(info.ticker, info.exchange)] = e
 
-        # Log failures from provider
+        # 8. Record provider failures
         for key, error in batch_result.failed.items():
-            logger.error(f"Failed to resolve {key} from provider: {error}")
+            result.not_found.append(key)
+            logger.warning(f"Asset not found by provider: {key}")
 
-        return results
+        return result
 
     def _lookup_in_db(self, db: Session, ticker: str, exchange: str) -> Asset | None:
         """
@@ -329,6 +360,35 @@ class AssetResolutionService:
         db.refresh(asset)
 
         return asset
+
+    def _create_assets_batch(
+            self,
+            db: Session,
+            asset_infos: list[AssetInfo]
+    ) -> list[Asset]:
+        """Create multiple assets in a single transaction."""
+        assets = []
+        for info in asset_infos:
+            asset = Asset(
+                ticker=info.ticker,
+                exchange=info.exchange,
+                name=info.name,
+                asset_class=info.asset_class,
+                currency=info.currency,
+                sector=info.sector,
+                region=info.region,
+                isin=info.isin,
+                is_active=True,
+            )
+            db.add(asset)
+            assets.append(asset)
+
+        db.commit()  # Single commit for all
+
+        for asset in assets:
+            db.refresh(asset)
+
+        return assets
 
     def clear_cache(self) -> None:
         """

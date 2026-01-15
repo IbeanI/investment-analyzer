@@ -33,6 +33,7 @@ Usage:
             print(f"Row {error.row_number}: {error.message}")
 """
 
+import dataclasses
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -76,7 +77,7 @@ class UploadError:
     error_type: str
     message: str
     field: str | None = None
-    raw_data: dict[str, Any] = field(default_factory=dict)
+    raw_data: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclass

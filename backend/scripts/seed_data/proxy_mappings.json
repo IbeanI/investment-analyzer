@@ -1,0 +1,10 @@
+{
+  "CLWD.PA": {
+    "proxy_ticker": "D6RP.DE",
+    "description": "Lyxor MSCI World Climate Change (DR) UCITS ETF - Acc -> Deka MSCI World Climate Change ESG UCITS ETF Proxy"
+  },
+  "XAMB.DE": {
+    "proxy_ticker": "2B7K.DE",
+    "description": "Amundi Index MSCI World SRI PAB UCITS ETF DR (C) -> iShares MSCI World SRI UCITS ETF EUR (Acc) Proxy"
+  }
+}

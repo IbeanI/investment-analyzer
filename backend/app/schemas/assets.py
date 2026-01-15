@@ -184,6 +184,20 @@ class AssetUpdate(BaseModel):
     is_active: bool | None = Field(default=None)
 
     # =========================================================================
+    # PROXY BACKCASTING (Phase 3)
+    # =========================================================================
+    proxy_asset_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="ID of the proxy asset used for backcasting missing price data (NULL to clear)"
+    )
+    proxy_notes: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Human-readable explanation of why this proxy was chosen"
+    )
+
+    # =========================================================================
     # FIELD VALIDATORS (Normalization)
     # =========================================================================
 
@@ -238,6 +252,18 @@ class AssetResponse(AssetBase):
     is_active: bool = Field(..., description="Whether the asset is currently active")
     created_at: datetime = Field(...)
     updated_at: datetime = Field(...)
+
+    # =========================================================================
+    # PROXY BACKCASTING (Phase 3)
+    # =========================================================================
+    proxy_asset_id: int | None = Field(
+        default=None,
+        description="ID of the proxy asset used for backcasting (NULL if none assigned)"
+    )
+    proxy_notes: str | None = Field(
+        default=None,
+        description="Explanation of proxy relationship"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -97,8 +97,20 @@ class Asset(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    # Relationship to prices
-    prices: Mapped[list["MarketData"]] = relationship(back_populates="asset")
+    # =========================================================================
+    # PROXY BACKCASTING (Phase 3)
+    # =========================================================================
+    # When an asset has missing historical data (delisted, merged, renamed), we use a similar asset (proxy) to generate synthetic price history.
+    # NULL = standard asset (use its own data)
+    # SET = use this asset's prices to backfill gaps
+    proxy_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, default=None)
+    proxy_notes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)  # e.g., "Lyxor MSCI World Climate Change → Deka MSCI World Climate Change ESG"
+
+    # Self-referential relationship for proxy navigation
+    proxy: Mapped["Asset | None"] = relationship("Asset", remote_side="Asset.id", foreign_keys=[proxy_asset_id], )
+
+    # Relationship to prices and transactions
+    prices: Mapped[list["MarketData"]] = relationship(back_populates="asset", foreign_keys="MarketData.asset_id")
     transactions: Mapped[list["Transaction"]] = relationship(back_populates="asset")
 
 
@@ -143,4 +155,16 @@ class MarketData(Base):
 
     # Metadata (Data Lineage)
     provider: Mapped[str] = mapped_column(String, default="yahoo")  # e.g. "yahoo", "alpha_vantage"
-    asset: Mapped["Asset"] = relationship(back_populates="prices")
+
+    # =========================================================================
+    # SYNTHETIC DATA TRACKING (Phase 3)
+    # =========================================================================
+    # When prices are generated via proxy backcasting, we track:
+    # - is_synthetic: True if this price was calculated, not fetched
+    # - proxy_source_id: The proxy asset whose prices were used for calculation
+
+    is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
+    proxy_source_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, default=None)
+
+    # Relationship to asset (explicit foreign_keys due to multiple FKs to assets)
+    asset: Mapped["Asset"] = relationship(back_populates="prices", foreign_keys=[asset_id])

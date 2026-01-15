@@ -14,6 +14,7 @@ Design Principles:
 - Dependency Inversion: UploadService depends on this abstraction
 """
 
+import dataclasses
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -108,7 +109,7 @@ class ParseError:
     error_type: str
     message: str
     field: str | None = None
-    raw_data: dict[str, Any] = field(default_factory=dict)
+    raw_data: dict[str, Any] = dataclasses.field(default_factory=dict)
 
 
 @dataclass

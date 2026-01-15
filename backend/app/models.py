@@ -3,7 +3,7 @@ import enum
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import String, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean
+from sqlalchemy import String, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean, JSON, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -37,6 +37,15 @@ class AssetClass(str, enum.Enum):
     OTHER = "OTHER"
 
 
+class SyncStatusEnum(str, enum.Enum):
+    """Status values for market data sync operations."""
+    NEVER = "NEVER"
+    IN_PROGRESS = "IN_PROGRESS"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    PENDING = "PENDING"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -59,6 +68,18 @@ class Portfolio(Base):
     currency: Mapped[str] = mapped_column(String, default="EUR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Phase 3: Settings and Sync Status
+    settings: Mapped["PortfolioSettings | None"] = relationship(
+        back_populates="portfolio",
+        uselist=False,  # One-to-one relationship
+        cascade="all, delete-orphan"
+    )
+    sync_status: Mapped["SyncStatus | None"] = relationship(
+        back_populates="portfolio",
+        uselist=False,  # One-to-one relationship
+        cascade="all, delete-orphan"
+    )
 
     owner: Mapped["User"] = relationship(back_populates="portfolios")
     transactions: Mapped[list["Transaction"]] = relationship(
@@ -169,3 +190,140 @@ class MarketData(Base):
     # Relationships (explicit foreign_keys due to multiple FKs to assets)
     asset: Mapped["Asset"] = relationship(back_populates="prices", foreign_keys=[asset_id])
     proxy_source: Mapped["Asset | None"] = relationship("Asset", foreign_keys=[proxy_source_id])
+
+
+class ExchangeRate(Base):
+    """
+    Historical exchange rates between currency pairs.
+
+    Used for converting asset values to portfolio base currency
+    at any historical date.
+
+    Convention: rate represents "1 base_currency = X quote_currency"
+    Example: base=USD, quote=EUR, rate=0.92 means 1 USD = 0.92 EUR
+
+    Data is fetched from Yahoo Finance using symbols like "USDEUR=X"
+    """
+    __tablename__ = "exchange_rates"
+    __table_args__ = (
+        UniqueConstraint('base_currency', 'quote_currency', 'date',
+                         name='uq_exchange_rate_pair_date'),
+        Index('ix_exchange_rate_lookup', 'base_currency', 'quote_currency', 'date'),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+
+    # Currency pair (e.g., USD/EUR means 1 USD = X EUR)
+    base_currency: Mapped[str] = mapped_column(String(3), index=True)  # e.g., "USD"
+    quote_currency: Mapped[str] = mapped_column(String(3), index=True)  # e.g., "EUR"
+
+    # The date for this rate
+    date: Mapped[datetime] = mapped_column(DateTime, index=True)
+
+    # The exchange rate (Decimal for precision)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))  # e.g., 0.92610000
+
+    # Metadata
+    provider: Mapped[str] = mapped_column(String(50), default="yahoo")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+
+
+class SyncStatus(Base):
+    """
+    Tracks market data synchronization status per portfolio.
+
+    Allows users to see:
+    - When data was last synced
+    - What date range is covered
+    - Any errors that occurred
+    """
+    __tablename__ = "sync_status"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    portfolio_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolios.id"),
+        unique=True,  # One status record per portfolio
+        index=True
+    )
+
+    # Sync timing
+    last_sync_started: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+    last_sync_completed: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # Sync status
+    status: Mapped[SyncStatusEnum] = mapped_column(
+        Enum(SyncStatusEnum),
+        default=SyncStatusEnum.NEVER
+    )
+
+    # Coverage summary (JSON for flexibility)
+    # Example: {
+    #   "assets": {"AAPL": {"from": "2020-01-01", "to": "2024-01-15", "gaps": []}},
+    #   "fx_pairs": {"USD/EUR": {"from": "2020-01-01", "to": "2024-01-15"}}
+    # }
+    coverage_summary: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Error tracking
+    last_error: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationship
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="sync_status")
+
+
+class PortfolioSettings(Base):
+    """
+    User preferences for a portfolio.
+
+    Currently stores:
+    - enable_proxy_backcasting: Whether to use synthetic data for gaps (Beta)
+
+    Future settings could include:
+    - Reporting preferences
+    - Notification settings
+    - Display preferences
+    """
+    __tablename__ = "portfolio_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    portfolio_id: Mapped[int] = mapped_column(
+        ForeignKey("portfolios.id"),
+        unique=True,  # One settings record per portfolio
+        index=True
+    )
+
+    # Proxy backcasting opt-in (Beta feature)
+    enable_proxy_backcasting: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationship
+    portfolio: Mapped["Portfolio"] = relationship(back_populates="settings")

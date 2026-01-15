@@ -23,7 +23,7 @@ class ExchangeRateResponse(BaseModel):
     id: int
     base_currency: str = Field(..., description="Base currency (e.g., USD)")
     quote_currency: str = Field(..., description="Quote currency (e.g., EUR)")
-    date: datetime = Field(..., description="Date of the rate")
+    date: date = Field(..., description="Date of the rate")
     rate: Decimal = Field(..., description="Exchange rate (1 base = X quote)")
     provider: str = Field(..., description="Data provider (e.g., yahoo)")
 

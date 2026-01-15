@@ -164,7 +164,7 @@ class MarketDataPointResponse(BaseModel):
 
     id: int
     asset_id: int
-    date: datetime
+    date: date  # Daily data - no time component
     close_price: Decimal
     adjusted_close: Decimal | None = None
     volume: int | None = None

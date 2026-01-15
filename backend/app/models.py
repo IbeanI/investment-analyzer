@@ -107,7 +107,7 @@ class Asset(Base):
     proxy_notes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)  # e.g., "Lyxor MSCI World Climate Change → Deka MSCI World Climate Change ESG"
 
     # Self-referential relationship for proxy navigation
-    proxy: Mapped["Asset | None"] = relationship("Asset", remote_side="Asset.id", foreign_keys=[proxy_asset_id], )
+    proxy: Mapped["Asset | None"] = relationship("Asset", remote_side="Asset.id", foreign_keys=[proxy_asset_id])
 
     # Relationship to prices and transactions
     prices: Mapped[list["MarketData"]] = relationship(back_populates="asset", foreign_keys="MarketData.asset_id")
@@ -166,5 +166,6 @@ class MarketData(Base):
     is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     proxy_source_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, default=None)
 
-    # Relationship to asset (explicit foreign_keys due to multiple FKs to assets)
+    # Relationships (explicit foreign_keys due to multiple FKs to assets)
     asset: Mapped["Asset"] = relationship(back_populates="prices", foreign_keys=[asset_id])
+    proxy_source: Mapped["Asset | None"] = relationship("Asset", foreign_keys=[proxy_source_id])

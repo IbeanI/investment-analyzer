@@ -94,13 +94,34 @@ class PnLDetail(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    amount: Decimal | None = Field(
+    # Unrealized (open positions)
+    unrealized_amount: Decimal | None = Field(
         ...,
-        description="P&L in portfolio currency (None if value unknown)"
+        description="Unrealized P&L in portfolio currency (None if value unknown)"
     )
-    percentage: Decimal | None = Field(
+    unrealized_percentage: Decimal | None = Field(
         ...,
-        description="P&L as percentage of cost basis (None if value unknown)"
+        description="Unrealized P&L as percentage of cost basis"
+    )
+
+    # Realized (closed positions)
+    realized_amount: Decimal = Field(
+        ...,
+        description="Realized P&L from sales in portfolio currency"
+    )
+    realized_percentage: Decimal | None = Field(
+        ...,
+        description="Realized P&L as percentage of cost of sold shares"
+    )
+
+    # Total
+    total_amount: Decimal | None = Field(
+        ...,
+        description="Total P&L (unrealized + realized)"
+    )
+    total_percentage: Decimal | None = Field(
+        ...,
+        description="Total P&L as percentage of cost basis"
     )
 
 
@@ -143,6 +164,23 @@ class HoldingValuation(BaseModel):
 # PORTFOLIO VALUATION SCHEMAS
 # =============================================================================
 
+class CashBalanceDetail(BaseModel):
+    """Cash balance in a specific currency."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    currency: str = Field(..., description="Currency code (e.g., 'EUR', 'USD')")
+    amount: Decimal = Field(..., description="Cash amount in this currency")
+    amount_portfolio: Decimal | None = Field(
+        ...,
+        description="Amount converted to portfolio currency (None if FX unavailable)"
+    )
+    fx_rate_used: Decimal | None = Field(
+        ...,
+        description="FX rate used for conversion (None if same as portfolio currency)"
+    )
+
+
 class PortfolioValuationSummary(BaseModel):
     """Summary totals for portfolio valuation."""
 
@@ -154,11 +192,27 @@ class PortfolioValuationSummary(BaseModel):
     )
     total_value: Decimal | None = Field(
         ...,
-        description="Total current value in portfolio currency (None if incomplete)"
+        description="Total securities value in portfolio currency (None if incomplete)"
+    )
+    total_cash: Decimal | None = Field(
+        default=None,
+        description="Total cash in portfolio currency (None if not tracking or FX incomplete)"
+    )
+    total_equity: Decimal | None = Field(
+        ...,
+        description="Total equity (securities + cash) in portfolio currency"
+    )
+    total_unrealized_pnl: Decimal | None = Field(
+        ...,
+        description="Total unrealized P&L (None if incomplete)"
+    )
+    total_realized_pnl: Decimal = Field(
+        ...,
+        description="Total realized P&L from sales"
     )
     total_pnl: Decimal | None = Field(
         ...,
-        description="Total P&L in portfolio currency (None if incomplete)"
+        description="Total P&L (unrealized + realized, None if incomplete)"
     )
     total_pnl_percentage: Decimal | None = Field(
         ...,
@@ -185,6 +239,16 @@ class PortfolioValuationResponse(BaseModel):
         description="Individual holding valuations"
     )
 
+    # Cash tracking
+    tracks_cash: bool = Field(
+        default=False,
+        description="True if portfolio has DEPOSIT/WITHDRAWAL transactions"
+    )
+    cash_balances: list[CashBalanceDetail] = Field(
+        default_factory=list,
+        description="Cash balances by currency (empty if tracks_cash=False)"
+    )
+
     # Data quality
     has_complete_data: bool = Field(
         ...,
@@ -208,11 +272,33 @@ class ValuationHistoryPoint(BaseModel):
     date: dt.date
     value: Decimal | None = Field(
         ...,
-        description="Portfolio value (None if incomplete data)"
+        description="Portfolio securities value (None if incomplete data)"
+    )
+    cash: Decimal | None = Field(
+        default=None,
+        description="Total cash in portfolio currency (None if not tracking)"
+    )
+    equity: Decimal | None = Field(
+        ...,
+        description="Total equity (value + cash, None if incomplete)"
     )
     cost_basis: Decimal
-    pnl: Decimal | None
-    pnl_percentage: Decimal | None
+    unrealized_pnl: Decimal | None = Field(
+        ...,
+        description="Unrealized P&L (None if value unknown)"
+    )
+    realized_pnl: Decimal = Field(
+        ...,
+        description="Realized P&L from sales up to this date"
+    )
+    total_pnl: Decimal | None = Field(
+        ...,
+        description="Total P&L (unrealized + realized, None if incomplete)"
+    )
+    pnl_percentage: Decimal | None = Field(
+        ...,
+        description="Total P&L as percentage of cost basis"
+    )
     has_complete_data: bool
 
 
@@ -228,6 +314,12 @@ class PortfolioHistoryResponse(BaseModel):
     interval: str = Field(
         ...,
         description="Data interval: daily, weekly, monthly"
+    )
+
+    # Cash tracking
+    tracks_cash: bool = Field(
+        default=False,
+        description="True if portfolio tracks cash (has DEPOSIT/WITHDRAWAL)"
     )
 
     # Time series data

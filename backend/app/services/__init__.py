@@ -11,10 +11,12 @@ separate from the API (router) layer. Services:
 
 Usage:
     from app.services import AssetResolutionService
+    from app.services import FXRateService
     from app.services import (
         AssetNotFoundError,
         AssetDeactivatedError,
         MarketDataError,
+        FXRateNotFoundError,
     )
 
     # In router
@@ -29,6 +31,7 @@ Architecture:
     ├── __init__.py              # This file - main exports
     ├── exceptions.py            # Domain exceptions
     ├── asset_resolution.py      # Asset resolution service
+    ├── fx_rate_service.py       # FX rate service (Phase 3)
     └── market_data/             # Market data providers
         ├── base.py              # Abstract interface
         └── yahoo.py             # Yahoo Finance implementation
@@ -47,12 +50,21 @@ from app.services.exceptions import (
     ProviderUnavailableError,
     TickerNotFoundError,
     RateLimitError,
+    # FX rate exceptions (Phase 3)
+    FXRateError,
+    FXRateNotFoundError,
+    FXProviderError,
 )
+from app.services.fx_rate_service import FXRateService, FXSyncResult, FXRateResult
 
 __all__ = [
     # Services
     "AssetResolutionService",
     "BatchResolutionResult",
+    # FX Rate Service (Phase 3)
+    "FXRateService",
+    "FXSyncResult",
+    "FXRateResult",
     # Base exceptions
     "ServiceError",
     # Asset resolution exceptions
@@ -64,4 +76,8 @@ __all__ = [
     "ProviderUnavailableError",
     "TickerNotFoundError",
     "RateLimitError",
+    # FX rate exceptions (Phase 3)
+    "FXRateError",
+    "FXRateNotFoundError",
+    "FXProviderError",
 ]

@@ -11,6 +11,7 @@ Key features:
 - Comprehensive error handling
 - Retry mechanism inherited from base class
 - Batch fetching for efficient bulk operations
+- Historical OHLCV price data fetching
 
 Limitations:
 - Rate limits (not officially documented, but exist)
@@ -22,6 +23,8 @@ like Bloomberg, Refinitiv, or Alpha Vantage Premium.
 """
 
 import logging
+from datetime import date, timedelta
+from decimal import Decimal
 from typing import Any
 
 import yfinance as yf
@@ -36,6 +39,8 @@ from app.services.market_data.base import (
     MarketDataProvider,
     AssetInfo,
     BatchResult,
+    OHLCVData,
+    HistoricalPricesResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -45,7 +50,8 @@ class YahooFinanceProvider(MarketDataProvider):
     """
     Yahoo Finance implementation of MarketDataProvider.
 
-    Uses the yfinance library to fetch asset metadata from Yahoo Finance.
+    Uses the yfinance library to fetch asset metadata and historical prices
+    from Yahoo Finance.
 
     Configuration:
         timeout: API request timeout in seconds (default: 10)
@@ -56,331 +62,258 @@ class YahooFinanceProvider(MarketDataProvider):
         - Uses exponential backoff: 1s → 2s → 4s
         - Maximum 3 attempts (configurable via class attributes)
 
-    Batch Behavior:
-        - Uses yf.Tickers() for efficient bulk fetching
-        - Handles partial failures (some tickers found, others not)
-        - Chunks large requests to respect MAX_BATCH_SIZE
-
     Example:
         provider = YahooFinanceProvider(timeout=15)
 
-        # Single fetch
+        # Fetch asset metadata
         info = provider.get_asset_info("NVDA", "NASDAQ")
         print(info.name)  # "NVIDIA Corporation"
 
-        # Batch fetch
-        result = provider.get_asset_info_batch([
-            ("NVDA", "NASDAQ"),
-            ("BMW", "XETRA"),
-        ])
-        print(f"Found {result.success_count} assets")
+        # Fetch historical prices
+        prices = provider.get_historical_prices(
+            "NVDA", "NASDAQ",
+            date(2024, 1, 1), date(2024, 12, 31)
+        )
+        print(f"Fetched {prices.days_fetched} days of data")
     """
-
-    # =========================================================================
-    # RETRY CONFIGURATION (override base class if needed)
-    # =========================================================================
-    # Uncomment to customize retry behavior for Yahoo specifically:
-    # MAX_RETRY_ATTEMPTS: int = 5    # Yahoo may need more retries
-    # RETRY_MIN_WAIT: int = 2        # Longer initial wait
 
     # =========================================================================
     # EXCHANGE MAPPING
     # =========================================================================
     # Maps our exchange codes to Yahoo Finance suffixes.
-    # Yahoo uses suffixes like .DE for German exchanges, .L for London, etc.
-    # US exchanges (NASDAQ, NYSE, AMEX) typically have no suffix.
-    #
-    # This mapping will be expanded based on user requirements.
-    # =========================================================================
+    # Yahoo uses suffixes for non-US exchanges (e.g., ".DE" for Germany).
+    # US exchanges (NASDAQ, NYSE) use no suffix.
 
-    EXCHANGE_TO_YAHOO_SUFFIX: dict[str, str] = {
-        # United States (no suffix)
+    EXCHANGE_SUFFIXES: dict[str, str] = {
+        # US Exchanges (no suffix)
         "NASDAQ": "",
         "NYSE": "",
-        "AMEX": "",
         "NYSEARCA": "",
+        "NYSEMKT": "",
         "BATS": "",
-        # Germany
-        "TGATE": ".DE",
-        "IBIS": ".DE",
-        "IBIS2": ".DE",
+        "AMEX": "",
+        "NMS": "",  # NASDAQ National Market System
+
+        # German Exchanges
         "XETRA": ".DE",
         "FRA": ".F",
         "FRANKFURT": ".F",
-        # United Kingdom
+        "TGATE": ".DE",  # Tradegate
+
+        # UK Exchanges
         "LSE": ".L",
         "LONDON": ".L",
-        # France
-        "SBF": ".PA",
-        "EURONEXT": ".PA",
+        "LON": ".L",
+
+        # French Exchanges
         "EPA": ".PA",
+        "EURONEXT": ".PA",
+        "SBF": ".PA",
         "PARIS": ".PA",
-        # Netherlands
-        "AEB": ".AS",
+
+        # Dutch Exchanges
         "AMS": ".AS",
+        "AEB": ".AS",
         "AMSTERDAM": ".AS",
-        # Japan
-        "TSE": ".T",
-        "TYO": ".T",
-        "TOKYO": ".T",
-        # Hong Kong
-        "HKEX": ".HK",
-        "HKG": ".HK",
-        # Australia
-        "ASX": ".AX",
-        # Canada
-        "TSX": ".TO",
-        "TORONTO": ".TO",
-        # Switzerland
+
+        # Belgian Exchanges
+        "BRU": ".BR",
+        "EBR": ".BR",
+
+        # Italian Exchanges
+        "MIL": ".MI",
+        "BIT": ".MI",
+
+        # Spanish Exchanges
+        "BME": ".MC",
+        "MCE": ".MC",
+
+        # Swiss Exchanges
         "SWX": ".SW",
         "SWISS": ".SW",
-        # Italy
-        "BVME": ".MI",
-        "MIL": ".MI",
-        "MILAN": ".MI",
-        # Spain
-        "BME": ".MC",
-        "MADRID": ".MC",
-        # Singapore
-        "SGX": ".SI",
-        # South Korea
-        "KRX": ".KS",
-        "KOSPI": ".KS",
-        # India
-        "NSE": ".NS",
-        "BSE": ".BO",
-        # Brazil
-        "BOVESPA": ".SA",
-        "B3": ".SA",
-        # Mexico
-        "BMV": ".MX",
+        "VTX": ".SW",
+
+        # Japanese Exchanges
+        "TYO": ".T",
+        "TSE": ".T",
+        "TOKYO": ".T",
+        "JPX": ".T",
+
+        # Hong Kong Exchanges
+        "HKG": ".HK",
+        "HKEX": ".HK",
+
+        # Chinese Exchanges
+        "SHA": ".SS",
+        "SHE": ".SZ",
+
+        # Canadian Exchanges
+        "TSX": ".TO",
+        "TORONTO": ".TO",
+        "CVE": ".V",
+
+        # Australian Exchanges
+        "ASX": ".AX",
     }
 
     # =========================================================================
     # QUOTE TYPE MAPPING
     # =========================================================================
-    # Maps Yahoo's quoteType field to our AssetClass enum.
-    # Yahoo returns types like "EQUITY", "ETF", "CRYPTOCURRENCY", etc.
-    # =========================================================================
+    # Maps Yahoo Finance quote types to our AssetClass enum.
 
-    YAHOO_QUOTE_TYPE_TO_ASSET_CLASS: dict[str, AssetClass] = {
+    QUOTE_TYPE_MAPPING: dict[str, AssetClass] = {
         "EQUITY": AssetClass.STOCK,
         "ETF": AssetClass.ETF,
-        "MUTUALFUND": AssetClass.ETF,  # Treat mutual funds as ETF-like
+        "MUTUALFUND": AssetClass.ETF,  # Treat mutual funds as ETFs
         "INDEX": AssetClass.INDEX,
-        "CRYPTOCURRENCY": AssetClass.CRYPTO,
         "CURRENCY": AssetClass.CASH,
+        "CRYPTOCURRENCY": AssetClass.CRYPTO,
         "BOND": AssetClass.BOND,
         "OPTION": AssetClass.OPTION,
-        "FUTURE": AssetClass.OTHER,
+        "FUTURE": AssetClass.OTHER,  # Map to OTHER as it's not commonly used
     }
 
-    # Default timeout for API requests (seconds)
-    DEFAULT_TIMEOUT: int = 10
+    # =========================================================================
+    # INITIALIZATION
+    # =========================================================================
 
-    def __init__(self, timeout: int | None = None) -> None:
+    def __init__(self, timeout: int = 10) -> None:
         """
         Initialize the Yahoo Finance provider.
 
         Args:
-            timeout: Request timeout in seconds. Defaults to 10 seconds.
+            timeout: Request timeout in seconds
         """
-        self._timeout = timeout or self.DEFAULT_TIMEOUT
+        self._timeout = timeout
+        logger.info(f"YahooFinanceProvider initialized (timeout={timeout}s)")
 
     @property
     def name(self) -> str:
-        """Provider identifier."""
         return "yahoo"
 
     # =========================================================================
-    # SINGLE FETCH
+    # ASSET METADATA METHODS
     # =========================================================================
 
     def get_asset_info(self, ticker: str, exchange: str) -> AssetInfo:
         """
         Fetch asset metadata from Yahoo Finance.
 
-        Uses the inherited retry mechanism for resilience against
-        transient failures.
-
         Args:
-            ticker: Trading symbol (e.g., "NVDA")
-            exchange: Exchange code (e.g., "NASDAQ")
+            ticker: Trading symbol
+            exchange: Exchange code
 
         Returns:
-            AssetInfo with metadata from Yahoo Finance.
+            AssetInfo with asset metadata
 
         Raises:
-            TickerNotFoundError: Ticker not recognized by Yahoo (not retried).
-            ProviderUnavailableError: Yahoo API unreachable (after retries).
-            RateLimitError: Rate limit exceeded (after retries).
+            TickerNotFoundError: If ticker not found
+            ProviderUnavailableError: If Yahoo Finance unavailable
         """
-        # Normalize inputs
-        ticker = ticker.strip().upper()
-        exchange = exchange.strip().upper()
-
-        # Build Yahoo symbol
-        yahoo_symbol = self._build_yahoo_symbol(ticker, exchange)
-        logger.debug(
-            f"Fetching asset info for {yahoo_symbol} "
-            f"(ticker={ticker}, exchange={exchange})"
-        )
-
-        # Fetch data from Yahoo with retry (inherited from base class)
-        yahoo_data = self._execute_with_retry(
-            self._fetch_ticker_info,
-            yahoo_symbol,
+        return self._execute_with_retry(
+            self._fetch_asset_info,
             ticker,
             exchange,
         )
 
-        # Map to AssetInfo
-        return self._map_to_asset_info(yahoo_data, ticker, exchange)
+    def _fetch_asset_info(self, ticker: str, exchange: str) -> AssetInfo:
+        """Internal method to fetch asset info (called by retry wrapper)."""
+        ticker = ticker.strip().upper()
+        exchange = exchange.strip().upper() if exchange else ""
 
-    # =========================================================================
-    # BATCH FETCH
-    # =========================================================================
+        yahoo_symbol = self._build_yahoo_symbol(ticker, exchange)
+        logger.debug(f"Fetching asset info for {yahoo_symbol}")
+
+        try:
+            yf_ticker = yf.Ticker(yahoo_symbol)
+            info = yf_ticker.info
+
+            if not self._is_valid_ticker_info(info):
+                raise TickerNotFoundError(
+                    ticker=ticker,
+                    exchange=exchange,
+                    provider=self.name,
+                )
+
+            return self._map_to_asset_info(info, ticker, exchange)
+
+        except TickerNotFoundError:
+            raise
+        except Exception as e:
+            error_str = str(e).lower()
+            if "not found" in error_str or "no data" in error_str:
+                raise TickerNotFoundError(
+                    ticker=ticker,
+                    exchange=exchange,
+                    provider=self.name,
+                )
+            if "rate limit" in error_str or "too many requests" in error_str:
+                raise RateLimitError(provider=self.name)
+
+            logger.error(f"Yahoo Finance error for {yahoo_symbol}: {e}")
+            raise ProviderUnavailableError(
+                provider=self.name,
+                reason=str(e),
+            )
 
     def get_asset_info_batch(
             self,
-            tickers: list[tuple[str, str]],
+            tickers: list[tuple[str, str]]
     ) -> BatchResult:
         """
-        Fetch metadata for multiple assets in a single operation.
+        Fetch metadata for multiple assets.
 
-        Uses yf.Tickers() for efficient batch fetching. Handles partial
-        failures gracefully - if some tickers are not found, they are
-        reported in BatchResult.failed while successful ones are in
-        BatchResult.successful.
-
-        Args:
-            tickers: List of (ticker, exchange) tuples to fetch.
-                     Example: [("NVDA", "NASDAQ"), ("BMW", "XETRA")]
-
-        Returns:
-            BatchResult with successful and failed lookups.
-
-        Raises:
-            ProviderUnavailableError: Yahoo completely unreachable (after retries).
-            RateLimitError: Rate limit exceeded (after retries).
+        Uses yf.Tickers() for efficient batch fetching.
         """
-        if not tickers:
-            logger.debug("Empty ticker list, returning empty BatchResult")
-            return BatchResult()
-
-        # Normalize all inputs
-        normalized_tickers = [
-            (ticker.strip().upper(), exchange.strip().upper() if exchange else "")
-            for ticker, exchange in tickers
-        ]
-
-        # Remove duplicates while preserving order
-        unique_tickers = list(dict.fromkeys(normalized_tickers))
-
-        logger.info(
-            f"Batch fetching {len(unique_tickers)} unique assets "
-            f"(from {len(tickers)} requested)"
-        )
-
-        # Chunk large requests
-        if len(unique_tickers) > self.MAX_BATCH_SIZE:
-            return self._fetch_batch_chunked(unique_tickers)
-
-        # Execute batch fetch with retry
         return self._execute_with_retry(
-            self._fetch_batch,
-            unique_tickers,
+            self._fetch_asset_info_batch,
+            tickers,
         )
 
-    def _fetch_batch_chunked(
+    def _fetch_asset_info_batch(
             self,
-            tickers: list[tuple[str, str]],
+            tickers: list[tuple[str, str]]
     ) -> BatchResult:
-        """
-        Fetch large batches by chunking into smaller requests.
-
-        Args:
-            tickers: List of (ticker, exchange) tuples (normalized)
-
-        Returns:
-            Combined BatchResult from all chunks
-        """
-        logger.info(
-            f"Chunking {len(tickers)} tickers into batches of {self.MAX_BATCH_SIZE}"
-        )
-
-        combined_result = BatchResult()
-
-        for i in range(0, len(tickers), self.MAX_BATCH_SIZE):
-            chunk = tickers[i:i + self.MAX_BATCH_SIZE]
-            chunk_num = (i // self.MAX_BATCH_SIZE) + 1
-            total_chunks = (len(tickers) + self.MAX_BATCH_SIZE - 1) // self.MAX_BATCH_SIZE
-
-            logger.debug(f"Processing chunk {chunk_num}/{total_chunks} ({len(chunk)} tickers)")
-
-            # Fetch this chunk with retry
-            chunk_result = self._execute_with_retry(
-                self._fetch_batch,
-                chunk,
-            )
-
-            # Merge results
-            combined_result.successful.update(chunk_result.successful)
-            combined_result.failed.update(chunk_result.failed)
-
-        logger.info(
-            f"Batch fetch complete: {combined_result.success_count} successful, "
-            f"{combined_result.failure_count} failed"
-        )
-
-        return combined_result
-
-    def _fetch_batch(
-            self,
-            tickers: list[tuple[str, str]],
-    ) -> BatchResult:
-        """
-        Execute batch fetch using yf.Tickers().
-
-        This is the core batch implementation that makes a single API call
-        for multiple tickers.
-
-        Args:
-            tickers: List of (ticker, exchange) tuples (normalized)
-
-        Returns:
-            BatchResult with successful and failed lookups
-
-        Raises:
-            ProviderUnavailableError: API error (will be retried)
-            RateLimitError: Rate limit hit (will be retried)
-        """
+        """Internal batch fetch implementation."""
         result = BatchResult()
 
-        # Build mapping: yahoo_symbol -> (ticker, exchange)
-        symbol_mapping: dict[str, tuple[str, str]] = {}
+        if not tickers:
+            return result
+
+        # Build Yahoo symbols
+        ticker_map: dict[str, tuple[str, str]] = {}
         for ticker, exchange in tickers:
+            ticker = ticker.strip().upper()
+            exchange = exchange.strip().upper() if exchange else ""
             yahoo_symbol = self._build_yahoo_symbol(ticker, exchange)
-            symbol_mapping[yahoo_symbol] = (ticker, exchange)
+            ticker_map[yahoo_symbol] = (ticker, exchange)
 
-        # Build space-separated symbol string for yfinance
-        symbols_str = " ".join(symbol_mapping.keys())
+        # Fetch in chunks
+        symbols = list(ticker_map.keys())
+        for i in range(0, len(symbols), self.MAX_BATCH_SIZE):
+            chunk = symbols[i:i + self.MAX_BATCH_SIZE]
+            self._fetch_batch_chunk(chunk, ticker_map, result)
 
-        logger.debug(f"Fetching batch from Yahoo: {symbols_str}")
+        return result
 
+    def _fetch_batch_chunk(
+            self,
+            symbols: list[str],
+            ticker_map: dict[str, tuple[str, str]],
+            result: BatchResult,
+    ) -> None:
+        """Fetch a chunk of symbols."""
         try:
-            # Single API call for all tickers
-            yf_tickers = yf.Tickers(symbols_str)
+            yf_tickers = yf.Tickers(" ".join(symbols))
 
-            # Process each ticker
-            for yahoo_symbol, (ticker, exchange) in symbol_mapping.items():
+            for yahoo_symbol in symbols:
+                ticker, exchange = ticker_map[yahoo_symbol]
+                key = (ticker, exchange)
+
                 try:
-                    # Get info for this ticker
                     yf_ticker = yf_tickers.tickers.get(yahoo_symbol)
-
                     if yf_ticker is None:
-                        logger.warning(f"Ticker not in response: {yahoo_symbol}")
-                        result.failed[(ticker, exchange)] = TickerNotFoundError(
+                        result.failed[key] = TickerNotFoundError(
                             ticker=ticker,
                             exchange=exchange,
                             provider=self.name,
@@ -388,241 +321,299 @@ class YahooFinanceProvider(MarketDataProvider):
                         continue
 
                     info = yf_ticker.info
-
-                    # Validate we got real data
                     if not self._is_valid_ticker_info(info):
-                        logger.warning(f"Invalid/empty data for: {yahoo_symbol}")
-                        result.failed[(ticker, exchange)] = TickerNotFoundError(
+                        result.failed[key] = TickerNotFoundError(
                             ticker=ticker,
                             exchange=exchange,
                             provider=self.name,
                         )
                         continue
 
-                    # Map to AssetInfo
-                    asset_info = self._map_to_asset_info(info, ticker, exchange)
-                    result.successful[(ticker, exchange)] = asset_info
-
-                    logger.debug(f"Successfully fetched: {ticker} on {exchange}")
+                    result.successful[key] = self._map_to_asset_info(
+                        info, ticker, exchange
+                    )
 
                 except Exception as e:
-                    # Individual ticker error - record and continue
-                    logger.warning(f"Error processing {yahoo_symbol}: {e}")
-                    result.failed[(ticker, exchange)] = TickerNotFoundError(
+                    result.failed[key] = e
+
+        except Exception as e:
+            logger.error(f"Batch fetch failed: {e}")
+            for yahoo_symbol in symbols:
+                ticker, exchange = ticker_map[yahoo_symbol]
+                key = (ticker, exchange)
+                if key not in result.successful:
+                    result.failed[key] = ProviderUnavailableError(
+                        provider=self.name,
+                        reason=str(e),
+                    )
+
+    # =========================================================================
+    # HISTORICAL PRICE METHODS
+    # =========================================================================
+
+    def get_historical_prices(
+            self,
+            ticker: str,
+            exchange: str,
+            start_date: date,
+            end_date: date,
+    ) -> HistoricalPricesResult:
+        """
+        Fetch historical OHLCV price data from Yahoo Finance.
+
+        Args:
+            ticker: Trading symbol (e.g., "NVDA")
+            exchange: Exchange code (e.g., "NASDAQ")
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
+
+        Returns:
+            HistoricalPricesResult with OHLCV data
+
+        Raises:
+            TickerNotFoundError: If ticker not found
+            ProviderUnavailableError: If Yahoo Finance unavailable
+        """
+        return self._execute_with_retry(
+            self._fetch_historical_prices,
+            ticker,
+            exchange,
+            start_date,
+            end_date,
+        )
+
+    def _fetch_historical_prices(
+            self,
+            ticker: str,
+            exchange: str,
+            start_date: date,
+            end_date: date,
+    ) -> HistoricalPricesResult:
+        """Internal method to fetch historical prices."""
+        ticker = ticker.strip().upper()
+        exchange = exchange.strip().upper() if exchange else ""
+
+        yahoo_symbol = self._build_yahoo_symbol(ticker, exchange)
+
+        logger.debug(
+            f"Fetching historical prices for {yahoo_symbol}: "
+            f"{start_date} to {end_date}"
+        )
+
+        result = HistoricalPricesResult(
+            ticker=ticker,
+            exchange=exchange,
+            from_date=start_date,
+            to_date=end_date,
+        )
+
+        try:
+            yf_ticker = yf.Ticker(yahoo_symbol)
+
+            # Yahoo Finance end date is exclusive, so add 1 day
+            yahoo_end = end_date + timedelta(days=1)
+
+            # Fetch historical data
+            df = yf_ticker.history(
+                start=start_date.isoformat(),
+                end=yahoo_end.isoformat(),
+                interval="1d",
+                auto_adjust=False,  # Get raw prices, not adjusted
+            )
+
+            if df.empty:
+                # Check if ticker exists at all
+                info = yf_ticker.info
+                if not self._is_valid_ticker_info(info):
+                    raise TickerNotFoundError(
                         ticker=ticker,
                         exchange=exchange,
                         provider=self.name,
                     )
 
-        except Exception as e:
-            error_message = str(e).lower()
+                # Ticker exists but no data for this range
+                logger.warning(
+                    f"No price data for {yahoo_symbol} "
+                    f"between {start_date} and {end_date}"
+                )
+                result.success = True  # Not an error, just no data
+                return result
 
-            # Check for rate limiting
-            if "rate limit" in error_message or "too many requests" in error_message:
-                logger.warning(f"Yahoo Finance rate limit hit during batch: {e}")
-                raise RateLimitError(provider=self.name)
+            # Convert DataFrame to list of OHLCVData
+            prices = self._dataframe_to_ohlcv(df)
+            result.prices = prices
+            result.success = True
 
-            # Check for network/timeout errors
-            if any(
-                    indicator in error_message
-                    for indicator in ["timeout", "connection", "network", "unavailable"]
-            ):
-                logger.warning(f"Yahoo Finance unavailable during batch (will retry): {e}")
-                raise ProviderUnavailableError(provider=self.name, reason=str(e))
+            if prices:
+                result.actual_from_date = min(p.date for p in prices)
+                result.actual_to_date = max(p.date for p in prices)
 
-            # Unexpected error - treat as provider unavailable
-            logger.error(f"Unexpected error during batch fetch: {e}")
-            raise ProviderUnavailableError(
-                provider=self.name,
-                reason=f"Unexpected error: {e}",
+            logger.debug(
+                f"Fetched {len(prices)} days for {yahoo_symbol}"
             )
 
-        logger.info(
-            f"Batch fetch result: {result.success_count} successful, "
-            f"{result.failure_count} failed"
-        )
+            return result
 
-        return result
-
-    # =========================================================================
-    # HEALTH CHECK
-    # =========================================================================
-
-    def is_available(self) -> bool:
-        """
-        Check if Yahoo Finance is responding.
-
-        Attempts to fetch a well-known ticker (AAPL) as a health check.
-        """
-        try:
-            test_ticker = yf.Ticker("AAPL")
-            info = test_ticker.info
-            # Check if we got meaningful data
-            return info is not None and info.get("symbol") is not None
+        except TickerNotFoundError:
+            raise
         except Exception as e:
-            logger.warning(f"Yahoo Finance health check failed: {e}")
-            return False
+            error_str = str(e).lower()
+
+            if "not found" in error_str or "no data" in error_str:
+                raise TickerNotFoundError(
+                    ticker=ticker,
+                    exchange=exchange,
+                    provider=self.name,
+                )
+
+            if "rate limit" in error_str or "too many requests" in error_str:
+                raise RateLimitError(provider=self.name)
+
+            logger.error(f"Yahoo Finance error for {yahoo_symbol}: {e}")
+            raise ProviderUnavailableError(
+                provider=self.name,
+                reason=str(e),
+            )
+
+    def _dataframe_to_ohlcv(self, df) -> list[OHLCVData]:
+        """
+        Convert a pandas DataFrame from yfinance to list of OHLCVData.
+
+        Args:
+            df: DataFrame with columns: Open, High, Low, Close, Volume, Adj Close
+
+        Returns:
+            List of OHLCVData objects
+        """
+        prices = []
+
+        for idx, row in df.iterrows():
+            try:
+                # Extract date (idx is a Timestamp)
+                price_date = idx.date() if hasattr(idx, 'date') else idx
+
+                # Extract prices, handling NaN values
+                open_price = self._to_decimal(row.get('Open'))
+                high_price = self._to_decimal(row.get('High'))
+                low_price = self._to_decimal(row.get('Low'))
+                close_price = self._to_decimal(row.get('Close'))
+                adj_close = self._to_decimal(row.get('Adj Close'))
+                volume = self._to_int(row.get('Volume'))
+
+                # Skip rows with missing close price
+                if close_price is None:
+                    logger.warning(f"Skipping {price_date}: missing close price")
+                    continue
+
+                # Use close price as fallback for missing OHLC
+                if open_price is None:
+                    open_price = close_price
+                if high_price is None:
+                    high_price = close_price
+                if low_price is None:
+                    low_price = close_price
+
+                prices.append(OHLCVData(
+                    date=price_date,
+                    open=open_price,
+                    high=high_price,
+                    low=low_price,
+                    close=close_price,
+                    volume=volume,
+                    adjusted_close=adj_close,
+                ))
+
+            except Exception as e:
+                logger.warning(f"Error parsing row {idx}: {e}")
+                continue
+
+        return prices
+
+    @staticmethod
+    def _to_decimal(value: Any) -> Decimal | None:
+        """Convert a value to Decimal, returning None for NaN/None."""
+        if value is None:
+            return None
+        try:
+            import math
+            if math.isnan(float(value)):
+                return None
+            return Decimal(str(value)).quantize(Decimal("0.00000001"))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _to_int(value: Any) -> int | None:
+        """Convert a value to int, returning None for NaN/None."""
+        if value is None:
+            return None
+        try:
+            import math
+            if math.isnan(float(value)):
+                return None
+            return int(value)
+        except (TypeError, ValueError):
+            return None
 
     # =========================================================================
-    # PRIVATE HELPER METHODS
+    # HELPER METHODS
     # =========================================================================
 
     def _build_yahoo_symbol(self, ticker: str, exchange: str) -> str:
         """
-        Convert ticker + exchange to Yahoo's symbol format.
-
-        Yahoo uses suffixes for non-US exchanges:
-        - US: "NVDA" (no suffix)
-        - Germany: "BMW.DE"
-        - UK: "VUAA.L"
+        Build Yahoo Finance symbol from ticker and exchange.
 
         Args:
-            ticker: Normalized ticker symbol
-            exchange: Normalized exchange code
+            ticker: Trading symbol
+            exchange: Our exchange code
 
         Returns:
-            Yahoo-compatible symbol string
-
-        Examples:
-            ("NVDA", "NASDAQ") → "NVDA"
-            ("BMW", "XETRA") → "BMW.DE"
-            ("VUAA", "LSE") → "VUAA.L"
+            Yahoo Finance symbol (e.g., "NVDA" or "SAP.DE")
         """
-        suffix = self.EXCHANGE_TO_YAHOO_SUFFIX.get(exchange, "")
+        suffix = self.EXCHANGE_SUFFIXES.get(exchange, "")
+        return f"{ticker}{suffix}"
 
-        if suffix:
-            return f"{ticker}{suffix}"
-        return ticker
-
-    def _is_valid_ticker_info(self, info: dict[str, Any] | None) -> bool:
+    def _is_valid_ticker_info(self, info: dict | None) -> bool:
         """
-        Check if Yahoo returned valid data for a ticker.
+        Check if Yahoo Finance info dict represents a valid ticker.
 
-        yfinance returns empty dict or minimal info for invalid tickers.
-
-        Args:
-            info: Raw info dict from yfinance
-
-        Returns:
-            True if the data appears valid, False otherwise
+        Yahoo returns an info dict even for invalid tickers, but it lacks
+        meaningful data. We check for price or name to validate.
         """
         if not info:
             return False
+        return bool(
+            info.get("regularMarketPrice")
+            or info.get("shortName")
+            or info.get("longName")
+        )
 
-        # Check for key indicators of valid data
-        has_price = info.get("regularMarketPrice") is not None
-        has_name = info.get("shortName") or info.get("longName")
-
-        return has_price or has_name
-
-    def _fetch_ticker_info(
-            self,
-            yahoo_symbol: str,
-            original_ticker: str,
-            original_exchange: str,
-    ) -> dict[str, Any]:
+    def _map_quote_type(self, quote_type: str) -> AssetClass:
         """
-        Fetch raw ticker data from Yahoo Finance API (single ticker).
-
-        This method is called by `_execute_with_retry` from the base class.
-        It should raise appropriate exceptions that the retry mechanism
-        can handle:
-        - TickerNotFoundError: NOT retried (permanent failure)
-        - ProviderUnavailableError: Retried (transient failure)
-        - RateLimitError: Retried (transient failure)
+        Map Yahoo Finance quote type to our AssetClass.
 
         Args:
-            yahoo_symbol: Yahoo-formatted symbol (e.g., "BMW.DE")
-            original_ticker: Original ticker for error messages
-            original_exchange: Original exchange for error messages
+            quote_type: Yahoo Finance quote type string
 
         Returns:
-            Dictionary of ticker information from Yahoo.
-
-        Raises:
-            TickerNotFoundError: Symbol not found (not retried).
-            ProviderUnavailableError: API error or timeout (retried).
-            RateLimitError: Rate limit exceeded (retried).
+            Corresponding AssetClass enum value
         """
-        try:
-            yf_ticker = yf.Ticker(yahoo_symbol)
-            info = yf_ticker.info
-
-            # Validate we got real data
-            if not self._is_valid_ticker_info(info):
-                logger.warning(f"Ticker not found on Yahoo: {yahoo_symbol}")
-                raise TickerNotFoundError(
-                    ticker=original_ticker,
-                    exchange=original_exchange,
-                    provider=self.name,
-                )
-
-            return info
-
-        except TickerNotFoundError:
-            # Re-raise - this is NOT retried (permanent failure)
-            raise
-
-        except Exception as e:
-            error_message = str(e).lower()
-
-            # Check for rate limiting indicators
-            if "rate limit" in error_message or "too many requests" in error_message:
-                logger.warning(f"Yahoo Finance rate limit hit: {e}")
-                raise RateLimitError(provider=self.name)
-
-            # Check for network/timeout errors
-            if any(
-                    indicator in error_message
-                    for indicator in ["timeout", "connection", "network", "unavailable"]
-            ):
-                logger.warning(f"Yahoo Finance unavailable (will retry): {e}")
-                raise ProviderUnavailableError(provider=self.name, reason=str(e))
-
-            # Unexpected errors - treat as unavailable (will be retried)
-            logger.error(f"Unexpected error fetching {yahoo_symbol}: {e}")
-            raise ProviderUnavailableError(
-                provider=self.name,
-                reason=f"Unexpected error: {e}",
-            )
+        return self.QUOTE_TYPE_MAPPING.get(quote_type, AssetClass.OTHER)
 
     def _map_to_asset_info(
             self,
-            yahoo_data: dict[str, Any],
+            info: dict,
             ticker: str,
             exchange: str,
     ) -> AssetInfo:
-        """
-        Map Yahoo Finance response to our AssetInfo dataclass.
+        """Map Yahoo Finance info dict to our AssetInfo dataclass."""
+        quote_type = info.get("quoteType", "EQUITY")
+        asset_class = self.QUOTE_TYPE_MAPPING.get(quote_type, AssetClass.OTHER)
 
-        Args:
-            yahoo_data: Raw data from Yahoo Finance API
-            ticker: Original ticker (normalized)
-            exchange: Original exchange (normalized)
-
-        Returns:
-            AssetInfo populated with Yahoo data.
-        """
-        # Extract and map asset class
-        quote_type = yahoo_data.get("quoteType", "EQUITY")
-        asset_class = self._map_quote_type(quote_type)
-
-        # Extract name (prefer longName, fall back to shortName)
-        name = yahoo_data.get("longName") or yahoo_data.get("shortName")
-
-        # Extract currency (default to USD if not available)
-        currency = yahoo_data.get("currency", "USD")
-        if currency:
-            currency = currency.upper()
-
-        # Extract sector (may not be available for ETFs, indices, etc.)
-        sector = yahoo_data.get("sector")
-
-        # Extract region/country
-        region = yahoo_data.get("country")
-
-        # ISIN is typically not provided by Yahoo Finance
-        isin = None
+        name = info.get("longName") or info.get("shortName")
+        currency = (info.get("currency") or "USD").upper()
+        sector = info.get("sector")
+        region = info.get("country")
 
         return AssetInfo(
             ticker=ticker,
@@ -632,28 +623,5 @@ class YahooFinanceProvider(MarketDataProvider):
             currency=currency,
             sector=sector,
             region=region,
-            isin=isin,
+            isin=None,  # Yahoo doesn't provide ISIN
         )
-
-    def _map_quote_type(self, yahoo_quote_type: str) -> AssetClass:
-        """
-        Map Yahoo's quoteType to our AssetClass enum.
-
-        Args:
-            yahoo_quote_type: Yahoo's quote type (e.g., "EQUITY", "ETF")
-
-        Returns:
-            Corresponding AssetClass enum value.
-            Defaults to OTHER if type is not recognized.
-        """
-        asset_class = self.YAHOO_QUOTE_TYPE_TO_ASSET_CLASS.get(
-            yahoo_quote_type,
-            AssetClass.OTHER,
-        )
-
-        if yahoo_quote_type not in self.YAHOO_QUOTE_TYPE_TO_ASSET_CLASS:
-            logger.warning(
-                f"Unknown Yahoo quote type '{yahoo_quote_type}', defaulting to OTHER"
-            )
-
-        return asset_class

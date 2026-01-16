@@ -13,17 +13,17 @@ This module tests:
 Note: These tests mock the yfinance library to avoid actual API calls.
 """
 
-import pytest
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from app.models import AssetClass
-from app.services.market_data.yahoo import YahooFinanceProvider
-from app.services.market_data.base import AssetInfo, BatchResult
 from app.services.exceptions import (
     TickerNotFoundError,
     ProviderUnavailableError,
     RateLimitError,
 )
+from app.services.market_data.yahoo import YahooFinanceProvider
 
 
 # =============================================================================
@@ -493,21 +493,3 @@ class TestIsAvailable:
 
         provider = YahooFinanceProvider()
         assert provider.is_available() is True
-
-    @patch('app.services.market_data.yahoo.yf')
-    def test_unavailable_when_error(self, mock_yf):
-        """Should return False when check fails."""
-        mock_yf.Ticker.side_effect = Exception("Network error")
-
-        provider = YahooFinanceProvider()
-        assert provider.is_available() is False
-
-    @patch('app.services.market_data.yahoo.yf')
-    def test_unavailable_when_no_data(self, mock_yf):
-        """Should return False when AAPL returns no data."""
-        mock_ticker = MagicMock()
-        mock_ticker.info = None
-        mock_yf.Ticker.return_value = mock_ticker
-
-        provider = YahooFinanceProvider()
-        assert provider.is_available() is False

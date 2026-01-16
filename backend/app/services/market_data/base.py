@@ -19,6 +19,8 @@ Design Principles:
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from datetime import date
+from decimal import Decimal
 from typing import TypeVar, Callable, Any
 
 from tenacity import (
@@ -42,7 +44,7 @@ T = TypeVar('T')
 
 
 # =============================================================================
-# DATA CLASSES
+# DATA CLASSES - ASSET METADATA
 # =============================================================================
 
 @dataclass(frozen=True)
@@ -54,7 +56,6 @@ class AssetInfo:
     Using frozen=True makes it immutable and hashable (suitable for caching).
 
     Note: This represents METADATA (relatively static), not PRICES (dynamic).
-    Price data will be handled separately in Phase 3.
 
     Attributes:
         ticker: Trading symbol, normalized to uppercase (e.g., "NVDA")
@@ -80,7 +81,6 @@ class AssetInfo:
         """Validate required fields after initialization."""
         if not self.ticker:
             raise ValueError("ticker is required")
-        # Note: exchange can be empty for assets without traditional exchanges (e.g., crypto)
         if not self.currency:
             raise ValueError("currency is required")
 
@@ -90,29 +90,11 @@ class BatchResult:
     """
     Result of a batch asset info fetch operation.
 
-    Supports partial success: some tickers may succeed while others fail.
-    This allows the caller to decide how to handle failures (skip, retry, abort).
+    Tracks which lookups succeeded and which failed, allowing partial success.
 
     Attributes:
-        successful: Dict mapping (ticker, exchange) to AssetInfo for found assets
-        failed: Dict mapping (ticker, exchange) to Exception for failed lookups
-
-    Example:
-        result = provider.get_asset_info_batch([
-            ("NVDA", "NASDAQ"),
-            ("INVALID", "NYSE"),
-            ("AAPL", "NASDAQ"),
-        ])
-
-        # result.successful = {
-        #     ("NVDA", "NASDAQ"): AssetInfo(...),
-        #     ("AAPL", "NASDAQ"): AssetInfo(...),
-        # }
-        # result.failed = {
-        #     ("INVALID", "NYSE"): TickerNotFoundError(...),
-        # }
-
-        print(f"Found {result.success_count}/{result.total_count} assets")
+        successful: Dict mapping (ticker, exchange) to AssetInfo
+        failed: Dict mapping (ticker, exchange) to the exception that occurred
     """
 
     successful: dict[tuple[str, str], AssetInfo] = field(default_factory=dict)
@@ -120,54 +102,128 @@ class BatchResult:
 
     @property
     def success_count(self) -> int:
-        """Number of successfully fetched assets."""
         return len(self.successful)
 
     @property
     def failure_count(self) -> int:
-        """Number of failed asset lookups."""
         return len(self.failed)
 
     @property
     def total_count(self) -> int:
-        """Total number of assets requested."""
         return self.success_count + self.failure_count
 
     @property
     def all_successful(self) -> bool:
-        """True if all requests succeeded."""
         return self.failure_count == 0
 
+
+# =============================================================================
+# DATA CLASSES - PRICE DATA (OHLCV)
+# =============================================================================
+
+@dataclass(frozen=True)
+class OHLCVData:
+    """
+    Single day's OHLCV (Open, High, Low, Close, Volume) price data.
+
+    This is the standard format for daily price data from market data providers.
+    Using frozen=True makes it immutable and suitable for caching.
+
+    Attributes:
+        date: Trading date (no time component)
+        open: Opening price
+        high: Highest price during the day
+        low: Lowest price during the day
+        close: Closing price (primary valuation price)
+        volume: Trading volume (number of shares traded)
+        adjusted_close: Close price adjusted for splits/dividends (optional)
+    """
+
+    date: date
+    open: Decimal
+    high: Decimal
+    low: Decimal
+    close: Decimal
+    volume: int | None = None
+    adjusted_close: Decimal | None = None
+
+    def __post_init__(self) -> None:
+        """Validate price data."""
+        if self.close <= 0:
+            raise ValueError(f"close price must be positive, got {self.close}")
+        # High should be >= Low (basic sanity check)
+        if self.high < self.low:
+            raise ValueError(f"high ({self.high}) cannot be less than low ({self.low})")
+
+
+@dataclass
+class HistoricalPricesResult:
+    """
+    Result of fetching historical prices for an asset.
+
+    Tracks the fetch outcome and any issues encountered.
+
+    Attributes:
+        ticker: The ticker symbol requested
+        exchange: The exchange code requested
+        prices: List of OHLCV data points (empty if failed)
+        success: Whether the fetch was successful
+        error: Error message if fetch failed
+        from_date: Requested start date
+        to_date: Requested end date
+        actual_from_date: Actual earliest date in returned data
+        actual_to_date: Actual latest date in returned data
+    """
+
+    ticker: str
+    exchange: str
+    prices: list[OHLCVData] = field(default_factory=list)
+    success: bool = True
+    error: str | None = None
+    from_date: date | None = None
+    to_date: date | None = None
+    actual_from_date: date | None = None
+    actual_to_date: date | None = None
+
+    def __post_init__(self) -> None:
+        """Set actual date range from prices if not provided."""
+        if self.prices and self.actual_from_date is None:
+            self.actual_from_date = min(p.date for p in self.prices)
+        if self.prices and self.actual_to_date is None:
+            self.actual_to_date = max(p.date for p in self.prices)
+
     @property
-    def all_failed(self) -> bool:
-        """True if all requests failed."""
-        return self.success_count == 0
+    def days_fetched(self) -> int:
+        """Number of trading days fetched."""
+        return len(self.prices)
 
-    def get_asset(self, ticker: str, exchange: str) -> AssetInfo | None:
-        """
-        Get AssetInfo for a specific ticker/exchange, or None if not found.
 
-        Args:
-            ticker: Trading symbol
-            exchange: Exchange code
+@dataclass
+class BatchPricesResult:
+    """
+    Result of fetching historical prices for multiple assets.
 
-        Returns:
-            AssetInfo if found, None otherwise
-        """
-        return self.successful.get((ticker.upper(), exchange.upper()))
+    Attributes:
+        results: Dict mapping (ticker, exchange) to HistoricalPricesResult
+    """
 
-    def get_error(self, ticker: str, exchange: str) -> Exception | None:
-        """
-        Get the error for a specific ticker/exchange, or None if successful.
+    results: dict[tuple[str, str], HistoricalPricesResult] = field(default_factory=dict)
 
-        Args:
-            ticker: Trading symbol
-            exchange: Exchange code
+    @property
+    def success_count(self) -> int:
+        return sum(1 for r in self.results.values() if r.success)
 
-        Returns:
-            Exception if failed, None otherwise
-        """
-        return self.failed.get((ticker.upper(), exchange.upper()))
+    @property
+    def failure_count(self) -> int:
+        return sum(1 for r in self.results.values() if not r.success)
+
+    @property
+    def total_prices_fetched(self) -> int:
+        return sum(r.days_fetched for r in self.results.values())
+
+    @property
+    def all_successful(self) -> bool:
+        return self.failure_count == 0
 
 
 # =============================================================================
@@ -179,7 +235,7 @@ class MarketDataProvider(ABC):
     Abstract base class for market data providers.
 
     All market data providers (Yahoo Finance, Bloomberg, Alpha Vantage, etc.)
-    must implement this interface to be usable by the asset resolution service.
+    must implement this interface to be usable by the application services.
 
     Retry Behavior:
         The base class provides a `_execute_with_retry` method that implements
@@ -197,47 +253,22 @@ class MarketDataProvider(ABC):
 
     Non-Retryable Exceptions:
         - TickerNotFoundError: Permanent failure (ticker doesn't exist)
-
-    Example implementation:
-        class YahooFinanceProvider(MarketDataProvider):
-            # Optionally override retry config
-            MAX_RETRY_ATTEMPTS = 5  # More retries for Yahoo
-
-            @property
-            def name(self) -> str:
-                return "yahoo"
-
-            def get_asset_info(self, ticker: str, exchange: str) -> AssetInfo:
-                return self._execute_with_retry(
-                    self._fetch_from_api,
-                    ticker,
-                    exchange,
-                )
-
-            def get_asset_info_batch(
-                self,
-                tickers: list[tuple[str, str]]
-            ) -> BatchResult:
-                return self._execute_with_retry(
-                    self._fetch_batch_from_api,
-                    tickers,
-                )
     """
 
     # =========================================================================
     # RETRY CONFIGURATION (can be overridden by subclasses)
     # =========================================================================
 
-    MAX_RETRY_ATTEMPTS: int = 3  # Total attempts (1 initial + 2 retries)
-    RETRY_MIN_WAIT: int = 1  # Minimum wait between retries (seconds)
-    RETRY_MAX_WAIT: int = 10  # Maximum wait between retries (seconds)
-    RETRY_MULTIPLIER: int = 1  # Multiplier for exponential backoff
+    MAX_RETRY_ATTEMPTS: int = 3
+    RETRY_MIN_WAIT: int = 1
+    RETRY_MAX_WAIT: int = 10
+    RETRY_MULTIPLIER: int = 1
 
     # =========================================================================
     # BATCH CONFIGURATION (can be overridden by subclasses)
     # =========================================================================
 
-    MAX_BATCH_SIZE: int = 100  # Maximum tickers per batch request
+    MAX_BATCH_SIZE: int = 100
 
     # =========================================================================
     # ABSTRACT PROPERTIES AND METHODS
@@ -261,136 +292,135 @@ class MarketDataProvider(ABC):
         """
         Fetch metadata for a single asset.
 
-        This method retrieves static information about an asset such as
-        its name, sector, currency, and asset class. It does NOT fetch
-        price data (that will be added in Phase 3).
-
-        Implementations SHOULD use `_execute_with_retry` for API calls
-        to ensure consistent retry behavior.
-
         Args:
             ticker: Trading symbol (e.g., "NVDA", "AAPL")
-                    Should be normalized to uppercase by the caller.
             exchange: Exchange code (e.g., "NASDAQ", "XETRA")
-                      Should be normalized to uppercase by the caller.
 
         Returns:
-            AssetInfo containing all available metadata for the asset.
+            AssetInfo with the asset's metadata
 
         Raises:
-            TickerNotFoundError: The ticker is not recognized by this provider.
-            ProviderUnavailableError: The provider API is unreachable (after retries).
-            RateLimitError: Too many requests to the provider (after retries).
+            TickerNotFoundError: Ticker not found on the exchange
+            ProviderUnavailableError: Network or API error (retryable)
+            RateLimitError: Rate limit exceeded (retryable)
         """
         pass
 
     @abstractmethod
     def get_asset_info_batch(
             self,
-            tickers: list[tuple[str, str]],
+            tickers: list[tuple[str, str]]
     ) -> BatchResult:
         """
-        Fetch metadata for multiple assets in a single operation.
+        Fetch metadata for multiple assets.
 
-        This method is optimized for bulk operations like CSV imports.
-        It supports partial success - some tickers may be found while
-        others fail.
-
-        Implementations SHOULD:
-        - Use batch API calls where available (e.g., yf.Tickers)
-        - Handle partial failures gracefully
-        - Respect MAX_BATCH_SIZE and chunk large requests
-        - Use `_execute_with_retry` for API calls
+        This method handles partial failures - some lookups may succeed
+        while others fail. Check BatchResult.failed for failures.
 
         Args:
-            tickers: List of (ticker, exchange) tuples to fetch.
-                     Example: [("NVDA", "NASDAQ"), ("BMW", "XETRA")]
+            tickers: List of (ticker, exchange) tuples
 
         Returns:
-            BatchResult containing:
-            - successful: Dict of (ticker, exchange) -> AssetInfo
-            - failed: Dict of (ticker, exchange) -> Exception
-
-        Raises:
-            ProviderUnavailableError: Provider completely unreachable (after retries).
-            RateLimitError: Rate limit exceeded (after retries).
-
-        Note:
-            Individual ticker failures (TickerNotFoundError) are captured
-            in BatchResult.failed, not raised as exceptions.
-
-        Example:
-            result = provider.get_asset_info_batch([
-                ("NVDA", "NASDAQ"),
-                ("INVALID", "NYSE"),
-            ])
-
-            if result.all_successful:
-                print("All assets found!")
-            else:
-                for key, error in result.failed.items():
-                    print(f"Failed: {key} - {error}")
+            BatchResult with successful and failed lookups
         """
         pass
 
     @abstractmethod
-    def is_available(self) -> bool:
+    def get_historical_prices(
+            self,
+            ticker: str,
+            exchange: str,
+            start_date: date,
+            end_date: date,
+    ) -> HistoricalPricesResult:
         """
-        Check if the provider is currently available.
+        Fetch historical OHLCV price data for a single asset.
 
-        This is a lightweight health check that can be used for:
-        - Monitoring and alerting
-        - Provider selection in fallback scenarios
-        - Circuit breaker patterns
+        Args:
+            ticker: Trading symbol (e.g., "NVDA", "AAPL")
+            exchange: Exchange code (e.g., "NASDAQ", "XETRA")
+            start_date: Start date (inclusive)
+            end_date: End date (inclusive)
 
         Returns:
-            True if the provider is responding normally, False otherwise.
+            HistoricalPricesResult with OHLCV data
+
+        Raises:
+            TickerNotFoundError: Ticker not found on the exchange
+            ProviderUnavailableError: Network or API error (retryable)
+            RateLimitError: Rate limit exceeded (retryable)
         """
         pass
 
+    def get_historical_prices_batch(
+            self,
+            requests: list[tuple[str, str, date, date]],
+    ) -> BatchPricesResult:
+        """
+        Fetch historical prices for multiple assets.
+
+        Default implementation calls get_historical_prices() for each request.
+        Subclasses can override for more efficient batch fetching.
+
+        Args:
+            requests: List of (ticker, exchange, start_date, end_date) tuples
+
+        Returns:
+            BatchPricesResult with results for each request
+        """
+        result = BatchPricesResult()
+
+        for ticker, exchange, start_date, end_date in requests:
+            key = (ticker.upper(), exchange.upper())
+            try:
+                prices_result = self.get_historical_prices(
+                    ticker, exchange, start_date, end_date
+                )
+                result.results[key] = prices_result
+            except Exception as e:
+                logger.error(f"Failed to fetch prices for {ticker}/{exchange}: {e}")
+                result.results[key] = HistoricalPricesResult(
+                    ticker=ticker.upper(),
+                    exchange=exchange.upper(),
+                    success=False,
+                    error=str(e),
+                    from_date=start_date,
+                    to_date=end_date,
+                )
+
+        return result
+
     # =========================================================================
-    # RETRY MECHANISM (inherited by all subclasses)
+    # RETRY HELPER METHOD
     # =========================================================================
 
     def _execute_with_retry(
             self,
-            operation: Callable[..., T],
+            func: Callable[..., T],
             *args: Any,
             **kwargs: Any,
     ) -> T:
         """
-        Execute an operation with retry logic.
+        Execute a function with retry logic for transient failures.
 
-        This method wraps any callable with exponential backoff retry.
-        It retries on transient failures (network issues, rate limits)
-        but NOT on permanent failures (ticker not found).
+        Uses exponential backoff for retryable exceptions:
+        - ProviderUnavailableError
+        - RateLimitError
 
-        Subclasses can customize retry behavior by overriding class attributes:
-        - MAX_RETRY_ATTEMPTS
-        - RETRY_MIN_WAIT
-        - RETRY_MAX_WAIT
-        - RETRY_MULTIPLIER
+        Does NOT retry on:
+        - TickerNotFoundError (permanent failure)
+        - Other exceptions
 
         Args:
-            operation: The callable to execute (e.g., API fetch method)
-            *args: Positional arguments to pass to the operation
-            **kwargs: Keyword arguments to pass to the operation
+            func: Function to execute
+            *args: Positional arguments for func
+            **kwargs: Keyword arguments for func
 
         Returns:
-            The return value of the operation
+            Return value of func
 
         Raises:
-            ProviderUnavailableError: After all retry attempts exhausted
-            RateLimitError: After all retry attempts exhausted
-            Any other exception: Immediately (not retried)
-
-        Example:
-            def get_asset_info(self, ticker, exchange):
-                return self._execute_with_retry(
-                    self._call_api,
-                    ticker,
-                    exchange,
-                )
+            The last exception if all retries fail
         """
 
         @retry(
@@ -404,38 +434,23 @@ class MarketDataProvider(ABC):
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
-        def execute_operation() -> T:
-            return operation(*args, **kwargs)
+        def _inner() -> T:
+            return func(*args, **kwargs)
 
-        return execute_operation()
+        return _inner()
 
     # =========================================================================
-    # PLACEHOLDER FOR PHASE 3 (Price Data)
+    # OPTIONAL METHODS (with default implementations)
     # =========================================================================
-    #
-    # The following methods will be added in Phase 3 when we implement
-    # portfolio valuation and historical analysis:
-    #
-    # @abstractmethod
-    # def get_current_price(self, ticker: str, exchange: str) -> Decimal:
-    #     """Fetch the current/latest price for an asset."""
-    #     pass
-    #
-    # @abstractmethod
-    # def get_historical_prices(
-    #     self,
-    #     ticker: str,
-    #     exchange: str,
-    #     start_date: date,
-    #     end_date: date,
-    # ) -> list[PriceData]:
-    #     """Fetch historical price data for an asset."""
-    #     pass
-    #
-    # @abstractmethod
-    # def get_current_prices_batch(
-    #     self,
-    #     tickers: list[tuple[str, str]],
-    # ) -> BatchPriceResult:
-    #     """Fetch current prices for multiple assets."""
-    #     pass
+
+    def is_available(self) -> bool:
+        """
+        Check if the provider is currently available.
+
+        Default implementation returns True. Subclasses can override
+        to implement health checks.
+
+        Returns:
+            True if provider is available, False otherwise
+        """
+        return True

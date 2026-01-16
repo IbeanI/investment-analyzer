@@ -8,11 +8,11 @@ This module provides shared fixtures for all tests:
 - Sample data factories
 """
 
-import pytest
+from datetime import date, timedelta
 from decimal import Decimal
-from datetime import datetime, timezone
 from typing import Iterator
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -23,11 +23,10 @@ from app.models import (
     AssetClass,
     Portfolio,
     User,
-    Transaction,
-    TransactionType,
 )
+from app.services.exceptions import TickerNotFoundError
 from app.services.market_data.base import MarketDataProvider, AssetInfo, BatchResult
-from app.services.exceptions import TickerNotFoundError, ProviderUnavailableError
+from app.services.market_data.base import OHLCVData, HistoricalPricesResult
 
 
 # =============================================================================
@@ -75,6 +74,8 @@ class MockMarketDataProvider(MarketDataProvider):
         self._errors: dict[tuple[str, str], Exception] = {}
         self._call_count: dict[str, int] = {"single": 0, "batch": 0}
         self._available = True
+        self._historical_prices: dict[tuple[str, str], HistoricalPricesResult] = {}
+        self._fail_tickers: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -98,6 +99,8 @@ class MockMarketDataProvider(MarketDataProvider):
         self._errors.clear()
         self._call_count = {"single": 0, "batch": 0}
         self._available = True
+        self._historical_prices.clear()
+        self._fail_tickers.clear()
 
     @property
     def single_call_count(self) -> int:
@@ -144,6 +147,80 @@ class MockMarketDataProvider(MarketDataProvider):
 
         return result
 
+    # =========================================================================
+    # Historical prices methods for Phase 3
+    # =========================================================================
+
+    def get_historical_prices(
+            self,
+            ticker: str,
+            exchange: str,
+            start_date: date,
+            end_date: date,
+    ) -> HistoricalPricesResult:
+        """
+        Mock implementation of historical price fetching.
+
+        Returns configured results or generates sample data.
+        """
+        ticker = ticker.upper()
+        exchange = exchange.upper() if exchange else ""
+        key = (ticker, exchange)
+
+        # Check if we have configured response for this ticker
+        if key in self._historical_prices:
+            return self._historical_prices[key]
+
+        # Check if ticker should fail
+        if ticker in self._fail_tickers:
+            raise TickerNotFoundError(
+                ticker=ticker,
+                exchange=exchange,
+                provider=self.name
+            )
+
+        # Generate sample data
+        prices = []
+        current = start_date
+        price = Decimal("100.00")
+
+        while current <= end_date:
+            if current.weekday() < 5:  # Skip weekends
+                prices.append(OHLCVData(
+                    date=current,
+                    open=price,
+                    high=price * Decimal("1.02"),
+                    low=price * Decimal("0.98"),
+                    close=price * Decimal("1.01"),
+                    volume=1000000,
+                    adjusted_close=price * Decimal("1.01"),
+                ))
+                price = price * Decimal("1.005")
+            current += timedelta(days=1)
+
+        return HistoricalPricesResult(
+            ticker=ticker,
+            exchange=exchange,
+            prices=prices,
+            success=True,
+            from_date=start_date,
+            to_date=end_date,
+        )
+
+    def set_historical_prices(
+            self,
+            ticker: str,
+            exchange: str,
+            result: HistoricalPricesResult
+    ) -> None:
+        """Configure specific historical prices result for a ticker."""
+        key = (ticker.upper(), exchange.upper() if exchange else "")
+        self._historical_prices[key] = result
+
+    def set_fail_ticker(self, ticker: str) -> None:
+        """Configure a ticker to fail when fetching prices."""
+        self._fail_tickers.add(ticker.upper())
+
     def is_available(self) -> bool:
         """Return configured availability."""
         return self._available
@@ -160,14 +237,14 @@ def mock_provider() -> MockMarketDataProvider:
 # =============================================================================
 
 def create_asset_info(
-    ticker: str = "NVDA",
-    exchange: str = "NASDAQ",
-    name: str = "NVIDIA Corporation",
-    asset_class: AssetClass = AssetClass.STOCK,
-    currency: str = "USD",
-    sector: str = "Technology",
-    region: str = "United States",
-    isin: str | None = None,
+        ticker: str = "NVDA",
+        exchange: str = "NASDAQ",
+        name: str = "NVIDIA Corporation",
+        asset_class: AssetClass = AssetClass.STOCK,
+        currency: str = "USD",
+        sector: str = "Technology",
+        region: str = "United States",
+        isin: str | None = None,
 ) -> AssetInfo:
     """Factory function for creating AssetInfo test data."""
     return AssetInfo(
@@ -183,13 +260,13 @@ def create_asset_info(
 
 
 def create_asset(
-    db: Session,
-    ticker: str = "NVDA",
-    exchange: str = "NASDAQ",
-    name: str = "NVIDIA Corporation",
-    asset_class: AssetClass = AssetClass.STOCK,
-    currency: str = "USD",
-    is_active: bool = True,
+        db: Session,
+        ticker: str = "NVDA",
+        exchange: str = "NASDAQ",
+        name: str = "NVIDIA Corporation",
+        asset_class: AssetClass = AssetClass.STOCK,
+        currency: str = "USD",
+        is_active: bool = True,
 ) -> Asset:
     """Factory function for creating Asset entities in the database."""
     asset = Asset(
@@ -207,9 +284,9 @@ def create_asset(
 
 
 def create_user(
-    db: Session,
-    email: str = "test@example.com",
-    hashed_password: str = "hashed_password",
+        db: Session,
+        email: str = "test@example.com",
+        hashed_password: str = "hashed_password",
 ) -> User:
     """Factory function for creating User entities in the database."""
     user = User(
@@ -223,10 +300,10 @@ def create_user(
 
 
 def create_portfolio(
-    db: Session,
-    user: User,
-    name: str = "Test Portfolio",
-    currency: str = "EUR",
+        db: Session,
+        user: User,
+        name: str = "Test Portfolio",
+        currency: str = "EUR",
 ) -> Portfolio:
     """Factory function for creating Portfolio entities in the database."""
     portfolio = Portfolio(

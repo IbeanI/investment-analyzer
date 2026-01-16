@@ -38,12 +38,22 @@ class AssetClass(str, enum.Enum):
 
 
 class SyncStatusEnum(str, enum.Enum):
-    """Status values for market data sync operations."""
-    NEVER = "NEVER"
-    IN_PROGRESS = "IN_PROGRESS"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    PENDING = "PENDING"
+    """
+    Status values for market data sync operations.
+
+    State transitions:
+        NEVER → IN_PROGRESS → COMPLETED
+        NEVER → IN_PROGRESS → PARTIAL (some assets failed)
+        NEVER → IN_PROGRESS → FAILED (all assets failed or error)
+
+        Any state → IN_PROGRESS (when re-sync triggered)
+    """
+    NEVER = "NEVER"  # Initial state, never synced
+    IN_PROGRESS = "IN_PROGRESS"  # Sync currently running
+    COMPLETED = "COMPLETED"  # All assets synced successfully
+    PARTIAL = "PARTIAL"  # Some assets synced, some failed
+    FAILED = "FAILED"  # Sync failed completely
+    PENDING = "PENDING"  # Scheduled but not started (future use)
 
 
 class User(Base):

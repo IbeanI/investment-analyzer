@@ -1,0 +1,1 @@
+# Schemas tests package

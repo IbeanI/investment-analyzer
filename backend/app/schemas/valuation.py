@@ -9,7 +9,7 @@ These schemas handle:
 - Valuation history (time series)
 """
 
-from datetime import date
+import datetime as dt
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,7 +59,7 @@ class CurrentValueDetail(BaseModel):
         ...,
         description="Current market price per share (None if no data)"
     )
-    price_date: date | None = Field(
+    price_date: dt.date | None = Field(
         ...,
         description="Date of the price (None if no data)"
     )
@@ -174,7 +174,7 @@ class PortfolioValuationResponse(BaseModel):
     portfolio_id: int
     portfolio_name: str
     portfolio_currency: str = Field(..., description="Base currency for valuation")
-    valuation_date: date = Field(..., description="Date of valuation")
+    valuation_date: dt.date = Field(..., description="Date of valuation")
 
     # Summary
     summary: PortfolioValuationSummary
@@ -205,7 +205,7 @@ class ValuationHistoryPoint(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    date: date
+    date: dt.date
     value: Decimal | None = Field(
         ...,
         description="Portfolio value (None if incomplete data)"
@@ -223,8 +223,8 @@ class PortfolioHistoryResponse(BaseModel):
 
     portfolio_id: int
     portfolio_currency: str
-    from_date: date
-    to_date: date
+    from_date: dt.date
+    to_date: dt.date
     interval: str = Field(
         ...,
         description="Data interval: daily, weekly, monthly"
@@ -248,7 +248,7 @@ class PortfolioHistoryResponse(BaseModel):
 class ValuationRequest(BaseModel):
     """Request parameters for valuation endpoint."""
 
-    date: date | None = Field(
+    date: dt.date | None = Field(
         default=None,
         description="Valuation date (default: today)"
     )
@@ -257,8 +257,8 @@ class ValuationRequest(BaseModel):
 class ValuationHistoryRequest(BaseModel):
     """Request parameters for valuation history endpoint."""
 
-    from_date: date = Field(..., description="Start date for history")
-    to_date: date = Field(..., description="End date for history")
+    from_date: dt.date = Field(..., description="Start date for history")
+    to_date: dt.date = Field(..., description="End date for history")
     interval: str = Field(
         default="daily",
         pattern=r"^(daily|weekly|monthly)$",

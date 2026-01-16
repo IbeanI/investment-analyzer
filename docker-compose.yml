@@ -39,6 +39,7 @@ services:
       - ./backend/app:/app/app
       - ./backend/init_db.py:/app/init_db.py
       - ./backend/pyproject.toml:/app/pyproject.toml
+      - ./backend/alembic:/app/alembic
 
 volumes:
   postgres_data:

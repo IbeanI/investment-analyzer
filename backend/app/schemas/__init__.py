@@ -73,6 +73,10 @@ from app.schemas.valuation import (
     ValuationRequest,
     ValuationHistoryRequest,
 )
+from app.schemas.errors import (
+    ErrorDetail,
+    ValidationErrorDetail,
+)
 
 # =============================================================================
 # PHASE 3: Market Data Engine
@@ -143,4 +147,8 @@ __all__ = [
     "PortfolioHistoryResponse",
     "ValuationRequest",
     "ValuationHistoryRequest",
+
+    # Errors
+    "ErrorDetail",
+    "ValidationErrorDetail",
 ]

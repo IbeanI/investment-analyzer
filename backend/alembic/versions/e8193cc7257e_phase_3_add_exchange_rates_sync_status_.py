@@ -1,7 +1,7 @@
 """Phase 3: Add exchange_rates, sync_status, portfolio_settings
 
 Revision ID: e8193cc7257e
-Revises: 70daaa7f2061
+Revises: daa490ca3288
 Create Date: 2026-01-15 18:13:13.884703
 
 """

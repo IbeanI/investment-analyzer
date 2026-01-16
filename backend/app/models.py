@@ -3,7 +3,7 @@ import enum
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean, JSON, Index
+from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean, JSON
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -63,7 +63,7 @@ class Portfolio(Base):
     __tablename__ = "portfolios"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     name: Mapped[str] = mapped_column(String)
     currency: Mapped[str] = mapped_column(String, default="EUR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -139,8 +139,8 @@ class Transaction(Base):
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"))
-    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"), index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
     transaction_type: Mapped[TransactionType] = mapped_column(Enum(TransactionType))
     date: Mapped[datetime] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
@@ -206,9 +206,9 @@ class ExchangeRate(Base):
     """
     __tablename__ = "exchange_rates"
     __table_args__ = (
+        # UniqueConstraint automatically creates an index on (base, quote, date)
         UniqueConstraint('base_currency', 'quote_currency', 'date',
                          name='uq_exchange_rate_pair_date'),
-        Index('ix_exchange_rate_lookup', 'base_currency', 'quote_currency', 'date'),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)

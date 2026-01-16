@@ -232,6 +232,177 @@ class TestGetRateOrNone:
 
 
 # =============================================================================
+# BATCH PREFETCH TESTS
+# =============================================================================
+
+class TestGetRatesForDateRange:
+    """Tests for get_rates_for_date_range method (batch prefetch)."""
+
+    def test_fetches_all_rates_in_range(self, db, fx_service, sample_rates):
+        """Should fetch all rates for date range in single operation."""
+        # sample_rates has Jan 15, 16, 17
+        rates = fx_service.get_rates_for_date_range(
+            db, "USD", "EUR",
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert len(rates) == 3
+        assert date(2024, 1, 15) in rates
+        assert date(2024, 1, 16) in rates
+        assert date(2024, 1, 17) in rates
+
+        # Verify exact match flags
+        assert rates[date(2024, 1, 15)].is_exact_match is True
+        assert rates[date(2024, 1, 15)].rate == Decimal("0.92000000")
+
+    def test_applies_fallback_for_missing_dates(self, db, fx_service, sample_rates):
+        """Should use fallback for dates without exact rates."""
+        # Jan 18 doesn't exist, should fallback to Jan 17
+        rates = fx_service.get_rates_for_date_range(
+            db, "USD", "EUR",
+            date(2024, 1, 15), date(2024, 1, 18)
+        )
+
+        assert len(rates) == 4
+        assert date(2024, 1, 18) in rates
+
+        # Jan 18 should be a fallback from Jan 17
+        jan_18_rate = rates[date(2024, 1, 18)]
+        assert jan_18_rate.is_exact_match is False
+        assert jan_18_rate.actual_date == date(2024, 1, 17)
+        assert jan_18_rate.rate == Decimal("0.93000000")
+
+    def test_omits_dates_beyond_fallback_window(self, db, mock_provider, sample_rates):
+        """Should omit dates that exceed fallback window."""
+        service = FXRateService(provider=mock_provider, max_fallback_days=1)
+
+        # Jan 19 is 2 days after Jan 17, beyond 1-day fallback
+        rates = service.get_rates_for_date_range(
+            db, "USD", "EUR",
+            date(2024, 1, 15), date(2024, 1, 19)
+        )
+
+        # Jan 15-18 should be present (17 and 18 use fallback from 17)
+        # Jan 19 should be omitted (2 days after Jan 17)
+        assert date(2024, 1, 15) in rates
+        assert date(2024, 1, 16) in rates
+        assert date(2024, 1, 17) in rates
+        assert date(2024, 1, 18) in rates
+        assert date(2024, 1, 19) not in rates
+
+    def test_no_fallback_when_disabled(self, db, fx_service, sample_rates):
+        """Should not use fallback when disabled."""
+        rates = fx_service.get_rates_for_date_range(
+            db, "USD", "EUR",
+            date(2024, 1, 15), date(2024, 1, 18),
+            allow_fallback=False
+        )
+
+        # Only exact matches should be returned
+        assert len(rates) == 3
+        assert date(2024, 1, 18) not in rates
+
+    def test_same_currency_returns_one_for_all_dates(self, db, fx_service):
+        """Should return rate of 1.0 for same currency."""
+        rates = fx_service.get_rates_for_date_range(
+            db, "EUR", "EUR",
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert len(rates) == 3
+        for d, rate in rates.items():
+            assert rate.rate == Decimal("1")
+            assert rate.is_exact_match is True
+
+    def test_empty_range_returns_empty_dict(self, db, fx_service):
+        """Should return empty dict when no rates exist."""
+        rates = fx_service.get_rates_for_date_range(
+            db, "CHF", "JPY",  # No rates for this pair
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert rates == {}
+
+    def test_case_insensitive_currencies(self, db, fx_service, sample_rates):
+        """Should handle case-insensitive currency codes."""
+        rates = fx_service.get_rates_for_date_range(
+            db, "usd", "eur",
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert len(rates) == 3
+
+    def test_fallback_at_start_of_range(self, db, fx_service, sample_rates):
+        """Should apply fallback for dates before first rate in range."""
+        # Start from Jan 14, which needs fallback from... nothing before Jan 15
+        # But Jan 14 is only 1 day before Jan 15, within fallback window
+        rates = fx_service.get_rates_for_date_range(
+            db, "USD", "EUR",
+            date(2024, 1, 14), date(2024, 1, 17)
+        )
+
+        # Jan 14 should be omitted (no rate before it)
+        # Jan 15-17 should have exact matches
+        assert date(2024, 1, 14) not in rates
+        assert date(2024, 1, 15) in rates
+
+
+class TestGetRatesBatch:
+    """Tests for get_rates_batch method (multiple currency pairs)."""
+
+    def test_fetches_multiple_pairs(self, db, fx_service, sample_rates):
+        """Should fetch rates for multiple currency pairs."""
+        rates = fx_service.get_rates_batch(
+            db,
+            [("USD", "EUR"), ("GBP", "EUR")],
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert len(rates) == 2
+        assert ("USD", "EUR") in rates
+        assert ("GBP", "EUR") in rates
+
+        # USD/EUR should have 3 rates
+        assert len(rates[("USD", "EUR")]) == 3
+
+        # GBP/EUR only has Jan 15
+        assert date(2024, 1, 15) in rates[("GBP", "EUR")]
+
+    def test_handles_same_currency_pair(self, db, fx_service):
+        """Should handle same currency pairs efficiently."""
+        rates = fx_service.get_rates_batch(
+            db,
+            [("EUR", "EUR"), ("USD", "EUR")],
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        # EUR/EUR should have rates for all days
+        assert len(rates[("EUR", "EUR")]) == 3
+        assert all(r.rate == Decimal("1") for r in rates[("EUR", "EUR")].values())
+
+    def test_empty_pairs_returns_empty_dict(self, db, fx_service):
+        """Should return empty dict for empty pairs list."""
+        rates = fx_service.get_rates_batch(
+            db, [],
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert rates == {}
+
+    def test_normalizes_currency_codes(self, db, fx_service, sample_rates):
+        """Should normalize currency codes to uppercase."""
+        rates = fx_service.get_rates_batch(
+            db,
+            [("usd", "eur"), ("GBP", "eur")],
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        # Keys should be normalized
+        assert ("USD", "EUR") in rates
+        assert ("GBP", "EUR") in rates
+
+
+# =============================================================================
 # REQUIRED PAIRS TESTS
 # =============================================================================
 

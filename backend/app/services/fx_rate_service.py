@@ -374,6 +374,155 @@ class FXRateService:
         except FXRateNotFoundError:
             return None
 
+    def get_rates_for_date_range(
+            self,
+            db: Session,
+            base_currency: str,
+            quote_currency: str,
+            start_date: date,
+            end_date: date,
+            allow_fallback: bool = True,
+    ) -> dict[date, FXRateResult]:
+        """
+        Fetch all FX rates for a date range in a single query.
+
+        This is the recommended method for bulk operations like portfolio
+        history calculation. It fetches all rates in one DB query, then
+        applies fallback logic for any missing dates.
+
+        Args:
+            db: Database session
+            base_currency: Base currency code (e.g., "USD")
+            quote_currency: Quote currency code (e.g., "EUR")
+            start_date: Start of date range (inclusive)
+            end_date: End of date range (inclusive)
+            allow_fallback: If True, use nearest available rate for missing dates
+
+        Returns:
+            Dict mapping date -> FXRateResult for each date in range.
+            Missing dates (with no fallback) are omitted from the result.
+
+        Example:
+            # Get all USD/EUR rates for January 2024
+            rates = fx_service.get_rates_for_date_range(
+                db, "USD", "EUR",
+                date(2024, 1, 1), date(2024, 1, 31)
+            )
+
+            # Use in valuation loop - O(1) lookup per date
+            for day in date_range:
+                if day in rates:
+                    rate = rates[day].rate
+                    # ... use rate
+        """
+        base = base_currency.upper().strip()
+        quote = quote_currency.upper().strip()
+
+        # Same currency = 1:1 rate for all dates
+        if base == quote:
+            result = {}
+            current = start_date
+            while current <= end_date:
+                result[current] = FXRateResult(
+                    base_currency=base,
+                    quote_currency=quote,
+                    date=current,
+                    rate=Decimal("1"),
+                    is_exact_match=True,
+                    actual_date=current,
+                )
+                current += timedelta(days=1)
+            return result
+
+        # Fetch all rates in date range (single query)
+        rates_by_date = self._get_rates_in_range(db, base, quote, start_date, end_date)
+
+        # Build result dict with fallback logic
+        result: dict[date, FXRateResult] = {}
+        current = start_date
+
+        while current <= end_date:
+            if current in rates_by_date:
+                # Exact match found
+                rate_record = rates_by_date[current]
+                result[current] = FXRateResult(
+                    base_currency=base,
+                    quote_currency=quote,
+                    date=current,
+                    rate=rate_record.rate,
+                    is_exact_match=True,
+                    actual_date=current,
+                )
+            elif allow_fallback:
+                # Try fallback: find most recent rate before this date
+                fallback_rate = self._find_fallback_in_dict(
+                    rates_by_date, current, self._max_fallback_days
+                )
+                if fallback_rate:
+                    result[current] = FXRateResult(
+                        base_currency=base,
+                        quote_currency=quote,
+                        date=current,
+                        rate=fallback_rate.rate,
+                        is_exact_match=False,
+                        actual_date=self._extract_date(fallback_rate.date),
+                    )
+                # If no fallback found, date is omitted from result
+
+            current += timedelta(days=1)
+
+        return result
+
+    def get_rates_batch(
+            self,
+            db: Session,
+            currency_pairs: list[tuple[str, str]],
+            start_date: date,
+            end_date: date,
+            allow_fallback: bool = True,
+    ) -> dict[tuple[str, str], dict[date, FXRateResult]]:
+        """
+        Fetch FX rates for multiple currency pairs over a date range.
+
+        This is the most efficient method for portfolio valuation when you
+        need rates for multiple foreign currencies. It minimizes DB queries.
+
+        Args:
+            db: Database session
+            currency_pairs: List of (base, quote) tuples, e.g., [("USD", "EUR"), ("GBP", "EUR")]
+            start_date: Start of date range (inclusive)
+            end_date: End of date range (inclusive)
+            allow_fallback: If True, use nearest available rate for missing dates
+
+        Returns:
+            Nested dict: {(base, quote): {date: FXRateResult}}
+
+        Example:
+            # Get rates for all portfolio currencies
+            pairs = fx_service.get_required_pairs(db, portfolio_id)
+            rates = fx_service.get_rates_batch(
+                db, pairs,
+                date(2024, 1, 1), date(2024, 12, 31)
+            )
+
+            # Access rates efficiently
+            usd_eur_rates = rates[("USD", "EUR")]
+            rate_jan_15 = usd_eur_rates[date(2024, 1, 15)].rate
+        """
+        result: dict[tuple[str, str], dict[date, FXRateResult]] = {}
+
+        for base, quote in currency_pairs:
+            base = base.upper().strip()
+            quote = quote.upper().strip()
+            key = (base, quote)
+
+            # Fetch rates for this pair
+            result[key] = self.get_rates_for_date_range(
+                db, base, quote, start_date, end_date, allow_fallback
+            )
+
+        return result
+
     def get_required_pairs(
             self,
             db: Session,
@@ -599,6 +748,82 @@ class FXRateService:
             dates.add(self._extract_date(dt))
 
         return dates
+
+    def _get_rates_in_range(
+            self,
+            db: Session,
+            base_currency: str,
+            quote_currency: str,
+            start_date: date,
+            end_date: date,
+    ) -> dict[date, ExchangeRate]:
+        """
+        Fetch all rates for a currency pair in a date range.
+
+        Also fetches rates up to MAX_FALLBACK_DAYS before start_date
+        to enable fallback logic for dates at the start of the range.
+
+        Args:
+            db: Database session
+            base_currency: Base currency code
+            quote_currency: Quote currency code
+            start_date: Start of range
+            end_date: End of range
+
+        Returns:
+            Dict mapping date -> ExchangeRate record
+        """
+        # Extend range backwards to include potential fallback rates
+        extended_start = start_date - timedelta(days=self._max_fallback_days)
+
+        query = (
+            select(ExchangeRate)
+            .where(
+                and_(
+                    ExchangeRate.base_currency == base_currency,
+                    ExchangeRate.quote_currency == quote_currency,
+                    func.date(ExchangeRate.date) >= extended_start,
+                    func.date(ExchangeRate.date) <= end_date,
+                )
+            )
+            .order_by(ExchangeRate.date)
+        )
+
+        rates_by_date: dict[date, ExchangeRate] = {}
+        for rate in db.scalars(query).all():
+            rate_date = self._extract_date(rate.date)
+            rates_by_date[rate_date] = rate
+
+        return rates_by_date
+
+    @staticmethod
+    def _find_fallback_in_dict(
+            rates_by_date: dict[date, ExchangeRate],
+            target_date: date,
+            max_fallback_days: int,
+    ) -> ExchangeRate | None:
+        """
+        Find the most recent rate before target_date within fallback window.
+
+        Args:
+            rates_by_date: Dict of date -> ExchangeRate
+            target_date: Date we need a rate for
+            max_fallback_days: Maximum days to look back
+
+        Returns:
+            ExchangeRate if found, None otherwise
+        """
+        min_date = target_date - timedelta(days=max_fallback_days)
+
+        # Look backwards from target_date - 1
+        for days_back in range(1, max_fallback_days + 1):
+            check_date = target_date - timedelta(days=days_back)
+            if check_date < min_date:
+                break
+            if check_date in rates_by_date:
+                return rates_by_date[check_date]
+
+        return None
 
     def _get_exact_rate(
             self,

@@ -8,7 +8,7 @@ These schemas handle:
 - Coverage reporting
 """
 
-from datetime import datetime, date
+import datetime as dt
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -44,8 +44,8 @@ class AssetCoverage(BaseModel):
     asset_id: int
     ticker: str
     exchange: str
-    from_date: date | None = Field(..., description="Earliest date with data")
-    to_date: date | None = Field(..., description="Latest date with data")
+    from_date: dt.date | None = Field(..., description="Earliest date with data")
+    to_date: dt.date | None = Field(..., description="Latest date with data")
     total_days: int = Field(..., description="Number of days with data")
     gaps: list[str] = Field(
         default_factory=list,
@@ -62,8 +62,8 @@ class FXCoverage(BaseModel):
 
     base_currency: str
     quote_currency: str
-    from_date: date | None
-    to_date: date | None
+    from_date: dt.date | None
+    to_date: dt.date | None
     total_days: int
 
 
@@ -86,11 +86,11 @@ class SyncStatusResponse(BaseModel):
         ...,
         description="Sync status: never, in_progress, completed, failed"
     )
-    last_sync_started: datetime | None = Field(
+    last_sync_started: dt.datetime | None = Field(
         ...,
         description="When the last sync started"
     )
-    last_sync_completed: datetime | None = Field(
+    last_sync_completed: dt.datetime | None = Field(
         ...,
         description="When the last sync completed"
     )
@@ -126,13 +126,13 @@ class SyncResult(BaseModel):
         description="Result status: completed, in_progress, failed"
     )
     portfolio_id: int
-    sync_started: datetime
-    sync_completed: datetime | None = None
+    sync_started: dt.datetime
+    sync_completed: dt.datetime | None = None
 
     # Stats
     date_range: dict = Field(
         ...,
-        description="Date range synced: {from: date, to: date}"
+        description="Date range synced: {from: dt.date, to: dt.date}"
     )
     assets_synced: int = Field(..., description="Number of assets processed")
     prices_fetched: int = Field(..., description="Number of price records fetched")
@@ -164,7 +164,7 @@ class MarketDataPointResponse(BaseModel):
 
     id: int
     asset_id: int
-    date: date  # Daily data - no time component
+    date: dt.date  # Daily data - no time component
     close_price: Decimal
     adjusted_close: Decimal | None = None
     volume: int | None = None
@@ -181,7 +181,7 @@ class MarketDataRangeResponse(BaseModel):
     asset_id: int
     ticker: str
     exchange: str
-    from_date: date
-    to_date: date
+    from_date: dt.date
+    to_date: dt.date
     data: list[MarketDataPointResponse]
     total: int

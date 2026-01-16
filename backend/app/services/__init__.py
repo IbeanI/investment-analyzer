@@ -13,6 +13,7 @@ Usage:
     from app.services import AssetResolutionService
     from app.services import FXRateService
     from app.services import MarketDataSyncService
+    from app.services import ValuationService
     from app.services import (
         AssetNotFoundError,
         AssetDeactivatedError,
@@ -26,10 +27,15 @@ Architecture:
     ├── exceptions.py            # Domain exceptions
     ├── asset_resolution.py      # Asset resolution service
     ├── fx_rate_service.py       # FX rate service (Phase 3)
-    └── market_data/             # Market data package
-        ├── base.py              # Abstract provider interface
-        ├── yahoo.py             # Yahoo Finance implementation
-        └── sync_service.py      # Sync orchestration service
+    ├── market_data/             # Market data package
+    │   ├── base.py              # Abstract provider interface
+    │   ├── yahoo.py             # Yahoo Finance implementation
+    │   └── sync_service.py      # Sync orchestration service
+    └── valuation/               # Valuation service (Phase 4)
+        ├── types.py             # Internal data types
+        ├── calculators.py       # Calculation logic
+        ├── history_calculator.py # Time series calculations
+        └── service.py           # Main service orchestrator
 """
 
 # Asset resolution
@@ -69,6 +75,8 @@ from app.services.market_data import (
     SyncResult,
     PortfolioAnalysis,
 )
+# Valuation Service (Phase 4)
+from app.services.valuation import ValuationService
 
 __all__ = [
     # ==========================================================================
@@ -91,6 +99,8 @@ __all__ = [
     "BatchResult",
     "OHLCVData",
     "HistoricalPricesResult",
+    # Valuation Service (Phase 4)
+    "ValuationService",
 
     # ==========================================================================
     # Exceptions

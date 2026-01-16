@@ -12,7 +12,6 @@ are always in the context of a specific portfolio.
 """
 
 from datetime import date
-from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -133,13 +132,6 @@ def _map_cash_balance(cash) -> CashBalanceDetail:
 
 def _map_history_point(point) -> ValuationHistoryPoint:
     """Map internal HistoryPoint to Pydantic schema."""
-    # Calculate pnl_percentage if we have the data
-    pnl_percentage = None
-    if point.total_pnl is not None and point.cost_basis > Decimal("0"):
-        pnl_percentage = (
-                (point.total_pnl / point.cost_basis) * Decimal("100")
-        ).quantize(Decimal("0.01"))
-
     return ValuationHistoryPoint(
         date=point.date,
         value=point.value,
@@ -149,7 +141,7 @@ def _map_history_point(point) -> ValuationHistoryPoint:
         unrealized_pnl=point.unrealized_pnl,
         realized_pnl=point.realized_pnl,
         total_pnl=point.total_pnl,
-        pnl_percentage=pnl_percentage,
+        pnl_percentage=point.pnl_percentage,
         has_complete_data=point.has_complete_data,
     )
 
@@ -207,13 +199,6 @@ def get_portfolio_valuation(
             detail=str(e)
         )
 
-    # Calculate total P&L percentage
-    total_pnl_percentage = None
-    if valuation.total_pnl is not None and valuation.total_cost_basis > Decimal("0"):
-        total_pnl_percentage = (
-                (valuation.total_pnl / valuation.total_cost_basis) * Decimal("100")
-        ).quantize(Decimal("0.01"))
-
     # Map to response schema
     return PortfolioValuationResponse(
         portfolio_id=valuation.portfolio_id,
@@ -228,7 +213,7 @@ def get_portfolio_valuation(
             total_unrealized_pnl=valuation.total_unrealized_pnl,
             total_realized_pnl=valuation.total_realized_pnl,
             total_pnl=valuation.total_pnl,
-            total_pnl_percentage=total_pnl_percentage,
+            total_pnl_percentage=valuation.total_pnl_percentage,
         ),
         holdings=[_map_holding(h) for h in valuation.holdings],
         tracks_cash=valuation.tracks_cash,

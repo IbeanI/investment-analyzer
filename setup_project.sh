@@ -6,7 +6,6 @@
 # chmod +x setup_project.sh
 # 3. Run the script:
 # ./setup_project.sh
-
 # Exit immediately if a command exits with a non-zero status
 set -e
 
@@ -23,7 +22,7 @@ else
     echo "✅ backend/.env found."
 fi
 
-# 2. Docker Reset (Optional: Remove if you don't want to wipe data every time)
+# 2. Docker Reset
 echo "🛑 Stopping and removing existing containers..."
 docker-compose down -v
 
@@ -41,24 +40,34 @@ done
 echo ""
 echo "✅ Database is up and running!"
 
-# 5. Run Database Migrations (Alembic)
-echo "🔄 Applying Database Migrations..."
-docker-compose exec -T backend alembic upgrade head
-echo "✅ Schema is up to date."
+# 5. Initialize Database Schema
+# CHANGED: We use init_db.py to create tables because the baseline migration is empty.
+echo "🔄 Initializing Database Schema..."
+docker-compose exec -T backend python /app/init_db.py
+
+# CHANGED: We 'stamp' the DB to tell Alembic it is up-to-date, skipping the broken migrations.
+echo "🏷️  Stamping Alembic Version..."
+docker-compose exec -T backend alembic stamp head
+echo "✅ Schema initialized and stamped."
 
 # 6. Run Seed Scripts
 echo "🌱 Seeding Sample Data..."
 
-# Since 'scripts' folder might not be mounted in docker-compose, we copy the file in
+# Copy seed script and run it
 docker cp backend/scripts/seed_sample_data.py investment_backend:/app/seed_sample_data.py
 docker-compose exec -T backend python /app/seed_sample_data.py
 
-# Run the Proxy Mapping migration (from Phase 2) if available
+# Run the Proxy Mapping migration (if files exist)
 if [ -f backend/scripts/migrate_proxy_mappings.py ]; then
     echo "🗺️  Seeding Proxy Mappings..."
     docker cp backend/scripts/migrate_proxy_mappings.py investment_backend:/app/migrate_proxy_mappings.py
-    docker cp backend/scripts/seed_data/proxy_mappings.json investment_backend:/app/proxy_mappings.json
-    docker-compose exec -T backend python /app/migrate_proxy_mappings.py
+    # Check if the JSON file exists locally before copying
+    if [ -f backend/scripts/seed_data/proxy_mappings.json ]; then
+        docker cp backend/scripts/seed_data/proxy_mappings.json investment_backend:/app/proxy_mappings.json
+        docker-compose exec -T backend python /app/migrate_proxy_mappings.py
+    else
+        echo "⚠️  proxy_mappings.json not found, skipping proxy seed."
+    fi
 fi
 
 # 7. Final Status

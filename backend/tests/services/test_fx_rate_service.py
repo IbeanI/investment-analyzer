@@ -3,18 +3,20 @@
 Tests for the FXRateService.
 
 This module tests:
-- Rate syncing from Yahoo Finance
+- Rate syncing from market data provider
 - Rate retrieval (exact and fallback)
 - Required pairs detection
 - Coverage reporting
 - Error handling
+
+Note: Tests mock the MarketDataProvider interface, not yfinance directly.
+This ensures proper test isolation and makes tests provider-agnostic.
 """
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
-import pandas as pd
 import pytest
 from sqlalchemy import select
 
@@ -31,6 +33,11 @@ from app.services.exceptions import (
 from app.services.fx_rate_service import (
     FXRateService,
 )
+from app.services.market_data.base import (
+    MarketDataProvider,
+    HistoricalPricesResult,
+    OHLCVData,
+)
 from tests.conftest import create_user, create_portfolio, create_asset
 
 
@@ -39,9 +46,17 @@ from tests.conftest import create_user, create_portfolio, create_asset
 # =============================================================================
 
 @pytest.fixture
-def fx_service() -> FXRateService:
-    """Create FXRateService instance for testing."""
-    return FXRateService(max_fallback_days=7)
+def mock_provider() -> MagicMock:
+    """Create a mock MarketDataProvider for testing."""
+    provider = MagicMock(spec=MarketDataProvider)
+    provider.name = "mock_provider"
+    return provider
+
+
+@pytest.fixture
+def fx_service(mock_provider) -> FXRateService:
+    """Create FXRateService instance with mock provider for testing."""
+    return FXRateService(provider=mock_provider, max_fallback_days=7)
 
 
 @pytest.fixture
@@ -119,15 +134,22 @@ def create_transaction_helper(
 class TestFXRateServiceInit:
     """Tests for service initialization."""
 
-    def test_init_with_defaults(self):
+    def test_init_with_defaults(self, mock_provider):
         """Service should initialize with default settings."""
-        service = FXRateService()
+        service = FXRateService(provider=mock_provider)
         assert service._max_fallback_days == FXRateService.MAX_FALLBACK_DAYS
+        assert service._provider == mock_provider
 
-    def test_init_with_custom_fallback_days(self):
+    def test_init_with_custom_fallback_days(self, mock_provider):
         """Service should accept custom fallback days."""
-        service = FXRateService(max_fallback_days=14)
+        service = FXRateService(provider=mock_provider, max_fallback_days=14)
         assert service._max_fallback_days == 14
+
+    def test_init_stores_provider(self, mock_provider):
+        """Service should store the injected provider."""
+        service = FXRateService(provider=mock_provider)
+        assert service._provider is mock_provider
+        assert service._provider.name == "mock_provider"
 
 
 # =============================================================================
@@ -168,9 +190,9 @@ class TestGetRate:
         assert result.is_exact_match is False
         assert result.actual_date == date(2024, 1, 17)
 
-    def test_get_rate_fallback_respects_limit(self, db, fx_service, sample_rates):
+    def test_get_rate_fallback_respects_limit(self, db, mock_provider, sample_rates):
         """Should not fallback beyond max_fallback_days."""
-        service = FXRateService(max_fallback_days=1)
+        service = FXRateService(provider=mock_provider, max_fallback_days=1)
 
         # Jan 19 is 2 days after Jan 17, beyond 1-day fallback
         with pytest.raises(FXRateNotFoundError) as exc_info:
@@ -265,22 +287,41 @@ class TestGetRequiredPairs:
 
 
 # =============================================================================
-# SYNC RATES TESTS (with mocked Yahoo Finance)
+# SYNC RATES TESTS (with mocked MarketDataProvider)
 # =============================================================================
+
+def create_mock_ohlcv_data(dates_and_rates: list[tuple[date, Decimal]]) -> list[OHLCVData]:
+    """Helper to create mock OHLCV data from date/rate pairs."""
+    return [
+        OHLCVData(
+            date=d,
+            open=rate,
+            high=rate,
+            low=rate,
+            close=rate,
+            volume=1000,
+        )
+        for d, rate in dates_and_rates
+    ]
+
 
 class TestSyncRates:
     """Tests for sync_rates method."""
 
-    @patch('app.services.fx_rate_service.yf')
-    def test_sync_rates_success(self, mock_yf, db, fx_service):
+    def test_sync_rates_success(self, db, fx_service, mock_provider):
         """Should fetch and store rates successfully."""
-        # Setup mock
-        mock_ticker = MagicMock()
-        mock_df = pd.DataFrame({
-            'Close': [0.92, 0.925, 0.93],
-        }, index=pd.to_datetime(['2024-01-15', '2024-01-16', '2024-01-17']))
-        mock_ticker.history.return_value = mock_df
-        mock_yf.Ticker.return_value = mock_ticker
+        # Setup mock provider to return OHLCV data
+        mock_prices = create_mock_ohlcv_data([
+            (date(2024, 1, 15), Decimal("0.92")),
+            (date(2024, 1, 16), Decimal("0.925")),
+            (date(2024, 1, 17), Decimal("0.93")),
+        ])
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="USDEUR=X",
+            exchange="",
+            prices=mock_prices,
+            success=True,
+        )
 
         result = fx_service.sync_rates(
             db, "USD", "EUR",
@@ -301,15 +342,26 @@ class TestSyncRates:
         ).all()
         assert len(stored) == 3
 
-    @patch('app.services.fx_rate_service.yf')
-    def test_sync_rates_incremental(self, mock_yf, db, fx_service, sample_rates):
+        # Verify provider was called correctly
+        mock_provider.get_historical_prices.assert_called_once_with(
+            ticker="USDEUR=X",
+            exchange="",
+            start_date=date(2024, 1, 15),
+            end_date=date(2024, 1, 17),
+        )
+
+    def test_sync_rates_incremental(self, db, fx_service, mock_provider, sample_rates):
         """Should only fetch missing dates when not forced."""
-        mock_ticker = MagicMock()
-        mock_df = pd.DataFrame({
-            'Close': [0.94],
-        }, index=pd.to_datetime(['2024-01-18']))
-        mock_ticker.history.return_value = mock_df
-        mock_yf.Ticker.return_value = mock_ticker
+        # Setup mock to return only Jan 18 data
+        mock_prices = create_mock_ohlcv_data([
+            (date(2024, 1, 18), Decimal("0.94")),
+        ])
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="USDEUR=X",
+            exchange="",
+            prices=mock_prices,
+            success=True,
+        )
 
         result = fx_service.sync_rates(
             db, "USD", "EUR",
@@ -320,7 +372,7 @@ class TestSyncRates:
         # Should only fetch Jan 18 (Jan 15-17 already exist)
         assert result.rates_fetched == 1
 
-    def test_sync_rates_same_currency_skipped(self, db, fx_service):
+    def test_sync_rates_same_currency_skipped(self, db, fx_service, mock_provider):
         """Should skip sync for same currency."""
         result = fx_service.sync_rates(
             db, "EUR", "EUR",
@@ -328,11 +380,12 @@ class TestSyncRates:
         )
 
         assert result.rates_fetched == 0
+        # Provider should not be called for same currency
+        mock_provider.get_historical_prices.assert_not_called()
 
-    @patch('app.services.fx_rate_service.yf')
-    def test_sync_rates_handles_provider_error(self, mock_yf, db, fx_service):
-        """Should handle Yahoo Finance errors gracefully."""
-        mock_yf.Ticker.side_effect = Exception("Network error")
+    def test_sync_rates_handles_provider_error(self, db, fx_service, mock_provider):
+        """Should handle provider errors gracefully."""
+        mock_provider.get_historical_prices.side_effect = Exception("Network error")
 
         result = fx_service.sync_rates(
             db, "USD", "EUR",
@@ -341,6 +394,40 @@ class TestSyncRates:
 
         assert result.success is False
         assert len(result.errors) > 0
+
+    def test_sync_rates_handles_empty_response(self, db, fx_service, mock_provider):
+        """Should handle empty response from provider."""
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="USDEUR=X",
+            exchange="",
+            prices=[],
+            success=True,
+        )
+
+        result = fx_service.sync_rates(
+            db, "USD", "EUR",
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert result.success is False
+        assert "No rates returned" in result.errors[0]
+
+    def test_sync_rates_handles_failed_response(self, db, fx_service, mock_provider):
+        """Should handle failed response from provider."""
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="USDEUR=X",
+            exchange="",
+            prices=[],
+            success=False,
+            error="Symbol not found",
+        )
+
+        result = fx_service.sync_rates(
+            db, "USD", "EUR",
+            date(2024, 1, 15), date(2024, 1, 17)
+        )
+
+        assert result.success is False
 
 
 # =============================================================================
@@ -380,8 +467,7 @@ class TestGetCoverage:
 class TestSyncPortfolioRates:
     """Tests for sync_portfolio_rates method."""
 
-    @patch('app.services.fx_rate_service.yf')
-    def test_syncs_all_required_pairs(self, mock_yf, db, fx_service):
+    def test_syncs_all_required_pairs(self, db, fx_service, mock_provider):
         """Should sync rates for all required currency pairs."""
         # Setup portfolio with multiple currencies
         user = create_user(db, email="portfolio_sync@test.com")
@@ -393,13 +479,16 @@ class TestSyncPortfolioRates:
         create_transaction_helper(db, portfolio, asset_usd)
         create_transaction_helper(db, portfolio, asset_gbp)
 
-        # Setup mock
-        mock_ticker = MagicMock()
-        mock_df = pd.DataFrame({
-            'Close': [0.92],
-        }, index=pd.to_datetime(['2024-01-15']))
-        mock_ticker.history.return_value = mock_df
-        mock_yf.Ticker.return_value = mock_ticker
+        # Setup mock provider to return data for any FX pair
+        mock_prices = create_mock_ohlcv_data([
+            (date(2024, 1, 15), Decimal("0.92")),
+        ])
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="USDEUR=X",
+            exchange="",
+            prices=mock_prices,
+            success=True,
+        )
 
         results = fx_service.sync_portfolio_rates(
             db, portfolio.id,
@@ -408,6 +497,9 @@ class TestSyncPortfolioRates:
 
         # Should have synced 2 pairs: USD/EUR and GBP/EUR
         assert len(results) == 2
+
+        # Verify provider was called twice (once for each pair)
+        assert mock_provider.get_historical_prices.call_count == 2
 
 
 # =============================================================================

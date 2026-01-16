@@ -92,13 +92,13 @@ from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any
 
-import yfinance as yf
 from sqlalchemy import select, and_, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models import ExchangeRate, Transaction, Asset, Portfolio
 from app.services.exceptions import FXRateNotFoundError, FXProviderError
+from app.services.market_data.base import MarketDataProvider
 
 logger = logging.getLogger(__name__)
 
@@ -170,28 +170,28 @@ class FXRateService:
         print(f"1 USD = {rate_result.rate} EUR")
     """
 
-    # Provider configuration
-    PROVIDER_NAME: str = "yahoo"
-
     # Fallback configuration
     MAX_FALLBACK_DAYS: int = 7  # Max days to look back for missing rate
 
-    # Yahoo Finance timeout
-    YAHOO_TIMEOUT: int = 10
-
     def __init__(
             self,
+            provider: MarketDataProvider,
             max_fallback_days: int | None = None,
     ) -> None:
         """
         Initialize the FX Rate Service.
 
         Args:
+            provider: Market data provider for fetching FX rates.
             max_fallback_days: Maximum days to search for fallback rate.
                               Defaults to MAX_FALLBACK_DAYS (7).
         """
+        self._provider = provider
         self._max_fallback_days = max_fallback_days or self.MAX_FALLBACK_DAYS
-        logger.info(f"FXRateService initialized (max_fallback_days={self._max_fallback_days})")
+        logger.info(
+            f"FXRateService initialized (provider={provider.name}, "
+            f"max_fallback_days={self._max_fallback_days})"
+        )
 
     # =========================================================================
     # PUBLIC METHODS
@@ -254,9 +254,9 @@ class FXRateService:
 
         logger.info(f"Fetching {len(dates_to_fetch)} dates for {base}/{quote}")
 
-        # Fetch from Yahoo Finance
+        # Fetch from market data provider
         try:
-            rates = self._fetch_rates_from_yahoo(
+            rates = self._fetch_rates_from_provider(
                 base, quote,
                 min(dates_to_fetch),
                 max(dates_to_fetch)
@@ -264,7 +264,7 @@ class FXRateService:
             result.rates_fetched = len(rates)
         except FXProviderError as e:
             result.errors.append(str(e))
-            logger.error(f"Yahoo Finance error: {e}")
+            logger.error(f"Provider error: {e}")
             return result
 
         if not rates:
@@ -503,10 +503,10 @@ class FXRateService:
         }
 
     # =========================================================================
-    # PRIVATE METHODS - Yahoo Finance
+    # PRIVATE METHODS - Market Data Provider
     # =========================================================================
 
-    def _fetch_rates_from_yahoo(
+    def _fetch_rates_from_provider(
             self,
             base_currency: str,
             quote_currency: str,
@@ -514,7 +514,7 @@ class FXRateService:
             end_date: date,
     ) -> dict[date, Decimal]:
         """
-        Fetch FX rates from Yahoo Finance.
+        Fetch FX rates from the market data provider.
 
         Args:
             base_currency: Base currency (e.g., "USD")
@@ -526,59 +526,48 @@ class FXRateService:
             Dict mapping date -> rate (Decimal)
 
         Raises:
-            FXProviderError: If Yahoo Finance fails
+            FXProviderError: If provider fails
         """
-        # Build Yahoo symbol: USDEUR=X
-        symbol = f"{base_currency}{quote_currency}=X"
+        # Build FX symbol (e.g., "USDEUR=X" for Yahoo)
+        symbol = self.build_yahoo_symbol(base_currency, quote_currency)
 
-        logger.debug(f"Fetching {symbol} from Yahoo Finance: {start_date} to {end_date}")
+        logger.debug(
+            f"Fetching {symbol} from {self._provider.name}: {start_date} to {end_date}"
+        )
 
         try:
-            ticker = yf.Ticker(symbol)
-
-            # Yahoo needs end_date + 1 day for inclusive range
-            yahoo_end = end_date + timedelta(days=1)
-
-            # Fetch historical data
-            df = ticker.history(
-                start=start_date.isoformat(),
-                end=yahoo_end.isoformat(),
-                interval="1d",
+            # Use provider to fetch historical prices
+            # FX symbols use empty exchange since they're not exchange-listed
+            result = self._provider.get_historical_prices(
+                ticker=symbol,
+                exchange="",
+                start_date=start_date,
+                end_date=end_date,
             )
 
-            if df.empty:
+            if not result.success:
+                logger.warning(f"Provider returned error for {symbol}: {result.error}")
+                return {}
+
+            if not result.prices:
                 logger.warning(f"No data returned for {symbol}")
                 return {}
 
-            # Extract close prices
+            # Extract close prices from OHLCV data
             rates = {}
-            for idx, row in df.iterrows():
-                # idx is a Timestamp, convert to date
-                rate_date = idx.date() if hasattr(idx, 'date') else idx
-                close_price = row.get('Close')
-
-                if close_price is not None and not self._is_nan(close_price):
-                    # Convert to Decimal with 8 decimal places
-                    rates[rate_date] = Decimal(str(close_price)).quantize(Decimal("0.00000001"))
+            for ohlcv in result.prices:
+                # Use close price as the FX rate
+                rates[ohlcv.date] = ohlcv.close
 
             logger.debug(f"Fetched {len(rates)} rates for {symbol}")
             return rates
 
         except Exception as e:
-            logger.error(f"Yahoo Finance error for {symbol}: {e}")
+            logger.error(f"Provider error for {symbol}: {e}")
             raise FXProviderError(
-                provider="yahoo",
+                provider=self._provider.name,
                 reason=f"Failed to fetch {symbol}: {e}"
             )
-
-    @staticmethod
-    def _is_nan(value: Any) -> bool:
-        """Check if value is NaN."""
-        try:
-            import math
-            return math.isnan(float(value))
-        except (TypeError, ValueError):
-            return False
 
     # =========================================================================
     # PRIVATE METHODS - Database
@@ -680,14 +669,14 @@ class FXRateService:
         if not rates:
             return 0, 0
 
-        # Prepare records - convert date to datetime for storage
+        # Prepare records - date column is Date type, pass date objects directly
         records = [
             {
                 "base_currency": base_currency,
                 "quote_currency": quote_currency,
-                "date": datetime.combine(rate_date, datetime.min.time(), tzinfo=timezone.utc),
+                "date": rate_date,
                 "rate": rate,
-                "provider": self.PROVIDER_NAME,
+                "provider": self._provider.name,
             }
             for rate_date, rate in rates.items()
         ]

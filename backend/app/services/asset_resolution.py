@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass
 
 from sqlalchemy import select, and_, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Asset
@@ -336,12 +337,16 @@ class AssetResolutionService:
         """
         Create a new Asset in the database from provider data.
 
+        Handles race conditions where another request may create the same asset
+        concurrently. If an IntegrityError occurs (unique constraint violation),
+        we rollback and fetch the existing asset.
+
         Args:
             db: Database session
             asset_info: Metadata from market data provider
 
         Returns:
-            Newly created and persisted Asset entity
+            Newly created Asset, or existing Asset if created by concurrent request
         """
         asset = Asset(
             ticker=asset_info.ticker,
@@ -356,17 +361,46 @@ class AssetResolutionService:
         )
 
         db.add(asset)
-        db.commit()
-        db.refresh(asset)
 
-        return asset
+        try:
+            db.commit()
+            db.refresh(asset)
+            return asset
+        except IntegrityError:
+            # Another request created this asset concurrently
+            db.rollback()
+            logger.info(
+                f"Asset {asset_info.ticker} on {asset_info.exchange} created by "
+                "concurrent request, fetching existing"
+            )
+            existing = self._lookup_in_db(db, asset_info.ticker, asset_info.exchange)
+            if existing is not None:
+                return existing
+            # Shouldn't happen, but re-raise if still not found
+            raise
 
     def _create_assets_batch(
             self,
             db: Session,
             asset_infos: list[AssetInfo]
     ) -> list[Asset]:
-        """Create multiple assets in a single transaction."""
+        """
+        Create multiple assets in a single transaction.
+
+        Handles race conditions where concurrent requests may create the same
+        assets. If an IntegrityError occurs, falls back to resolving each
+        asset individually.
+
+        Args:
+            db: Database session
+            asset_infos: List of asset metadata from provider
+
+        Returns:
+            List of created or existing Asset entities
+        """
+        if not asset_infos:
+            return []
+
         assets = []
         for info in asset_infos:
             asset = Asset(
@@ -383,12 +417,29 @@ class AssetResolutionService:
             db.add(asset)
             assets.append(asset)
 
-        db.commit()  # Single commit for all
-
-        for asset in assets:
-            db.refresh(asset)
-
-        return assets
+        try:
+            db.commit()  # Single commit for all
+            for asset in assets:
+                db.refresh(asset)
+            return assets
+        except IntegrityError:
+            # One or more assets were created by concurrent requests
+            db.rollback()
+            logger.warning(
+                "Batch asset creation failed due to concurrent request, "
+                "resolving individually"
+            )
+            # Fallback: resolve each asset individually
+            result = []
+            for info in asset_infos:
+                existing = self._lookup_in_db(db, info.ticker, info.exchange)
+                if existing is not None:
+                    result.append(existing)
+                else:
+                    # Asset doesn't exist yet, create it individually
+                    # (uses the race-condition-safe _create_asset)
+                    result.append(self._create_asset(db, info))
+            return result
 
     def clear_cache(self) -> None:
         """

@@ -176,11 +176,11 @@ class MarketDataSyncService:
 
         Args:
             provider: Market data provider (defaults to YahooFinanceProvider)
-            fx_service: FX rate service (defaults to new FXRateService)
+            fx_service: FX rate service (defaults to new FXRateService with same provider)
             staleness_threshold_hours: Hours after which data is stale (default: 24)
         """
         self._provider = provider or YahooFinanceProvider()
-        self._fx_service = fx_service or FXRateService()
+        self._fx_service = fx_service or FXRateService(provider=self._provider)
         self._staleness_threshold_hours = (
                 staleness_threshold_hours or self.DEFAULT_STALENESS_HOURS
         )

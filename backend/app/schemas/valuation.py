@@ -12,7 +12,7 @@ These schemas handle:
 from datetime import date
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 # =============================================================================
@@ -21,6 +21,8 @@ from pydantic import BaseModel, Field
 
 class CostBasisDetail(BaseModel):
     """Cost basis details for a holding."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     local_currency: str = Field(
         ...,
@@ -50,6 +52,8 @@ class CostBasisDetail(BaseModel):
 
 class CurrentValueDetail(BaseModel):
     """Current value details for a holding."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     price_per_share: Decimal | None = Field(
         ...,
@@ -88,6 +92,8 @@ class CurrentValueDetail(BaseModel):
 class PnLDetail(BaseModel):
     """Profit and Loss details for a holding."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     amount: Decimal | None = Field(
         ...,
         description="P&L in portfolio currency (None if value unknown)"
@@ -104,6 +110,8 @@ class PnLDetail(BaseModel):
 
 class HoldingValuation(BaseModel):
     """Complete valuation for a single holding (position)."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     # Asset identification
     asset_id: int
@@ -138,6 +146,8 @@ class HoldingValuation(BaseModel):
 class PortfolioValuationSummary(BaseModel):
     """Summary totals for portfolio valuation."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     total_cost_basis: Decimal = Field(
         ...,
         description="Total cost basis in portfolio currency"
@@ -158,6 +168,8 @@ class PortfolioValuationSummary(BaseModel):
 
 class PortfolioValuationResponse(BaseModel):
     """Complete portfolio valuation response."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     portfolio_id: int
     portfolio_name: str
@@ -191,6 +203,8 @@ class PortfolioValuationResponse(BaseModel):
 class ValuationHistoryPoint(BaseModel):
     """A single point in valuation history."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     date: date
     value: Decimal | None = Field(
         ...,
@@ -204,6 +218,8 @@ class ValuationHistoryPoint(BaseModel):
 
 class PortfolioHistoryResponse(BaseModel):
     """Portfolio valuation history (time series)."""
+
+    model_config = ConfigDict(from_attributes=True)
 
     portfolio_id: int
     portfolio_currency: str

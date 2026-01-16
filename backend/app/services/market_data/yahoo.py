@@ -23,6 +23,7 @@ like Bloomberg, Refinitiv, or Alpha Vantage Premium.
 """
 
 import logging
+import math
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -418,7 +419,7 @@ class YahooFinanceProvider(MarketDataProvider):
                 start=start_date.isoformat(),
                 end=yahoo_end.isoformat(),
                 interval="1d",
-                auto_adjust=False,  # Get raw prices, not adjusted
+                auto_adjust=False,  # Get raw prices, not adjusted. Adjusted prices take dividends into account and the values are removed
             )
 
             if df.empty:
@@ -535,7 +536,6 @@ class YahooFinanceProvider(MarketDataProvider):
         if value is None:
             return None
         try:
-            import math
             if math.isnan(float(value)):
                 return None
             return Decimal(str(value)).quantize(Decimal("0.00000001"))
@@ -548,7 +548,6 @@ class YahooFinanceProvider(MarketDataProvider):
         if value is None:
             return None
         try:
-            import math
             if math.isnan(float(value)):
                 return None
             return int(value)

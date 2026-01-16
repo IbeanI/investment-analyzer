@@ -152,7 +152,7 @@ class Transaction(Base):
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"), index=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
     transaction_type: Mapped[TransactionType] = mapped_column(Enum(TransactionType))
-    date: Mapped[datetime] = mapped_column(DateTime)
+    date: Mapped[datetime] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
 
     # Use Decimal with high precision to support crypto (up to 8 decimal places)

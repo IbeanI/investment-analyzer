@@ -160,19 +160,33 @@ class SyncResult(BaseModel):
 # =============================================================================
 
 class MarketDataPointResponse(BaseModel):
-    """Schema for a single market data point."""
+    """
+    Schema for a single market data point (OHLCV format).
+
+    OHLCV = Open, High, Low, Close, Volume
+    This is the standard format for daily price data from providers like Yahoo Finance.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
 
     id: int
     asset_id: int
     date: dt.date  # Daily data - no time component
-    close_price: Decimal
-    adjusted_close: Decimal | None = None
-    volume: int | None = None
-    provider: str
-    is_synthetic: bool
-    proxy_source_id: int | None = None
 
-    model_config = ConfigDict(from_attributes=True)
+    # OHLCV Data
+    open_price: Decimal | None = Field(None, description="Opening price for the day")
+    high_price: Decimal | None = Field(None, description="Highest price during the day")
+    low_price: Decimal | None = Field(None, description="Lowest price during the day")
+    close_price: Decimal = Field(..., description="Closing price (primary valuation price)")
+    adjusted_close: Decimal | None = Field(None, description="Close adjusted for splits/dividends")
+    volume: int | None = Field(None, description="Trading volume")
+
+    # Metadata
+    provider: str = Field(..., description="Data source (e.g., 'yahoo')")
+
+    # Synthetic data tracking
+    is_synthetic: bool = Field(False, description="True if price was calculated via proxy")
+    proxy_source_id: int | None = Field(None, description="Proxy asset ID if synthetic")
 
 
 class MarketDataRangeResponse(BaseModel):

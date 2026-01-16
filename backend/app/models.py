@@ -3,7 +3,7 @@ import enum
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Integer, Boolean, JSON
+from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Boolean, JSON, BigInteger
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -160,7 +160,18 @@ class Transaction(Base):
 
 class MarketData(Base):
     """
-    Historical price data cache.
+    Historical price data cache (OHLCV format).
+
+    Stores daily price data fetched from market data providers (Yahoo Finance).
+    Each record represents one trading day for one asset.
+
+    OHLCV = Open, High, Low, Close, Volume (standard financial data format)
+
+    Synthetic Data:
+        When proxy backcasting is used (Phase 3), prices can be synthetically
+        generated from a proxy asset. These records are marked with:
+        - is_synthetic = True
+        - proxy_source_id = ID of the proxy asset used
     """
     __tablename__ = "market_data"
     __table_args__ = (
@@ -168,26 +179,48 @@ class MarketData(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"))
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)  # Daily data - no time component
-    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))
-    adjusted_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 8))
-    volume: Mapped[int | None] = mapped_column(Integer)  # Standard market metric
-
-    # Metadata (Data Lineage)
-    provider: Mapped[str] = mapped_column(String, default="yahoo")  # e.g. "yahoo", "alpha_vantage"
 
     # =========================================================================
-    # SYNTHETIC DATA TRACKING (Phase 3)
+    # OHLCV DATA (Open, High, Low, Close, Volume)
+    # =========================================================================
+    # Standard financial price data format
+    # All prices use Decimal for financial precision (18 digits, 8 decimals)
+
+    open_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    high_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    low_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
+    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))  # Required - primary valuation price
+    adjusted_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)  # Adjusted for splits/dividends
+    volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # Trading volume
+
+    # =========================================================================
+    # METADATA (Data Lineage)
+    # =========================================================================
+    provider: Mapped[str] = mapped_column(String(50), default="yahoo")  # e.g., "yahoo", "alpha_vantage"
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+
+    # =========================================================================
+    # SYNTHETIC DATA TRACKING (Phase 3 - Proxy Backcasting)
     # =========================================================================
     # When prices are generated via proxy backcasting, we track:
-    # - is_synthetic: True if this price was calculated, not fetched
+    # - is_synthetic: True if this price was calculated, not fetched from provider
     # - proxy_source_id: The proxy asset whose prices were used for calculation
 
     is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
-    proxy_source_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, default=None)
+    proxy_source_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assets.id"), nullable=True, default=None
+    )
 
-    # Relationships (explicit foreign_keys due to multiple FKs to assets)
+    # =========================================================================
+    # RELATIONSHIPS
+    # =========================================================================
+    # Explicit foreign_keys required due to multiple FKs pointing to assets table
+
     asset: Mapped["Asset"] = relationship(back_populates="prices", foreign_keys=[asset_id])
     proxy_source: Mapped["Asset | None"] = relationship("Asset", foreign_keys=[proxy_source_id])
 

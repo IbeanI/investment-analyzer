@@ -7,7 +7,7 @@ These schemas handle:
 - FX sync requests
 """
 
-from datetime import datetime, date
+import datetime as dt
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -23,7 +23,7 @@ class ExchangeRateResponse(BaseModel):
     id: int
     base_currency: str = Field(..., description="Base currency (e.g., USD)")
     quote_currency: str = Field(..., description="Quote currency (e.g., EUR)")
-    date: date = Field(..., description="Date of the rate")
+    date: dt.date = Field(..., description="Date of the rate")
     rate: Decimal = Field(..., description="Exchange rate (1 base = X quote)")
     provider: str = Field(..., description="Data provider (e.g., yahoo)")
 
@@ -35,8 +35,8 @@ class ExchangeRateRangeResponse(BaseModel):
 
     base_currency: str
     quote_currency: str
-    from_date: date
-    to_date: date
+    from_date: dt.date
+    to_date: dt.date
     rates: list[ExchangeRateResponse]
     total: int = Field(..., description="Total number of rates in range")
 
@@ -62,7 +62,7 @@ class ExchangeRateLookup(BaseModel):
         pattern=r"^[A-Z]{3}$",
         description="Quote currency code (ISO 4217)"
     )
-    date: date = Field(..., description="Date for the rate lookup")
+    date: dt.date = Field(..., description="Date for the rate lookup")
 
     @field_validator('base_currency', 'quote_currency')
     @classmethod

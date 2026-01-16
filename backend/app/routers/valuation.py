@@ -1,0 +1,317 @@
+# backend/app/routers/valuation.py
+"""
+Portfolio valuation endpoints.
+
+Provides portfolio valuation, holdings breakdown, and historical performance:
+- GET /portfolios/{id}/valuation - Full valuation with holdings + cash
+- GET /portfolios/{id}/holdings - Lightweight positions only (future)
+- GET /portfolios/{id}/valuation/history - Time series for charts
+
+Note: These endpoints are nested under /portfolios/{id} because valuations
+are always in the context of a specific portfolio.
+"""
+
+from datetime import date
+from decimal import Decimal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import Portfolio
+from app.schemas.valuation import (
+    CostBasisDetail,
+    CurrentValueDetail,
+    PnLDetail,
+    HoldingValuation,
+    CashBalanceDetail,
+    PortfolioValuationSummary,
+    PortfolioValuationResponse,
+    ValuationHistoryPoint,
+    PortfolioHistoryResponse,
+)
+from app.services.valuation import ValuationService
+
+# =============================================================================
+# ROUTER SETUP
+# =============================================================================
+
+router = APIRouter(
+    prefix="/portfolios",
+    tags=["Valuation"],
+)
+
+
+# =============================================================================
+# DEPENDENCIES
+# =============================================================================
+
+def get_valuation_service() -> ValuationService:
+    """Dependency that provides the valuation service."""
+    return ValuationService()
+
+
+def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
+    """Fetch a portfolio by ID or raise 404 if not found."""
+    portfolio = db.get(Portfolio, portfolio_id)
+
+    if portfolio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Portfolio with id {portfolio_id} not found"
+        )
+
+    return portfolio
+
+
+# =============================================================================
+# MAPPER FUNCTIONS (Internal Types -> Pydantic Schemas)
+# =============================================================================
+
+def _map_cost_basis(cost_basis) -> CostBasisDetail:
+    """Map internal CostBasisResult to Pydantic schema."""
+    return CostBasisDetail(
+        local_currency=cost_basis.local_currency,
+        local_amount=cost_basis.local_amount,
+        portfolio_currency=cost_basis.portfolio_currency,
+        portfolio_amount=cost_basis.portfolio_amount,
+        avg_cost_per_share=cost_basis.avg_cost_per_share,
+    )
+
+
+def _map_current_value(value) -> CurrentValueDetail:
+    """Map internal ValueResult to Pydantic schema."""
+    return CurrentValueDetail(
+        price_per_share=value.price,
+        price_date=value.price_date,
+        local_currency=value.local_currency,
+        local_amount=value.local_amount,
+        portfolio_currency=value.portfolio_currency,
+        portfolio_amount=value.portfolio_amount,
+        fx_rate_used=value.fx_rate_used,
+    )
+
+
+def _map_pnl(pnl) -> PnLDetail:
+    """Map internal PnLResult to Pydantic schema."""
+    return PnLDetail(
+        unrealized_amount=pnl.unrealized_amount,
+        unrealized_percentage=pnl.unrealized_percentage,
+        realized_amount=pnl.realized_amount,
+        realized_percentage=pnl.realized_percentage,
+        total_amount=pnl.total_amount,
+        total_percentage=pnl.total_percentage,
+    )
+
+
+def _map_holding(holding) -> HoldingValuation:
+    """Map internal HoldingValuation to Pydantic schema."""
+    return HoldingValuation(
+        asset_id=holding.asset_id,
+        ticker=holding.ticker,
+        exchange=holding.exchange,
+        asset_name=holding.asset_name,
+        asset_currency=holding.asset_currency,
+        quantity=holding.quantity,
+        cost_basis=_map_cost_basis(holding.cost_basis),
+        current_value=_map_current_value(holding.current_value),
+        pnl=_map_pnl(holding.pnl),
+        warnings=holding.warnings,
+        has_complete_data=holding.has_complete_data,
+    )
+
+
+def _map_cash_balance(cash) -> CashBalanceDetail:
+    """Map internal CashBalance to Pydantic schema."""
+    return CashBalanceDetail(
+        currency=cash.currency,
+        amount=cash.amount,
+        amount_portfolio=cash.amount_portfolio,
+        fx_rate_used=cash.fx_rate_used,
+    )
+
+
+def _map_history_point(point) -> ValuationHistoryPoint:
+    """Map internal HistoryPoint to Pydantic schema."""
+    # Calculate pnl_percentage if we have the data
+    pnl_percentage = None
+    if point.total_pnl is not None and point.cost_basis > Decimal("0"):
+        pnl_percentage = (
+                (point.total_pnl / point.cost_basis) * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
+    return ValuationHistoryPoint(
+        date=point.date,
+        value=point.value,
+        cash=point.cash,
+        equity=point.equity,
+        cost_basis=point.cost_basis,
+        unrealized_pnl=point.unrealized_pnl,
+        realized_pnl=point.realized_pnl,
+        total_pnl=point.total_pnl,
+        pnl_percentage=pnl_percentage,
+        has_complete_data=point.has_complete_data,
+    )
+
+
+# =============================================================================
+# ENDPOINTS
+# =============================================================================
+
+@router.get(
+    "/{portfolio_id}/valuation",
+    response_model=PortfolioValuationResponse,
+    summary="Get portfolio valuation",
+    response_description="Complete portfolio valuation with holdings breakdown"
+)
+def get_portfolio_valuation(
+        portfolio_id: int,
+        valuation_date: date | None = Query(
+            default=None,
+            description="Valuation date (default: today)",
+            alias="date"
+        ),
+        db: Session = Depends(get_db),
+        service: ValuationService = Depends(get_valuation_service),
+) -> PortfolioValuationResponse:
+    """
+    Get complete portfolio valuation for a specific date.
+
+    Returns:
+    - **summary**: Total cost basis, value, P&L
+    - **holdings**: Individual position valuations
+    - **cash_balances**: Cash by currency (if portfolio tracks cash)
+
+    The valuation includes:
+    - Cost basis using weighted average method
+    - Current value with FX conversion
+    - Unrealized P&L (paper gains/losses)
+    - Realized P&L (from closed positions)
+
+    **Note:** If price or FX data is missing for any holding,
+    `has_complete_data` will be `false` and affected totals will be `null`.
+    """
+    # Verify portfolio exists
+    get_portfolio_or_404(db, portfolio_id)
+
+    # Get valuation from service
+    try:
+        valuation = service.get_valuation(
+            db=db,
+            portfolio_id=portfolio_id,
+            valuation_date=valuation_date,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+    # Calculate total P&L percentage
+    total_pnl_percentage = None
+    if valuation.total_pnl is not None and valuation.total_cost_basis > Decimal("0"):
+        total_pnl_percentage = (
+                (valuation.total_pnl / valuation.total_cost_basis) * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
+    # Map to response schema
+    return PortfolioValuationResponse(
+        portfolio_id=valuation.portfolio_id,
+        portfolio_name=valuation.portfolio_name,
+        portfolio_currency=valuation.portfolio_currency,
+        valuation_date=valuation.valuation_date,
+        summary=PortfolioValuationSummary(
+            total_cost_basis=valuation.total_cost_basis,
+            total_value=valuation.total_value,
+            total_cash=valuation.total_cash,
+            total_equity=valuation.total_equity,
+            total_unrealized_pnl=valuation.total_unrealized_pnl,
+            total_realized_pnl=valuation.total_realized_pnl,
+            total_pnl=valuation.total_pnl,
+            total_pnl_percentage=total_pnl_percentage,
+        ),
+        holdings=[_map_holding(h) for h in valuation.holdings],
+        tracks_cash=valuation.tracks_cash,
+        cash_balances=[_map_cash_balance(c) for c in valuation.cash_balances],
+        has_complete_data=valuation.has_complete_data,
+        warnings=valuation.warnings,
+    )
+
+
+@router.get(
+    "/{portfolio_id}/valuation/history",
+    response_model=PortfolioHistoryResponse,
+    summary="Get portfolio valuation history",
+    response_description="Time series of portfolio valuations"
+)
+def get_portfolio_valuation_history(
+        portfolio_id: int,
+        from_date: date = Query(
+            ...,
+            description="Start date for history"
+        ),
+        to_date: date = Query(
+            ...,
+            description="End date for history"
+        ),
+        interval: str = Query(
+            default="daily",
+            pattern=r"^(daily|weekly|monthly)$",
+            description="Data interval: daily, weekly, monthly"
+        ),
+        db: Session = Depends(get_db),
+        service: ValuationService = Depends(get_valuation_service),
+) -> PortfolioHistoryResponse:
+    """
+    Get portfolio valuation history for charting.
+
+    Returns time series data with:
+    - Portfolio value over time
+    - Cost basis progression
+    - P&L evolution (unrealized + realized)
+
+    **Intervals:**
+    - `daily`: Every calendar day
+    - `weekly`: Every Friday (or last trading day)
+    - `monthly`: Last day of each month
+
+    **Performance:** Uses batch data fetching and rolling state calculation
+    for O(D + T) complexity where D = dates, T = transactions.
+    """
+    # Validate date range
+    if from_date > to_date:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="from_date must be before or equal to to_date"
+        )
+
+    # Verify portfolio exists
+    get_portfolio_or_404(db, portfolio_id)
+
+    # Get history from service
+    try:
+        history = service.get_history(
+            db=db,
+            portfolio_id=portfolio_id,
+            start_date=from_date,
+            end_date=to_date,
+            interval=interval,
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(e)
+        )
+
+    # Map to response schema
+    return PortfolioHistoryResponse(
+        portfolio_id=history.portfolio_id,
+        portfolio_currency=history.portfolio_currency,
+        from_date=history.start_date,
+        to_date=history.end_date,
+        interval=history.interval,
+        tracks_cash=history.tracks_cash,
+        data=[_map_history_point(p) for p in history.data],
+        total_points=len(history.data),
+        warnings=history.warnings,
+    )

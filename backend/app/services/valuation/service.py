@@ -209,14 +209,14 @@ class ValuationService:
             db, portfolio_id, valuation_date
         )
 
-        # Step 5: Calculate holdings
+        # Step 6: Calculate holdings
         positions = self._holdings_calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency=portfolio_currency,
         )
 
-        # Step 6: Value each holding
+        # Step 7: Value each holding
         holdings: list[HoldingValuation] = []
         total_cost_basis = Decimal("0")
         total_value = Decimal("0")
@@ -246,7 +246,7 @@ class ValuationService:
             else:
                 all_complete = False
 
-        # Step 7: Convert cash to portfolio currency (only if tracking cash)
+        # Step 8: Convert cash to portfolio currency (only if tracking cash)
         cash_balances: list[CashBalance] = []
         total_cash: Decimal | None = None
 
@@ -293,7 +293,7 @@ class ValuationService:
                         ))
                         total_cash += amount_portfolio
 
-        # Step 8: Calculate totals
+        # Step 9: Calculate totals
         if all_complete:
             total_pnl = total_unrealized_pnl + total_realized_pnl
             # total_equity = securities + cash (or just securities if not tracking cash)

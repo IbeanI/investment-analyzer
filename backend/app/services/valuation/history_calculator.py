@@ -395,7 +395,6 @@ class HistoryCalculator:
             final_value = None
             final_cash = None if tracks_cash else None  # stays None
             final_equity = None
-            final_equity = None
 
         return HistoryPoint(
             date=target_date,

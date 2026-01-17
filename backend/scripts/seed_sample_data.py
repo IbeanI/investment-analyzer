@@ -12,6 +12,7 @@ sys.path.insert(0, str(backend_dir))
 
 from app.database import SessionLocal
 from app.models import User, Portfolio, Asset, Transaction, TransactionType, AssetClass
+from app.models import MarketData, ExchangeRate
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -116,6 +117,39 @@ def seed():
             logger.info("✅ Created Sample Transactions")
 
         logger.info("🚀 Seeding Complete!")
+
+        # 5. Seed Market Data for Valuation
+        # We need prices for the 'current' date (or the date you want to value at)
+        # Let's assume we want to value the portfolio as of TODAY (or a fixed date)
+
+        # Example: Seed data for NVDA (USD)
+        nvda = created_assets["NVDA"]
+        if not db.query(MarketData).filter_by(asset_id=nvda.id).first():
+            md_nvda = MarketData(
+                asset_id=nvda.id,
+                date=datetime.now(timezone.utc).date(),
+                close_price=Decimal("450.00"),  # Static price for demo
+                open_price=Decimal("445.00"),
+                high_price=Decimal("455.00"),
+                low_price=Decimal("440.00"),
+                volume=1000000
+            )
+            db.add(md_nvda)
+            logger.info(f"✅ Created Market Data for {nvda.ticker}")
+
+        # Example: Seed Exchange Rate (USD -> EUR)
+        # Valuation Service needs this to convert NVDA value to Portfolio Currency
+        if not db.query(ExchangeRate).filter_by(base_currency="USD", quote_currency="EUR").first():
+            fx_rate = ExchangeRate(
+                base_currency="USD",
+                quote_currency="EUR",
+                date=datetime.now(timezone.utc).date(),
+                rate=Decimal("0.92")
+            )
+            db.add(fx_rate)
+            logger.info("✅ Created Exchange Rate USD/EUR")
+
+        db.commit()
 
     except Exception as e:
         logger.error(f"❌ Seeding Failed: {e}")

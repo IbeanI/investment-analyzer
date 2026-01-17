@@ -150,7 +150,7 @@ class Transaction(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"), index=True)
-    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, index=True)
     transaction_type: Mapped[TransactionType] = mapped_column(Enum(TransactionType))
     date: Mapped[datetime] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
@@ -165,7 +165,7 @@ class Transaction(Base):
     exchange_rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), default=Decimal(1))  # Conversion rate to Portfolio Base Currency at time of trade
 
     portfolio: Mapped["Portfolio"] = relationship(back_populates="transactions")
-    asset: Mapped["Asset"] = relationship(back_populates="transactions")
+    asset: Mapped["Asset | None"] = relationship(back_populates="transactions")
 
 
 class MarketData(Base):

@@ -16,7 +16,7 @@ Design Principles:
 
 Usage:
     from app.services.upload import UploadService, DateFormat
-    
+
     service = UploadService()
     result = service.process_file(
         db=session,
@@ -25,7 +25,7 @@ Usage:
         portfolio_id=1,
         date_format=DateFormat.US,  # For M/D/YYYY dates
     )
-    
+
     if result.success:
         print(f"Created {result.created_count} transactions")
     else:
@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 class UploadError:
     """
     Represents an error during upload processing.
-    
+
     Attributes:
         row_number: 1-based row number (0 for file-level errors)
         stage: Processing stage where error occurred
@@ -84,7 +84,7 @@ class UploadError:
 class UploadResult:
     """
     Result of processing an uploaded file.
-    
+
     Attributes:
         success: True if all rows were processed successfully
         filename: Original filename
@@ -103,6 +103,7 @@ class UploadResult:
     skipped_count: int = 0
     error_count: int = 0
     errors: list[UploadError] = field(default_factory=list)
+    warnings: list[UploadError] = field(default_factory=list)
     created_transaction_ids: list[int] = field(default_factory=list)
 
     def add_error(
@@ -125,6 +126,9 @@ class UploadResult:
         ))
         self.error_count += 1
 
+    def add_warning(self, row_number: int, stage: str, error_type: str, message: str, field: str | None = None, raw_data: dict[str, Any] | None = None) -> None:
+        self.warnings.append(UploadError(row_number, stage, error_type, message, field, raw_data or {}))
+
 
 # =============================================================================
 # UPLOAD SERVICE
@@ -133,21 +137,21 @@ class UploadResult:
 class UploadService:
     """
     Service for processing uploaded transaction files.
-    
+
     This service is FILE FORMAT AGNOSTIC. It:
     1. Delegates parsing to the appropriate parser
     2. Validates rows using Pydantic schemas
     3. Resolves assets via AssetResolutionService
     4. Creates transactions atomically
-    
+
     The service guarantees atomic behavior:
     - If ANY row fails validation -> NO transactions are created
     - If asset resolution fails -> NO transactions are created
     - If database commit fails -> rollback, NO transactions are created
-    
+
     Example:
         service = UploadService()
-        
+
         with open("transactions.csv", "rb") as f:
             result = service.process_file(
                 db=session,
@@ -156,7 +160,7 @@ class UploadService:
                 portfolio_id=1,
                 date_format=DateFormat.US,
             )
-        
+
         if result.success:
             print(f"Imported {result.created_count} transactions")
         else:
@@ -170,7 +174,7 @@ class UploadService:
     ) -> None:
         """
         Initialize the upload service.
-        
+
         Args:
             asset_service: Asset resolution service instance.
                           Defaults to new AssetResolutionService.
@@ -188,14 +192,14 @@ class UploadService:
     ) -> UploadResult:
         """
         Process an uploaded transaction file.
-        
+
         This is the main entry point. It handles the complete flow:
         1. Validate portfolio exists
         2. Parse file (using specified date format)
         3. Validate all rows
         4. Resolve all assets (batch)
         5. Create all transactions (atomic)
-        
+
         Args:
             db: Database session
             file: File object to process
@@ -203,154 +207,217 @@ class UploadService:
             portfolio_id: Target portfolio ID
             content_type: Optional MIME type
             date_format: Date format used in the file (ISO, US, or EU)
-            
+
         Returns:
             UploadResult with success status and details
         """
         result = UploadResult(filename=filename)
+        logger.info(f"Processing upload: {filename} for portfolio {portfolio_id}")
 
-        logger.info(
-            f"Processing upload: {filename} for portfolio {portfolio_id} "
-            f"(date_format={date_format.value})"
-        )
-
-        # ---------------------------------------------------------------------
-        # STEP 1: Validate portfolio exists
-        # ---------------------------------------------------------------------
+        # 1. Validate Portfolio
         portfolio = db.get(Portfolio, portfolio_id)
         if not portfolio:
-            result.add_error(
-                row_number=0,
-                stage="validation",
-                error_type="portfolio_not_found",
-                message=f"Portfolio with ID {portfolio_id} not found",
-            )
+            result.add_error(0, "validation", "portfolio_not_found", f"Portfolio {portfolio_id} not found")
             return result
 
-        # ---------------------------------------------------------------------
-        # STEP 2: Parse file
-        # ---------------------------------------------------------------------
+        # 2. Parse File
         try:
             parser = get_parser(filename, content_type)
             parse_result = parser.parse(file, filename, date_format)
         except UnsupportedFileTypeError as e:
-            result.add_error(
-                row_number=0,
-                stage="parsing",
-                error_type="unsupported_file_type",
-                message=str(e),
-            )
+            result.add_error(0, "parsing", "unsupported_file_type", str(e))
             return result
         except Exception as e:
-            logger.error(f"Unexpected parsing error: {e}")
-            result.add_error(
-                row_number=0,
-                stage="parsing",
-                error_type="parse_error",
-                message=f"Failed to parse file: {e}",
-            )
+            logger.error(f"Parsing error: {e}")
+            result.add_error(0, "parsing", "parse_error", str(e))
             return result
 
         result.total_rows = parse_result.total_rows
+        for error in parse_result.errors:
+            result.add_error(error.row_number, "parsing", error.error_type, error.message, error.field, error.raw_data)
 
-        # Check for parsing errors
-        if parse_result.errors:
-            for error in parse_result.errors:
-                result.add_error(
-                    row_number=error.row_number,
-                    stage="parsing",
-                    error_type=error.error_type,
-                    message=error.message,
-                    field=error.field,
-                    raw_data=error.raw_data,
-                )
-
-        # If no valid rows, stop here
         if not parse_result.has_data:
             if not result.errors:
-                result.add_error(
-                    row_number=0,
-                    stage="parsing",
-                    error_type="empty_file",
-                    message="No valid transaction rows found in file",
-                )
+                result.add_error(0, "parsing", "empty_file", "No valid rows found")
             return result
 
-        # ---------------------------------------------------------------------
-        # STEP 3: Validate all rows with Pydantic
-        # ---------------------------------------------------------------------
-        validated_rows, validation_errors = self._validate_rows(
-            parse_result.rows,
-            portfolio_id
-        )
-
+        # 3. Validate Rows
+        validated_rows, validation_errors = self._validate_rows(parse_result.rows, portfolio_id)
         for error in validation_errors:
             result.add_error(**error)
 
-        # ATOMIC: If ANY validation error, stop here
-        if validation_errors:
-            logger.warning(
-                f"Validation failed for {len(validation_errors)} rows, aborting"
-            )
+        if result.errors:
             return result
 
-        # ---------------------------------------------------------------------
-        # STEP 4: Resolve all assets (batch)
-        # ---------------------------------------------------------------------
-        asset_requests = [
-            (row["ticker"], row["exchange"])
-            for row in validated_rows
-        ]
+        # 4. Resolve Assets (Batch)
+        asset_requests = [(row["ticker"], row["exchange"]) for row in validated_rows]
 
         try:
-            resolution_result = self._asset_service.resolve_assets_batch(
-                db, asset_requests
-            )
+            resolution_result = self._asset_service.resolve_assets_batch(db, asset_requests)
         except Exception as e:
-            logger.error(f"Asset resolution failed: {e}")
-            result.add_error(
-                row_number=0,
-                stage="asset_resolution",
-                error_type="resolution_error",
-                message=f"Failed to resolve assets: {e}",
-            )
+            logger.error(f"Resolution failed: {e}")
+            result.add_error(0, "asset_resolution", "resolution_error", str(e))
             return result
 
-        # Check for asset resolution failures
-        if not resolution_result.all_resolved:
-            self._add_resolution_errors(result, resolution_result, validated_rows)
-            return result
+        # 5. Build Smart Maps (Exact + Fallback)
+        exact_asset_map = {}
+        ticker_fallback_map = {}
 
-        # ---------------------------------------------------------------------
-        # STEP 5: Create transactions (atomic)
-        # ---------------------------------------------------------------------
-        try:
-            transaction_ids = self._create_transactions(
-                db=db,
-                validated_rows=validated_rows,
-                resolved_assets=resolution_result.resolved,
+        # Populate maps from successfully resolved assets
+        for key, asset in resolution_result.resolved.items():
+            # Map 1: Exact Match (Ticker + Exchange)
+            exact_asset_map[key] = asset
+
+            # Map 2: Fallback (Ticker only) - Handle duplicates safely
+            if asset.ticker not in ticker_fallback_map:
+                ticker_fallback_map[asset.ticker] = []
+
+            # Avoid adding same asset twice
+            if asset not in ticker_fallback_map[asset.ticker]:
+                ticker_fallback_map[asset.ticker].append(asset)
+
+        # 6. Map Rows to Assets (with Warning Logic)
+        transactions_db: list[Transaction] = []
+
+        for row in validated_rows:
+            key = (row["ticker"], row["exchange"])
+            asset = None
+
+            # A. Try Exact Match
+            if key in exact_asset_map:
+                asset = exact_asset_map[key]
+
+            # B. Try Smart Fallback
+            else:
+                candidates = ticker_fallback_map.get(row["ticker"], [])
+                if len(candidates) == 1:
+                    asset = candidates[0]
+                    # 👇 RECORD WARNING (This fixes your issue!)
+                    msg = (f"Exchange mismatch: Requested '{row['exchange']}', "
+                           f"using '{asset.exchange}' for {row['ticker']}")
+                    logger.warning(msg)
+                    result.add_warning(
+                        row_number=row["row_number"],
+                        stage="asset_resolution",
+                        error_type="exchange_mismatch",
+                        message=msg,
+                        field="exchange",
+                        raw_data={"requested": row["exchange"], "used": asset.exchange}
+                    )
+                elif len(candidates) > 1:
+                    result.add_error(
+                        row["row_number"], "asset_resolution", "ambiguous_asset",
+                        f"Ambiguous ticker '{row['ticker']}': Found multiple matches {[a.exchange for a in candidates]}",
+                        field="ticker"
+                    )
+                    continue
+                else:
+                    # Not found in fallback either -> Check specific resolution errors
+                    if key in resolution_result.deactivated:
+                        result.add_error(row["row_number"], "asset_resolution", "asset_deactivated",
+                                         f"Asset '{row['ticker']}' is deactivated", field="ticker")
+                    elif key in resolution_result.not_found:
+                        result.add_error(row["row_number"], "asset_resolution", "asset_not_found",
+                                         f"Asset '{row['ticker']}' on '{row['exchange']}' not found", field="ticker")
+                    elif key in resolution_result.errors:
+                        result.add_error(row["row_number"], "asset_resolution", "resolution_error",
+                                         str(resolution_result.errors[key]), field="ticker")
+                    else:
+                        result.add_error(row["row_number"], "asset_resolution", "asset_not_found",
+                                         "Asset not resolved", field="ticker")
+                    continue
+
+            # Create Transaction Object
+            txn = Transaction(
                 portfolio_id=portfolio_id,
+                asset_id=asset.id,
+                transaction_type=row["transaction_type"],
+                date=row["date"],
+                quantity=row["quantity"],
+                price_per_share=row["price_per_share"],
+                currency=row["currency"],
+                fee=row["fee"],
+                fee_currency=row["fee_currency"],
+                exchange_rate=row["exchange_rate"],
             )
+            transactions_db.append(txn)
 
-            result.success = True
-            result.created_count = len(transaction_ids)
-            result.created_transaction_ids = transaction_ids
+        # 7. Atomic Commit (Only if no blocking errors)
+        if result.error_count == 0:
+            try:
+                db.add_all(transactions_db)
+                db.commit()
+                for txn in transactions_db:
+                    db.refresh(txn)
 
-            logger.info(
-                f"Upload successful: {result.created_count} transactions created"
-            )
-
-        except Exception as e:
-            db.rollback()
-            logger.error(f"Failed to create transactions: {e}")
-            result.add_error(
-                row_number=0,
-                stage="persistence",
-                error_type="database_error",
-                message=f"Failed to save transactions: {e}",
-            )
+                result.success = True
+                result.created_count = len(transactions_db)
+                result.created_transaction_ids = [t.id for t in transactions_db]
+                logger.info(f"Upload complete. Created: {result.created_count}, Warnings: {len(result.warnings)}")
+            except Exception as e:
+                db.rollback()
+                logger.error(f"Save failed: {e}")
+                result.add_error(0, "persistence", "database_error", str(e))
 
         return result
+
+        # =========================================================================
+        # PRIVATE METHODS
+        # =========================================================================
+
+    def _validate_rows(
+            self,
+            parsed_rows: list[ParsedTransactionRow],
+            portfolio_id: int,
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Validate parsed rows and convert to transaction data."""
+        validated: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
+
+        for row in parsed_rows:
+            try:
+                validated_row = {
+                    "row_number": row.row_number,
+                    "portfolio_id": portfolio_id,
+                    "ticker": row.ticker,
+                    "exchange": row.exchange,
+                    "transaction_type": TransactionType(row.transaction_type),
+                    "date": datetime.fromisoformat(row.date.replace("Z", "+00:00")),
+                    "quantity": Decimal(row.quantity),
+                    "price_per_share": Decimal(row.price_per_share),
+                    "currency": row.currency,
+                    "fee": Decimal(row.fee) if row.fee else Decimal("0"),
+                    "fee_currency": row.fee_currency or row.currency,
+                    "exchange_rate": Decimal(row.exchange_rate) if row.exchange_rate else Decimal("1"),
+                }
+
+                if validated_row["date"] > datetime.now(timezone.utc):
+                    errors.append({"row_number": row.row_number, "stage": "validation", "error_type": "invalid_date", "message": "Date in future", "raw_data": row.raw_data})
+                    continue
+                if validated_row["quantity"] <= 0:
+                    errors.append(
+                        {"row_number": row.row_number, "stage": "validation", "error_type": "invalid_quantity", "message": "Quantity must be positive", "raw_data": row.raw_data})
+                    continue
+                if validated_row["price_per_share"] <= 0:
+                    errors.append(
+                        {"row_number": row.row_number, "stage": "validation", "error_type": "invalid_price", "message": "Price must be positive", "raw_data": row.raw_data})
+                    continue
+                if validated_row["fee"] < 0:
+                    errors.append({"row_number": row.row_number, "stage": "validation", "error_type": "invalid_fee", "message": "Fee cannot be negative", "raw_data": row.raw_data})
+                    continue
+
+                validated.append(validated_row)
+
+            except (InvalidOperation, ValueError) as e:
+                errors.append({
+                    "row_number": row.row_number,
+                    "stage": "validation",
+                    "error_type": "invalid_value",
+                    "message": str(e),
+                    "raw_data": row.raw_data,
+                })
+
+        return validated, errors
 
     # =========================================================================
     # PRIVATE METHODS
@@ -363,11 +430,11 @@ class UploadService:
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """
         Validate parsed rows and convert to transaction data.
-        
+
         Args:
             parsed_rows: Rows from parser
             portfolio_id: Target portfolio ID
-            
+
         Returns:
             Tuple of (validated_rows, errors)
         """
@@ -526,13 +593,13 @@ class UploadService:
     ) -> list[int]:
         """
         Create transactions in the database.
-        
+
         Args:
             db: Database session
             validated_rows: Validated transaction data
             resolved_assets: Map of (ticker, exchange) -> Asset
             portfolio_id: Target portfolio ID
-            
+
         Returns:
             List of created transaction IDs
         """

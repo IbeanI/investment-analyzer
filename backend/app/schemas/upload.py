@@ -76,6 +76,12 @@ class UploadResponse(BaseModel):
         default_factory=list,
         description="Detailed error information"
     )
+
+    warnings: list[UploadErrorResponse] = Field(
+        default_factory=list,
+        description="Non-blocking warnings (e.g. asset exchange mismatches)"
+    )
+
     created_transaction_ids: list[int] = Field(
         default_factory=list,
         description="IDs of created transactions"

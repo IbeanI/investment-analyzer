@@ -31,6 +31,7 @@ from app.services.upload import (
     get_supported_extensions,
     get_supported_content_types,
 )
+from app.schemas.upload import UploadResponse, UploadErrorResponse
 
 logger = logging.getLogger(__name__)
 
@@ -247,6 +248,17 @@ def upload_transactions(
             )
             for e in result.errors
         ],
+
+        warnings=[
+            UploadErrorResponse(
+                row_number=w.row_number,
+                stage=w.stage,
+                error_type=w.error_type,
+                message=w.message,
+                field=w.field
+            ) for w in result.warnings
+        ],
+
         created_transaction_ids=result.created_transaction_ids,
     )
 

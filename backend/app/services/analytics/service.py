@@ -101,12 +101,12 @@ CACHE_TTL_SECONDS = 3600
 class AnalyticsCache:
     """
     Simple in-memory TTL cache for analytics results.
-    
+
     Analytics calculations are CPU-intensive, so we cache results
     for 1 hour to avoid redundant recalculation.
-    
+
     Cache key format: "analytics:{portfolio_id}:{start}:{end}:{benchmark}"
-    
+
     Note: This is a simple in-memory cache. For production with multiple
     workers, consider using Redis instead.
     """
@@ -114,7 +114,7 @@ class AnalyticsCache:
     def __init__(self, ttl_seconds: int = CACHE_TTL_SECONDS):
         """
         Initialize cache with TTL.
-        
+
         Args:
             ttl_seconds: Time-to-live in seconds (default 1 hour)
         """
@@ -140,7 +140,7 @@ class AnalyticsCache:
     ) -> AnalyticsResult | None:
         """
         Get cached result if exists and not expired.
-        
+
         Returns:
             Cached AnalyticsResult or None if not found/expired
         """
@@ -174,10 +174,10 @@ class AnalyticsCache:
     def invalidate(self, portfolio_id: int) -> int:
         """
         Invalidate all cache entries for a portfolio.
-        
+
         Args:
             portfolio_id: Portfolio to invalidate
-            
+
         Returns:
             Number of entries invalidated
         """
@@ -206,7 +206,7 @@ class AnalyticsCache:
 class BenchmarkNotSyncedError(Exception):
     """
     Raised when benchmark data is not available in the database.
-    
+
     The benchmark must be added as an Asset and its market data
     must be synced before analytics can run.
     """
@@ -227,17 +227,17 @@ class BenchmarkNotSyncedError(Exception):
 class AnalyticsService:
     """
     Main orchestrator for portfolio analytics.
-    
+
     This service coordinates all analytics calculations by:
     1. Fetching historical portfolio values from ValuationService (daily)
     2. Extracting transaction data for cash flow analysis
     3. Delegating to specialized calculators
     4. Caching results for 1 hour
     5. Combining results into comprehensive analytics response
-    
+
     IMPORTANT: This service always fetches DAILY data internally.
     Risk metrics require daily data points for accurate calculation.
-    
+
     Attributes:
         _valuation_service: ValuationService for portfolio history
         _cache: AnalyticsCache for result caching
@@ -253,7 +253,7 @@ class AnalyticsService:
     ):
         """
         Initialize the Analytics Service.
-        
+
         Args:
             valuation_service: ValuationService instance for portfolio history.
                               If None, creates a new instance.
@@ -280,6 +280,30 @@ class AnalyticsService:
     # PUBLIC API
     # =========================================================================
 
+    def get_portfolio_start_date(self, db: Session, portfolio_id: int) -> date | None:
+        """
+        Get the date of the very first transaction in the portfolio.
+
+        Args:
+            db: Database session
+            portfolio_id: Portfolio ID
+
+        Returns:
+            Date of first transaction, or None if no transactions exist.
+        """
+        stmt = select(Transaction.date).where(
+            Transaction.portfolio_id == portfolio_id
+        ).order_by(Transaction.date.asc()).limit(1)
+
+        result = db.execute(stmt).scalar()
+
+        if result:
+            # Handle both date and datetime objects
+            if isinstance(result, datetime):
+                return result.date()
+            return result
+        return None
+
     def get_performance(
             self,
             db: Session,
@@ -289,15 +313,15 @@ class AnalyticsService:
     ) -> PerformanceMetrics:
         """
         Calculate performance metrics for a portfolio.
-        
+
         Returns TWR, IRR/XIRR, CAGR, and simple return.
-        
+
         Args:
             db: Database session
             portfolio_id: Portfolio to analyze
             start_date: Start of analysis period
             end_date: End of analysis period
-            
+
         Returns:
             PerformanceMetrics with all return calculations
         """
@@ -340,16 +364,16 @@ class AnalyticsService:
     ) -> RiskMetrics:
         """
         Calculate risk metrics for a portfolio.
-        
+
         Returns volatility, Sharpe ratio, max drawdown, etc.
-        
+
         Args:
             db: Database session
             portfolio_id: Portfolio to analyze
             start_date: Start of analysis period
             end_date: End of analysis period
             risk_free_rate: Annual risk-free rate (default 2%)
-            
+
         Returns:
             RiskMetrics with all risk calculations
         """
@@ -505,14 +529,14 @@ class AnalyticsService:
     ) -> AnalyticsResult:
         """
         Calculate all analytics metrics for a portfolio.
-        
+
         This is the main entry point that returns everything:
         - Performance (TWR, IRR, CAGR)
         - Risk (Volatility, Sharpe, Drawdown)
         - Benchmark (Beta, Alpha) - if benchmark_symbol provided
-        
+
         Results are cached for 1 hour to avoid redundant calculations.
-        
+
         Args:
             db: Database session
             portfolio_id: Portfolio to analyze
@@ -520,7 +544,7 @@ class AnalyticsService:
             end_date: End of analysis period
             benchmark_symbol: Optional benchmark for comparison
             risk_free_rate: Annual risk-free rate
-            
+
         Returns:
             AnalyticsResult with all metrics combined
         """
@@ -623,13 +647,13 @@ class AnalyticsService:
     def invalidate_cache(self, portfolio_id: int) -> int:
         """
         Invalidate all cached analytics for a portfolio.
-        
+
         Call this when transactions are added/modified to ensure
         fresh analytics on next request.
-        
+
         Args:
             portfolio_id: Portfolio to invalidate
-            
+
         Returns:
             Number of cache entries invalidated
         """
@@ -648,10 +672,10 @@ class AnalyticsService:
     def _get_default_benchmark(self, portfolio_currency: str) -> str:
         """
         Get default benchmark symbol based on portfolio currency.
-        
+
         Args:
             portfolio_currency: Portfolio's base currency (e.g., "EUR", "USD")
-            
+
         Returns:
             Default benchmark ticker for that currency
         """
@@ -669,10 +693,10 @@ class AnalyticsService:
     ) -> list[DailyValue]:
         """
         Get daily portfolio values from ValuationService.
-        
+
         IMPORTANT: Always uses daily interval internally.
         Risk metrics (Volatility, Sharpe, Beta) require daily data points.
-        
+
         Converts PortfolioHistory to list of DailyValue for calculators.
         """
         try:
@@ -715,18 +739,18 @@ class AnalyticsService:
     ) -> list[CashFlow]:
         """
         Extract cash flows from transactions for TWR and XIRR calculations.
-        
+
         Cash flow handling depends on whether portfolio tracks cash:
-        
+
         Portfolio WITH cash tracking (has DEPOSIT/WITHDRAWAL):
             - DEPOSIT = money into portfolio (positive)
             - WITHDRAWAL = money out of portfolio (negative)
             - BUY/SELL are internal movements (cash ↔ assets), not cash flows
-        
+
         Portfolio WITHOUT cash tracking (no DEPOSIT/WITHDRAWAL):
             - BUY = money into portfolio (positive) - investor adds money
             - SELL = money out of portfolio (negative) - investor removes money
-        
+
         Returns:
             List of CashFlow objects with date and amount
         """
@@ -823,19 +847,19 @@ class AnalyticsService:
     ) -> dict[date, Decimal]:
         """
         Get benchmark prices from database.
-        
+
         IMPORTANT: Benchmark must exist as an Asset and have synced market data.
         If not found, raises BenchmarkNotSyncedError with clear instructions.
-        
+
         Args:
             db: Database session
             symbol: Benchmark ticker (e.g., "^SPX", "IWDA.AS")
             start_date: Start of date range
             end_date: End of date range
-            
+
         Returns:
             Dict mapping date to closing price
-            
+
         Raises:
             BenchmarkNotSyncedError: If benchmark not found or has no price data
         """

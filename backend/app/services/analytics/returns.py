@@ -54,9 +54,17 @@ def calculate_simple_return(
         end_value: Decimal,
 ) -> Decimal | None:
     """
-    Calculate simple return (holding period return).
+    Calculate simple return (holding period return) - NO cash flow adjustment.
     
     Formula: (End - Start) / Start
+    
+    WARNING: This function does NOT adjust for cash flows. Use only when:
+    - There are no deposits/withdrawals during the period, OR
+    - You want the raw value change (e.g., for benchmarks)
+    
+    For portfolios with cash flows, use the adjusted formula:
+        simple_return = total_gain / start_value
+        where total_gain = end_value - start_value - net_cash_flows
     
     Args:
         start_value: Portfolio value at start of period
@@ -198,13 +206,18 @@ def calculate_cagr(
         days: int,
 ) -> Decimal | None:
     """
-    Calculate Compound Annual Growth Rate.
-    
-    CAGR shows the smoothed annualized growth rate assuming
-    reinvestment of gains. It's useful for comparing investments
-    over different time periods.
+    Calculate Compound Annual Growth Rate (traditional formula).
     
     Formula: CAGR = (End / Start)^(365/days) - 1
+    
+    WARNING: This function does NOT adjust for cash flows.
+    For portfolios with deposits/withdrawals, use:
+        cagr = annualize_return(simple_return, days)
+    where simple_return = total_gain / start_value
+    
+    This function is useful for:
+    - Benchmarks (no cash flows)
+    - Quick comparison of raw value changes
     
     Args:
         start_value: Portfolio value at start
@@ -416,22 +429,31 @@ class ReturnsCalculator:
         result.trading_days = len(sorted_values)
         result.calendar_days = (sorted_values[-1].date - sorted_values[0].date).days
 
-        # Calculate deposits and withdrawals
+        # Calculate deposits and withdrawals DURING the period
+        # IMPORTANT: Exclude the first day's cash flow - that's the initial investment,
+        # which is already reflected in start_value. Only count subsequent cash flows.
+        # This prevents double-counting the initial investment.
+        subsequent_values = sorted_values[1:] if len(sorted_values) > 1 else []
+
         result.total_deposits = sum(
-            dv.cash_flow for dv in sorted_values if dv.cash_flow > 0
+            dv.cash_flow for dv in subsequent_values if dv.cash_flow > 0
         )
         result.total_withdrawals = abs(sum(
-            dv.cash_flow for dv in sorted_values if dv.cash_flow < 0
+            dv.cash_flow for dv in subsequent_values if dv.cash_flow < 0
         ))
 
         # Total gain (end - start - net cash flows)
+        # This is the TRUE investment gain, excluding money added/removed
         net_cash_flow = result.total_deposits - result.total_withdrawals
         result.total_gain = result.end_value - result.start_value - net_cash_flow
 
-        # Simple return
-        result.simple_return = calculate_simple_return(
-            result.start_value, result.end_value
-        )
+        # Simple return - based on actual investment gain, not just value change
+        # Formula: total_gain / start_value
+        # This removes the effect of deposits/withdrawals during the period
+        if result.start_value > 0:
+            result.simple_return = result.total_gain / result.start_value
+        else:
+            result.simple_return = None
 
         if result.simple_return is not None and result.calendar_days > 0:
             result.simple_return_annualized = annualize_return(
@@ -446,12 +468,14 @@ class ReturnsCalculator:
                 result.twr, result.calendar_days
             )
 
-        # CAGR
-        if result.start_value > 0 and result.calendar_days > 0:
-            result.cagr = calculate_cagr(
-                result.start_value,
-                result.end_value,
-                result.calendar_days,
+        # CAGR - Compound Annual Growth Rate
+        # We use the cash-flow-adjusted simple_return to calculate CAGR
+        # This gives the true annualized growth rate of the investment
+        # Traditional CAGR = (end/start)^(1/years) - 1 ignores cash flows
+        # Adjusted CAGR = (1 + simple_return)^(365/days) - 1
+        if result.simple_return is not None and result.calendar_days > 0:
+            result.cagr = annualize_return(
+                result.simple_return, result.calendar_days
             )
 
         # XIRR

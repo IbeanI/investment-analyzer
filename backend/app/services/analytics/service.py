@@ -722,53 +722,84 @@ class AnalyticsService:
             end_date: date,
     ) -> list[CashFlow]:
         """
-        Extract cash flows from transactions for XIRR calculation.
+        Extract cash flows from transactions for TWR and XIRR calculations.
         
-        Only DEPOSIT and WITHDRAWAL transactions affect cash flows.
-        BUY/SELL are internal portfolio movements.
+        Cash flow handling depends on whether portfolio tracks cash:
+        
+        Portfolio WITH cash tracking (has DEPOSIT/WITHDRAWAL):
+            - DEPOSIT = money into portfolio (positive)
+            - WITHDRAWAL = money out of portfolio (negative)
+            - BUY/SELL are internal movements (cash ↔ assets), not cash flows
+        
+        Portfolio WITHOUT cash tracking (no DEPOSIT/WITHDRAWAL):
+            - BUY = money into portfolio (positive) - investor adds money
+            - SELL = money out of portfolio (negative) - investor removes money
+        
+        Returns:
+            List of CashFlow objects with date and amount
         """
-        # Query transactions
-        stmt = select(Transaction).where(
+        # First, check if portfolio has DEPOSIT/WITHDRAWAL transactions
+        deposit_withdrawal_stmt = select(Transaction).where(
             Transaction.portfolio_id == portfolio_id,
-            Transaction.date >= start_date,
-            Transaction.date <= end_date,
             Transaction.transaction_type.in_([
                 TransactionType.DEPOSIT,
                 TransactionType.WITHDRAWAL,
             ])
-        ).order_by(Transaction.date)
+        ).limit(1)
 
-        transactions = db.execute(stmt).scalars().all()
+        has_cash_tracking = db.execute(deposit_withdrawal_stmt).scalar() is not None
 
-        cash_flows = []
-        for txn in transactions:
-            if txn.transaction_type == TransactionType.DEPOSIT:
-                # Money into portfolio (positive cash flow from investor perspective)
-                amount = txn.quantity * txn.exchange_rate
-                cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
-            elif txn.transaction_type == TransactionType.WITHDRAWAL:
-                # Money out of portfolio (negative cash flow)
-                amount = -txn.quantity * txn.exchange_rate
-                cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
+        if has_cash_tracking:
+            # Portfolio tracks cash - use DEPOSIT/WITHDRAWAL only
+            stmt = select(Transaction).where(
+                Transaction.portfolio_id == portfolio_id,
+                Transaction.date >= start_date,
+                Transaction.date <= end_date,
+                Transaction.transaction_type.in_([
+                    TransactionType.DEPOSIT,
+                    TransactionType.WITHDRAWAL,
+                ])
+            ).order_by(Transaction.date)
 
-        # If no deposits/withdrawals, use first BUY as initial investment
-        if not cash_flows:
-            first_buy = db.execute(
-                select(Transaction).where(
-                    Transaction.portfolio_id == portfolio_id,
-                    Transaction.transaction_type == TransactionType.BUY,
-                ).order_by(Transaction.date).limit(1)
-            ).scalar()
+            transactions = db.execute(stmt).scalars().all()
 
-            if first_buy:
-                # Approximate initial investment from first buy
-                initial_value = (
-                        first_buy.quantity * first_buy.price_per_share * first_buy.exchange_rate
-                )
-                cash_flows.append(CashFlow(
-                    date=first_buy.date.date(),
-                    amount=initial_value,
-                ))
+            cash_flows = []
+            for txn in transactions:
+                if txn.transaction_type == TransactionType.DEPOSIT:
+                    # Money into portfolio (positive cash flow)
+                    amount = txn.quantity * txn.exchange_rate
+                    cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
+                elif txn.transaction_type == TransactionType.WITHDRAWAL:
+                    # Money out of portfolio (negative cash flow)
+                    amount = -txn.quantity * txn.exchange_rate
+                    cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
+
+        else:
+            # Portfolio does NOT track cash - use BUY/SELL as cash flows
+            # BUY = investor adds money, SELL = investor removes money
+            stmt = select(Transaction).where(
+                Transaction.portfolio_id == portfolio_id,
+                Transaction.date >= start_date,
+                Transaction.date <= end_date,
+                Transaction.transaction_type.in_([
+                    TransactionType.BUY,
+                    TransactionType.SELL,
+                ])
+            ).order_by(Transaction.date)
+
+            transactions = db.execute(stmt).scalars().all()
+
+            cash_flows = []
+            for txn in transactions:
+                # Calculate transaction value in portfolio currency
+                txn_value = txn.quantity * txn.price_per_share * txn.exchange_rate
+
+                if txn.transaction_type == TransactionType.BUY:
+                    # Money INTO portfolio (investor adds money to buy assets)
+                    cash_flows.append(CashFlow(date=txn.date.date(), amount=txn_value))
+                elif txn.transaction_type == TransactionType.SELL:
+                    # Money OUT of portfolio (investor removes money from selling)
+                    cash_flows.append(CashFlow(date=txn.date.date(), amount=-txn_value))
 
         return cash_flows
 

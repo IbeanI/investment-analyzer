@@ -2,6 +2,14 @@
 """
 Pydantic schemas for API request/response validation.
 
+This package contains all Pydantic schemas organized by domain:
+- analytics: Portfolio analytics (performance, risk, benchmark)
+- valuation: Portfolio valuation (holdings, P&L, history)
+- portfolios: Portfolio CRUD operations
+- transactions: Transaction CRUD operations
+- assets: Asset CRUD operations
+- errors: Error response formats
+
 Usage:
     from app.schemas import AssetCreate, AssetResponse
     from app.schemas import PortfolioCreate, PortfolioResponse
@@ -12,12 +20,33 @@ Usage:
     from app.schemas import ExchangeRateResponse
 """
 
+from app.schemas.analytics import (
+    # Period info
+    PeriodInfo,
+    # Performance
+    PerformanceMetricsResponse,
+    PerformanceResponse,
+    # Risk
+    DrawdownPeriodResponse,
+    RiskMetricsResponse,
+    RiskResponse,
+    # Benchmark
+    BenchmarkMetricsResponse,
+    BenchmarkResponse,
+    # Combined
+    AnalyticsResponse,
+    AnalyticsQueryParams,
+)
 from app.schemas.assets import (
     AssetBase,
     AssetCreate,
     AssetUpdate,
     AssetResponse,
     AssetListResponse,
+)
+from app.schemas.errors import (
+    ErrorDetail,
+    ValidationErrorDetail,
 )
 from app.schemas.exchange_rates import (
     ExchangeRateResponse,
@@ -73,10 +102,6 @@ from app.schemas.valuation import (
     PortfolioHistoryResponse,
     ValuationRequest,
     ValuationHistoryRequest,
-)
-from app.schemas.errors import (
-    ErrorDetail,
-    ValidationErrorDetail,
 )
 
 # =============================================================================
@@ -153,4 +178,16 @@ __all__ = [
     # Errors
     "ErrorDetail",
     "ValidationErrorDetail",
+
+    # Analytics schemas
+    "PeriodInfo",
+    "PerformanceMetricsResponse",
+    "PerformanceResponse",
+    "DrawdownPeriodResponse",
+    "RiskMetricsResponse",
+    "RiskResponse",
+    "BenchmarkMetricsResponse",
+    "BenchmarkResponse",
+    "AnalyticsResponse",
+    "AnalyticsQueryParams",
 ]

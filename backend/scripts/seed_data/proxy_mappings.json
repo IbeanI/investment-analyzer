@@ -10,9 +10,5 @@
   "LCUW.DE": {
     "proxy_ticker": "XDWD.DE",
     "description": "Amundi MSCI World V UCITS ETF Acc -> Xtrackers MSCI World UCITS ETF 1C Proxy"
-  },
-  "LCUW.MI": {
-    "proxy_ticker": "XDWD.DE",
-    "description": "Amundi MSCI World V UCITS ETF Acc -> Xtrackers MSCI World UCITS ETF 1C Proxy"
   }
 }

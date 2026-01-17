@@ -45,22 +45,25 @@ def parse_yahoo_symbol(symbol: str) -> tuple[str, str]:
         "AAPL" -> ("AAPL", "NASDAQ")
     """
     yahoo_to_exchange = {
-        "PA": "EPA",
         "DE": "XETRA",
+        "PA": "EPA",
         "AS": "AEB",
-        "L": "LSE",
         "MI": "BVME",
-        "SW": "SWX",
+        # Add your mappings:
+        "SBF": "SBF",
+        "IBIS2": "IBIS2",
     }
 
     if "." in symbol:
-        ticker, suffix = symbol.rsplit(".", 1)
-        exchange = yahoo_to_exchange.get(suffix, suffix.upper())
+        parts = symbol.rsplit(".", 1)
+        ticker = parts[0].upper()
+        suffix = parts[1].upper()
+        exchange = yahoo_to_exchange.get(suffix, suffix)
     else:
-        ticker = symbol
+        ticker = symbol.upper()
         exchange = "NASDAQ"
 
-    return ticker.upper(), exchange.upper()
+    return ticker, exchange
 
 
 def migrate_proxy_mappings() -> None:

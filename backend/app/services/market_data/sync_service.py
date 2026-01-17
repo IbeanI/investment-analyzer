@@ -605,6 +605,39 @@ class MarketDataSyncService:
                 f"{total_prices} prices"
             )
 
+            asset = db.get(Asset, asset_info.asset_id)
+            if asset and asset.proxy_asset_id:
+                # Find the first real price date
+                first_real = db.execute(
+                    select(func.min(MarketData.date))
+                    .where(
+                        MarketData.asset_id == asset_info.asset_id,
+                        MarketData.is_synthetic == False,
+                    )
+                ).scalar()
+
+                if first_real and first_real > asset_info.first_transaction_date:
+                    # Need to backcast
+                    logger.info(
+                        f"Asset {asset_info.ticker} needs backcasting: "
+                        f"first_txn={asset_info.first_transaction_date}, first_real={first_real}"
+                    )
+
+                    # Ensure proxy has data
+                    if self._ensure_proxy_data(
+                            db, asset.proxy_asset_id,
+                            asset_info.first_transaction_date, first_real
+                    ):
+                        # Generate synthetic prices
+                        synthetic_count = self._backcast_with_proxy(
+                            db,
+                            asset_info.asset_id,
+                            asset.proxy_asset_id,
+                            asset_info.first_transaction_date,
+                            first_real,
+                        )
+                        result.prices_fetched += synthetic_count
+
             return result
 
         except Exception as e:
@@ -895,3 +928,187 @@ class MarketDataSyncService:
             summary["fx_pairs"]["details"].append(fx_detail)
 
         return summary
+
+    def _backcast_with_proxy(
+            self,
+            db: Session,
+            asset_id: int,
+            proxy_asset_id: int,
+            backcast_start: date,
+            backcast_end: date,
+    ) -> int:
+        """
+        Generate synthetic prices for an asset using proxy data.
+
+        Uses a scaling approach: find the first real price for the asset,
+        calculate a scale factor vs the proxy, then apply that factor to
+        all proxy prices in the backcast period.
+
+        Args:
+            db: Database session
+            asset_id: Asset needing synthetic data
+            proxy_asset_id: Proxy asset to use as source
+            backcast_start: Start of period needing synthetic data
+            backcast_end: End of period (exclusive - first real price date)
+
+        Returns:
+            Number of synthetic prices created
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+
+        # Get anchor price (first real price for the asset)
+        anchor = db.execute(
+            select(MarketData)
+            .where(
+                MarketData.asset_id == asset_id,
+                MarketData.date == backcast_end,
+                MarketData.is_synthetic == False,
+            )
+        ).scalar()
+
+        if not anchor:
+            # Try to find closest real price
+            anchor = db.execute(
+                select(MarketData)
+                .where(
+                    MarketData.asset_id == asset_id,
+                    MarketData.date >= backcast_end,
+                    MarketData.is_synthetic == False,
+                )
+                .order_by(MarketData.date)
+                .limit(1)
+            ).scalar()
+
+        if not anchor:
+            logger.warning(f"No anchor price found for asset {asset_id}")
+            return 0
+
+        anchor_price = anchor.close_price
+        anchor_date = anchor.date
+
+        # Get proxy price on anchor date
+        proxy_anchor = db.execute(
+            select(MarketData)
+            .where(
+                MarketData.asset_id == proxy_asset_id,
+                MarketData.date <= anchor_date,
+            )
+            .order_by(MarketData.date.desc())
+            .limit(1)
+        ).scalar()
+
+        if not proxy_anchor:
+            logger.warning(f"No proxy anchor price found for proxy {proxy_asset_id}")
+            return 0
+
+        proxy_anchor_price = proxy_anchor.close_price
+
+        # Calculate scaling factor
+        scale_factor = anchor_price / proxy_anchor_price
+
+        logger.info(
+            f"Backcasting asset {asset_id} with proxy {proxy_asset_id}: "
+            f"scale_factor={scale_factor:.6f}"
+        )
+
+        # Get all proxy prices in backcast period
+        proxy_prices = db.execute(
+            select(MarketData)
+            .where(
+                MarketData.asset_id == proxy_asset_id,
+                MarketData.date >= backcast_start,
+                MarketData.date < backcast_end,
+            )
+            .order_by(MarketData.date)
+        ).scalars().all()
+
+        # Generate synthetic prices
+        created = 0
+        for proxy_price in proxy_prices:
+            # Check if already exists
+            existing = db.execute(
+                select(MarketData)
+                .where(
+                    MarketData.asset_id == asset_id,
+                    MarketData.date == proxy_price.date,
+                )
+            ).scalar()
+
+            if existing:
+                continue
+
+            # Scale proxy prices
+            def scale(val):
+                if val is None:
+                    return None
+                return (Decimal(str(val)) * scale_factor).quantize(
+                    Decimal('0.0001'), ROUND_HALF_UP
+                )
+
+            synthetic = MarketData(
+                asset_id=asset_id,
+                date=proxy_price.date,
+                open_price=scale(proxy_price.open_price),
+                high_price=scale(proxy_price.high_price),
+                low_price=scale(proxy_price.low_price),
+                close_price=scale(proxy_price.close_price),
+                adjusted_close=scale(proxy_price.adjusted_close),
+                volume=proxy_price.volume,
+                provider='proxy_backcast',
+                is_synthetic=True,
+                proxy_source_id=proxy_asset_id,
+            )
+            db.add(synthetic)
+            created += 1
+
+        if created > 0:
+            db.commit()
+            logger.info(f"Created {created} synthetic prices for asset {asset_id}")
+
+        return created
+
+    def _ensure_proxy_data(
+            self,
+            db: Session,
+            proxy_asset_id: int,
+            start_date: date,
+            end_date: date,
+    ) -> bool:
+        """
+        Ensure proxy asset has data for the required period.
+        Fetches from provider if missing.
+
+        Returns True if proxy has sufficient data.
+        """
+        # Check existing coverage
+        existing = db.execute(
+            select(func.min(MarketData.date), func.max(MarketData.date))
+            .where(MarketData.asset_id == proxy_asset_id)
+        ).fetchone()
+
+        min_date, max_date = existing
+
+        # If no data or insufficient coverage, fetch
+        if min_date is None or min_date > start_date:
+            # Get proxy asset info
+            proxy_asset = db.get(Asset, proxy_asset_id)
+            if not proxy_asset:
+                return False
+
+            logger.info(f"Fetching proxy data for {proxy_asset.ticker}/{proxy_asset.exchange}")
+
+            result = self._provider.get_historical_prices(
+                ticker=proxy_asset.ticker,
+                exchange=proxy_asset.exchange,
+                start_date=start_date,
+                end_date=end_date,
+            )
+
+            if result.success and result.prices:
+                self._store_prices(db, proxy_asset_id, result.prices)
+                return True
+            else:
+                logger.error(f"Failed to fetch proxy data: {result.error}")
+                return False
+
+        return True

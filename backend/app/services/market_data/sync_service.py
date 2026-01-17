@@ -1112,3 +1112,23 @@ class MarketDataSyncService:
                 return False
 
         return True
+
+    def _get_backcasting_enabled(self, db: Session, portfolio_id: int) -> bool:
+        """
+        Check if proxy backcasting is enabled for this portfolio.
+
+        Returns False if:
+        - No PortfolioSettings record exists
+        - enable_proxy_backcasting is False
+        """
+        from app.models import PortfolioSettings
+
+        settings = db.execute(
+            select(PortfolioSettings)
+            .where(PortfolioSettings.portfolio_id == portfolio_id)
+        ).scalar()
+
+        if settings is None:
+            return False  # Default: backcasting disabled
+
+        return settings.enable_proxy_backcasting

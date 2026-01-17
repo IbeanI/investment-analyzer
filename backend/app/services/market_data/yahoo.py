@@ -117,6 +117,7 @@ class YahooFinanceProvider(MarketDataProvider):
         # Netherlands
         "AMS": ".AS",
         "AEB": ".AS",
+        "AMSTERDAM": ".AS",
 
         # Belgium
         "BRU": ".BR",
@@ -134,11 +135,13 @@ class YahooFinanceProvider(MarketDataProvider):
         # Switzerland
         "SWX": ".SW",
         "VTX": ".SW",
+        "SWISS": ".SW",
 
         # Japan
         "TYO": ".T",
         "TSE": ".T",
         "JPX": ".T",
+        "TOKYO": ".T",
 
         # Hong Kong
         "HKG": ".HK",

@@ -27,11 +27,11 @@ from decimal import Decimal
 class CashFlow:
     """
     Represents a cash flow event for IRR/XIRR calculations.
-    
+
     Attributes:
         date: When the cash flow occurred
         amount: Positive = deposit/inflow, Negative = withdrawal/outflow
-        
+
     Note:
         For XIRR, the final portfolio value is treated as a negative cash flow
         (money "leaving" the investment back to the investor).
@@ -44,7 +44,7 @@ class CashFlow:
 class DailyValue:
     """
     A single day's portfolio value for time series calculations.
-    
+
     Attributes:
         date: The valuation date
         value: Total portfolio value (equity + cash if tracked)
@@ -63,9 +63,9 @@ class DailyValue:
 class PerformanceMetrics:
     """
     Return-based performance metrics.
-    
+
     All percentages are expressed as decimals (0.15 = 15%).
-    
+
     Attributes:
         simple_return: (End - Start) / Start
         simple_return_annualized: Simple return scaled to 1 year
@@ -75,13 +75,13 @@ class PerformanceMetrics:
         mwr: Money-Weighted Return (same as IRR)
         irr: Internal Rate of Return (periodic)
         xirr: Extended IRR (exact dates)
-        
+
         total_gain: Absolute gain in portfolio currency
         start_value: Portfolio value at period start
         end_value: Portfolio value at period end
         total_deposits: Sum of all deposits
         total_withdrawals: Sum of all withdrawals (positive number)
-        
+
         trading_days: Number of trading days in period
         calendar_days: Number of calendar days in period
     """
@@ -99,6 +99,7 @@ class PerformanceMetrics:
     total_gain: Decimal | None = None
     start_value: Decimal | None = None
     end_value: Decimal | None = None
+    cost_basis: Decimal | None = None  # Total invested in current positions
     total_deposits: Decimal = field(default_factory=lambda: Decimal("0"))
     total_withdrawals: Decimal = field(default_factory=lambda: Decimal("0"))
 
@@ -119,9 +120,9 @@ class PerformanceMetrics:
 class DrawdownPeriod:
     """
     Details of a single drawdown event.
-    
+
     A drawdown is the decline from a peak to a trough before a new peak is reached.
-    
+
     Attributes:
         start_date: When the drawdown began (peak date)
         trough_date: When the lowest point was reached
@@ -142,33 +143,33 @@ class DrawdownPeriod:
 class RiskMetrics:
     """
     Risk and volatility metrics.
-    
+
     All percentages are expressed as decimals.
-    
+
     Attributes:
         volatility_daily: Daily standard deviation of returns
         volatility_annualized: Annualized volatility (daily * sqrt(252))
         downside_deviation: Std dev of negative returns only
-        
+
         sharpe_ratio: (Return - RiskFree) / Volatility
         sortino_ratio: (Return - RiskFree) / Downside Deviation
         calmar_ratio: CAGR / |Max Drawdown|
-        
+
         max_drawdown: Largest peak-to-trough decline (negative decimal)
         max_drawdown_start: When the worst drawdown began
         max_drawdown_end: When the worst drawdown ended (None if ongoing)
         current_drawdown: Current drawdown from most recent peak
-        
+
         var_95: Value at Risk at 95% confidence (daily)
         cvar_95: Conditional VaR (Expected Shortfall) at 95%
-        
+
         positive_days: Number of days with positive returns
         negative_days: Number of days with negative returns
         win_rate: positive_days / total_days
-        
+
         best_day: Highest single-day return
         worst_day: Lowest single-day return
-        
+
         drawdown_periods: List of all significant drawdowns
     """
     # Volatility metrics
@@ -216,29 +217,29 @@ class RiskMetrics:
 class BenchmarkMetrics:
     """
     Comparison metrics against a benchmark index.
-    
+
     Attributes:
         benchmark_symbol: The benchmark ticker (e.g., "SPY")
         benchmark_name: Full name of the benchmark
-        
+
         portfolio_return: Portfolio return over the period
         benchmark_return: Benchmark return over the period
         excess_return: Portfolio return - Benchmark return
-        
+
         beta: Systematic risk (Cov(Rp,Rm) / Var(Rm))
               β > 1: More volatile than market
               β < 1: Less volatile than market
               β = 1: Moves with market
-              
+
         alpha: Excess return above expected (Jensen's Alpha)
                α = Rp - [Rf + β(Rm - Rf)]
-               
+
         correlation: Pearson correlation coefficient (-1 to 1)
         r_squared: Coefficient of determination (0 to 1)
-        
+
         tracking_error: Std dev of return differences
         information_ratio: Excess return / Tracking error
-        
+
         up_capture: Performance in up markets vs benchmark
         down_capture: Performance in down markets vs benchmark
     """
@@ -291,7 +292,7 @@ class AnalyticsPeriod:
 class AnalyticsResult:
     """
     Combined result from all analytics calculations.
-    
+
     This is the main response type returned by AnalyticsService.
     """
     portfolio_id: int

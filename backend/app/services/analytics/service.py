@@ -280,30 +280,6 @@ class AnalyticsService:
     # PUBLIC API
     # =========================================================================
 
-    def get_portfolio_start_date(self, db: Session, portfolio_id: int) -> date | None:
-        """
-        Get the date of the very first transaction in the portfolio.
-
-        Args:
-            db: Database session
-            portfolio_id: Portfolio ID
-
-        Returns:
-            Date of first transaction, or None if no transactions exist.
-        """
-        stmt = select(Transaction.date).where(
-            Transaction.portfolio_id == portfolio_id
-        ).order_by(Transaction.date.asc()).limit(1)
-
-        result = db.execute(stmt).scalar()
-
-        if result:
-            # Handle both date and datetime objects
-            if isinstance(result, datetime):
-                return result.date()
-            return result
-        return None
-
     def get_performance(
             self,
             db: Session,
@@ -349,10 +325,42 @@ class AnalyticsService:
                 amount=-daily_values[-1].value,  # Negative = outflow
             ))
 
+        # Get cost_basis from valuation for accurate simple_return calculation
+        # This is crucial for portfolios without cash tracking (no DEPOSIT/WITHDRAWAL)
+        cost_basis = self._get_cost_basis(db, portfolio_id, end_date)
+
         # Calculate all return metrics
-        result = ReturnsCalculator.calculate_all(daily_values, cash_flows)
+        result = ReturnsCalculator.calculate_all(
+            daily_values,
+            cash_flows,
+            cost_basis=cost_basis,
+        )
 
         return result
+
+    def _get_cost_basis(
+            self,
+            db: Session,
+            portfolio_id: int,
+            valuation_date: date,
+    ) -> Decimal | None:
+        """
+        Get the total cost basis from valuation service.
+
+        This is the actual money invested in current positions.
+        Used for accurate simple_return calculation.
+        """
+        try:
+            valuation = self._valuation_service.get_valuation(
+                db=db,
+                portfolio_id=portfolio_id,
+                valuation_date=valuation_date,
+            )
+            # PortfolioValuation dataclass has total_cost_basis as direct attribute
+            return valuation.total_cost_basis
+        except Exception as e:
+            logger.warning(f"Could not get cost_basis: {e}")
+            return None
 
     def get_risk(
             self,
@@ -391,10 +399,19 @@ class AnalyticsService:
                 warnings=["No valuation data available for the period"],
             )
 
+        # Get cost_basis for accurate CAGR calculation (needed for Calmar ratio)
+        cost_basis = self._get_cost_basis(db, portfolio_id, end_date)
+
         # Get performance metrics for CAGR (needed for Calmar ratio)
-        performance = ReturnsCalculator.calculate_all(daily_values)
+        # Pass cost_basis for accurate simple_return/CAGR calculation
+        performance = ReturnsCalculator.calculate_all(
+            daily_values,
+            cost_basis=cost_basis,
+        )
 
         # Calculate all risk metrics
+        # Note: Sharpe uses TWR (time-weighted return) which is correctly calculated
+        # from daily returns and doesn't need cost_basis adjustment
         result = RiskCalculator.calculate_all(
             daily_values=daily_values,
             total_return_annualized=performance.twr_annualized,
@@ -428,10 +445,10 @@ class AnalyticsService:
             risk_free_rate: Annual risk-free rate
 
         Returns:
-            BenchmarkMetrics with comparison analysis.
+            BenchmarkMetrics with comparison analysis
 
         Raises:
-            BenchmarkNotSyncedError: If benchmark not found or has no data.
+            BenchmarkNotSyncedError: If benchmark not found or has no data
         """
         # Get portfolio to determine currency for default benchmark
         portfolio = db.get(Portfolio, portfolio_id)
@@ -582,6 +599,9 @@ class AnalyticsService:
         # Get daily values once (reuse for all calculations)
         daily_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
 
+        # Get cost_basis for accurate simple_return/CAGR calculation
+        cost_basis = self._get_cost_basis(db, portfolio_id, end_date)
+
         # Performance metrics
         cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)
         if daily_values:
@@ -589,7 +609,11 @@ class AnalyticsService:
                 date=daily_values[-1].date,
                 amount=-daily_values[-1].value,
             ))
-        performance = ReturnsCalculator.calculate_all(daily_values, cash_flows)
+        performance = ReturnsCalculator.calculate_all(
+            daily_values,
+            cash_flows,
+            cost_basis=cost_basis,
+        )
 
         # Risk metrics
         risk = RiskCalculator.calculate_all(
@@ -599,7 +623,8 @@ class AnalyticsService:
             risk_free_rate=risk_free_rate,
         )
 
-        # Benchmark (optional)
+        # Benchmark (optional) - let BenchmarkNotSyncedError propagate to router
+        # The router will catch it and return HTTP 400
         benchmark = None
         if benchmark_symbol:
             benchmark = self.get_benchmark(

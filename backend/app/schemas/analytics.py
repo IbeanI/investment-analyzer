@@ -89,6 +89,10 @@ class PerformanceMetricsResponse(BaseModel):
         None,
         description="Portfolio value at end of period"
     )
+    cost_basis: str | None = Field(
+        None,
+        description="Total cost basis of current positions (from valuation)"
+    )
     total_deposits: str = Field(
         "0",
         description="Sum of all deposits during period"

@@ -9,8 +9,8 @@ Provides performance, risk, and benchmark metrics:
 - GET /portfolios/{id}/analytics/benchmark - Benchmark comparison only
 
 All endpoints require:
-- from_date: Start of analysis period (Defaults to portfolio inception)
-- to_date: End of analysis period (Defaults to today)
+- from_date: Start of analysis period
+- to_date: End of analysis period
 
 Optional parameters:
 - benchmark_symbol: Benchmark ticker (e.g., "^SPX", "IWDA.AS")
@@ -93,10 +93,10 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
 # =============================================================================
 
 def _decimal_to_str(value: Decimal | int | None) -> str | None:
-    """Convert Decimal or int to string, preserving None."""
+    """Convert Decimal to string, preserving None."""
     if value is None:
         return None
-    # Convert int to Decimal if necessary
+    # Convert int to Decimal if needed (safety net)
     if isinstance(value, int):
         value = Decimal(str(value))
     # Format to reasonable precision (8 decimal places)
@@ -110,36 +110,6 @@ def _validate_date_range(from_date: date, to_date: date) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="from_date must be before or equal to to_date"
         )
-
-
-def _resolve_dates(
-        db: Session,
-        service: AnalyticsService,
-        portfolio_id: int,
-        from_date: date | None,
-        to_date: date | None
-) -> tuple[date, date]:
-    """
-    Resolve start and end dates with smart defaults.
-
-    defaults:
-    - to_date -> Today
-    - from_date -> First transaction date (Inception)
-    """
-    # Default to_date to Today
-    final_to = to_date or date.today()
-
-    # Default from_date to Portfolio Inception
-    final_from = from_date
-    if final_from is None:
-        inception = service.get_portfolio_start_date(db, portfolio_id)
-        # Fallback: Start of current year if no history
-        final_from = inception if inception else date(final_to.year, 1, 1)
-
-    # Validate
-    _validate_date_range(final_from, final_to)
-
-    return final_from, final_to
 
 
 # =============================================================================
@@ -180,6 +150,7 @@ def _map_performance(perf: PerformanceMetrics) -> PerformanceMetricsResponse:
         total_gain=_decimal_to_str(perf.total_gain),
         start_value=_decimal_to_str(perf.start_value),
         end_value=_decimal_to_str(perf.end_value),
+        cost_basis=_decimal_to_str(perf.cost_basis),
         total_deposits=_decimal_to_str(perf.total_deposits) or "0",
         total_withdrawals=_decimal_to_str(perf.total_withdrawals) or "0",
         has_sufficient_data=perf.has_sufficient_data,
@@ -254,14 +225,14 @@ def _map_benchmark(bench: BenchmarkMetrics) -> BenchmarkMetricsResponse:
 )
 def get_portfolio_analytics(
         portfolio_id: int,
-        from_date: date | None = Query(
-            default=None,
-            description="Start date (defaults to portfolio inception)",
+        from_date: date = Query(
+            ...,
+            description="Start date of analysis period",
             alias="from_date"
         ),
-        to_date: date | None = Query(
-            default=None,
-            description="End date (defaults to today)",
+        to_date: date = Query(
+            ...,
+            description="End date of analysis period",
             alias="to_date"
         ),
         benchmark_symbol: str | None = Query(
@@ -306,18 +277,17 @@ def get_portfolio_analytics(
 
     **Note:** Results are cached for 1 hour to improve performance.
     """
+    # Validate inputs
+    _validate_date_range(from_date, to_date)
     portfolio = get_portfolio_or_404(db, portfolio_id)
-
-    # Resolve dates with defaults
-    final_from, final_to = _resolve_dates(db, service, portfolio_id, from_date, to_date)
 
     # Get analytics from service
     try:
         result = service.get_analytics(
             db=db,
             portfolio_id=portfolio_id,
-            start_date=final_from,
-            end_date=final_to,
+            start_date=from_date,
+            end_date=to_date,
             benchmark_symbol=benchmark_symbol,
             risk_free_rate=risk_free_rate,
         )
@@ -352,13 +322,13 @@ def get_portfolio_analytics(
 )
 def get_portfolio_performance(
         portfolio_id: int,
-        from_date: date | None = Query(
-            default=None,
-            description="Start date (defaults to portfolio inception)"
+        from_date: date = Query(
+            ...,
+            description="Start date of analysis period"
         ),
-        to_date: date | None = Query(
-            default=None,
-            description="End date (defaults to today)"
+        to_date: date = Query(
+            ...,
+            description="End date of analysis period"
         ),
         db: Session = Depends(get_db),
         service: AnalyticsService = Depends(get_analytics_service),
@@ -376,23 +346,22 @@ def get_portfolio_performance(
     **Use this endpoint when you only need returns**, without risk
     or benchmark analysis. It's faster than the full analytics endpoint.
     """
+    # Validate inputs
+    _validate_date_range(from_date, to_date)
     portfolio = get_portfolio_or_404(db, portfolio_id)
-
-    # Resolve dates with defaults
-    final_from, final_to = _resolve_dates(db, service, portfolio_id, from_date, to_date)
 
     # Get performance from service
     performance = service.get_performance(
         db=db,
         portfolio_id=portfolio_id,
-        start_date=final_from,
-        end_date=final_to,
+        start_date=from_date,
+        end_date=to_date,
     )
 
     # Build period info
     period = PeriodInfo(
-        from_date=final_from,
-        to_date=final_to,
+        from_date=from_date,
+        to_date=to_date,
         trading_days=performance.trading_days,
         calendar_days=performance.calendar_days,
     )
@@ -413,13 +382,13 @@ def get_portfolio_performance(
 )
 def get_portfolio_risk(
         portfolio_id: int,
-        from_date: date | None = Query(
-            default=None,
-            description="Start date (defaults to portfolio inception)"
+        from_date: date = Query(
+            ...,
+            description="Start date of analysis period"
         ),
-        to_date: date | None = Query(
-            default=None,
-            description="End date (defaults to today)"
+        to_date: date = Query(
+            ...,
+            description="End date of analysis period"
         ),
         risk_free_rate: Decimal = Query(
             default=DEFAULT_RISK_FREE_RATE,
@@ -448,28 +417,27 @@ def get_portfolio_risk(
 
     **Note:** Risk metrics require daily data internally for accuracy.
     """
+    # Validate inputs
+    _validate_date_range(from_date, to_date)
     portfolio = get_portfolio_or_404(db, portfolio_id)
-
-    # Resolve dates with defaults
-    final_from, final_to = _resolve_dates(db, service, portfolio_id, from_date, to_date)
 
     # Get risk from service
     risk = service.get_risk(
         db=db,
         portfolio_id=portfolio_id,
-        start_date=final_from,
-        end_date=final_to,
+        start_date=from_date,
+        end_date=to_date,
         risk_free_rate=risk_free_rate,
     )
 
     # Build period info (we need trading_days from the risk result)
     # Since RiskMetrics doesn't have this, we approximate from daily values
-    calendar_days = (final_to - final_from).days
+    calendar_days = (to_date - from_date).days
     trading_days = risk.positive_days + risk.negative_days
 
     period = PeriodInfo(
-        from_date=final_from,
-        to_date=final_to,
+        from_date=from_date,
+        to_date=to_date,
         trading_days=trading_days,
         calendar_days=calendar_days,
     )
@@ -490,18 +458,18 @@ def get_portfolio_risk(
 )
 def get_portfolio_benchmark(
         portfolio_id: int,
+        from_date: date = Query(
+            ...,
+            description="Start date of analysis period"
+        ),
+        to_date: date = Query(
+            ...,
+            description="End date of analysis period"
+        ),
         benchmark_symbol: str = Query(
             ...,
             description="Benchmark ticker (e.g., '^SPX', 'IWDA.AS')",
             alias="benchmark"
-        ),
-        from_date: date | None = Query(
-            default=None,
-            description="Start date (defaults to portfolio inception)"
-        ),
-        to_date: date | None = Query(
-            default=None,
-            description="End date (defaults to today)"
         ),
         risk_free_rate: Decimal = Query(
             default=DEFAULT_RISK_FREE_RATE,
@@ -539,18 +507,17 @@ def get_portfolio_benchmark(
 
     **Error:** Returns 400 if benchmark is not synced to database.
     """
+    # Validate inputs
+    _validate_date_range(from_date, to_date)
     portfolio = get_portfolio_or_404(db, portfolio_id)
-
-    # Resolve dates with defaults
-    final_from, final_to = _resolve_dates(db, service, portfolio_id, from_date, to_date)
 
     # Get benchmark comparison from service
     try:
         benchmark = service.get_benchmark(
             db=db,
             portfolio_id=portfolio_id,
-            start_date=final_from,
-            end_date=final_to,
+            start_date=from_date,
+            end_date=to_date,
             benchmark_symbol=benchmark_symbol,
             risk_free_rate=risk_free_rate,
         )
@@ -565,11 +532,11 @@ def get_portfolio_benchmark(
         )
 
     # Build period info
-    calendar_days = (final_to - final_from).days
+    calendar_days = (to_date - from_date).days
 
     period = PeriodInfo(
-        from_date=final_from,
-        to_date=final_to,
+        from_date=from_date,
+        to_date=to_date,
         trading_days=0,  # We don't have this from benchmark-only call
         calendar_days=calendar_days,
     )

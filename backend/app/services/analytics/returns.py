@@ -14,13 +14,13 @@ No external dependencies (scipy, numpy) - pure Python only.
 
 Formulas:
     Simple Return = (End - Start) / Start
-    
+
     TWR (Daily Linking Method):
         r_daily = (V_end - CF) / V_start - 1
         TWR = ∏(1 + r_daily) - 1
-    
+
     CAGR = (End / Start)^(365/days) - 1
-    
+
     XIRR solves: Σ CF_i / (1 + r)^((d_i - d_0) / 365) = 0
 """
 
@@ -55,21 +55,21 @@ def calculate_simple_return(
 ) -> Decimal | None:
     """
     Calculate simple return (holding period return) - NO cash flow adjustment.
-    
+
     Formula: (End - Start) / Start
-    
+
     WARNING: This function does NOT adjust for cash flows. Use only when:
     - There are no deposits/withdrawals during the period, OR
     - You want the raw value change (e.g., for benchmarks)
-    
+
     For portfolios with cash flows, use the adjusted formula:
         simple_return = total_gain / start_value
         where total_gain = end_value - start_value - net_cash_flows
-    
+
     Args:
         start_value: Portfolio value at start of period
         end_value: Portfolio value at end of period
-        
+
     Returns:
         Return as decimal (e.g., 0.15 = 15%), or None if start_value is 0
     """
@@ -86,14 +86,14 @@ def annualize_return(
 ) -> Decimal | None:
     """
     Annualize a return over a given number of days.
-    
+
     Formula: (1 + r)^(365/days) - 1
-    
+
     Args:
         total_return: Total return as decimal (e.g., 0.15 = 15%)
         days: Number of days in the period
         use_trading_days: If True, use 252 days/year instead of 365
-        
+
     Returns:
         Annualized return as decimal, or None if days <= 0
     """
@@ -123,26 +123,26 @@ def annualize_return(
 def calculate_twr(daily_values: list[DailyValue]) -> Decimal | None:
     """
     Calculate Time-Weighted Return using the Daily Linking Method.
-    
+
     TWR removes the impact of cash flows, showing pure investment performance.
     This is the industry standard for comparing fund managers.
-    
+
     Formula (Daily Linking Method):
         r_daily = (V_end - CF) / V_start - 1
         TWR = ∏(1 + r_daily) - 1
-        
+
     Where:
         V_end = Portfolio value at end of day
         V_start = Portfolio value at start of day (previous day's end value)
         CF = Cash flow on that day (positive = deposit, negative = withdrawal)
-    
+
     This method is simpler and more robust than breaking into sub-periods.
     Since we have daily valuations, we can calculate the return for each day
     and chain-link them together.
-    
+
     Args:
         daily_values: List of DailyValue with date, value, and cash_flow
-        
+
     Returns:
         TWR as decimal (e.g., 0.15 = 15%), or None if insufficient data
     """
@@ -179,12 +179,12 @@ def calculate_twr_from_sub_periods(
 ) -> Decimal:
     """
     Calculate TWR from pre-calculated sub-period returns.
-    
+
     Formula: TWR = ∏(1 + r_i) - 1
-    
+
     Args:
         sub_period_returns: List of returns for each sub-period
-        
+
     Returns:
         TWR as decimal
     """
@@ -207,23 +207,23 @@ def calculate_cagr(
 ) -> Decimal | None:
     """
     Calculate Compound Annual Growth Rate (traditional formula).
-    
+
     Formula: CAGR = (End / Start)^(365/days) - 1
-    
+
     WARNING: This function does NOT adjust for cash flows.
     For portfolios with deposits/withdrawals, use:
         cagr = annualize_return(simple_return, days)
     where simple_return = total_gain / start_value
-    
+
     This function is useful for:
     - Benchmarks (no cash flows)
     - Quick comparison of raw value changes
-    
+
     Args:
         start_value: Portfolio value at start
         end_value: Portfolio value at end
         days: Number of calendar days
-        
+
     Returns:
         CAGR as decimal (e.g., 0.12 = 12%), or None if invalid inputs
     """
@@ -253,26 +253,26 @@ def calculate_xirr(
 ) -> Decimal | None:
     """
     Calculate Extended Internal Rate of Return (XIRR).
-    
+
     XIRR is the money-weighted return that accounts for the timing
     and size of cash flows. It's the discount rate that makes the
     NPV of all cash flows equal to zero.
-    
+
     Formula:
         Solve for r: Σ CF_i / (1 + r)^((d_i - d_0) / 365) = 0
-    
+
     Uses Newton-Raphson method for iterative solving.
-    
+
     Args:
         cash_flows: List of CashFlow (date, amount)
                    - Positive = money into investment (deposit)
                    - Negative = money out of investment (withdrawal, final value)
         max_iterations: Maximum solver iterations
         tolerance: Convergence tolerance
-        
+
     Returns:
         XIRR as decimal (e.g., 0.15 = 15%), or None if no solution found
-        
+
     Example:
         cash_flows = [
             CashFlow(date(2024, 1, 1), Decimal("10000")),   # Initial investment
@@ -359,17 +359,17 @@ def calculate_irr_periodic(
 ) -> Decimal | None:
     """
     Calculate IRR for periodic (equal interval) cash flows.
-    
+
     This is simpler than XIRR as it assumes equal time periods.
-    
+
     Formula:
         Solve for r: Σ CF_i / (1 + r)^i = 0
-    
+
     Args:
         cash_flows: List of cash flows at equal intervals
                    First value is typically negative (initial investment)
                    Last value includes final portfolio value (negative)
-        
+
     Returns:
         IRR as decimal, or None if no solution found
     """
@@ -392,7 +392,7 @@ def calculate_irr_periodic(
 class ReturnsCalculator:
     """
     Calculator for all return-based performance metrics.
-    
+
     This class provides a convenient interface to calculate all
     return metrics at once.
     """
@@ -401,15 +401,19 @@ class ReturnsCalculator:
     def calculate_all(
             daily_values: list[DailyValue],
             cash_flows: list[CashFlow] | None = None,
+            cost_basis: Decimal | None = None,
     ) -> PerformanceMetrics:
         """
         Calculate all return metrics.
-        
+
         Args:
             daily_values: Daily portfolio values with cash flows
             cash_flows: Optional separate list of cash flows for XIRR
                        If None, extracted from daily_values
-        
+            cost_basis: Optional cost basis from valuation service.
+                       If provided, used for simple_return calculation
+                       (crucial for portfolios without cash tracking)
+
         Returns:
             PerformanceMetrics with all available metrics
         """
@@ -435,25 +439,51 @@ class ReturnsCalculator:
         # This prevents double-counting the initial investment.
         subsequent_values = sorted_values[1:] if len(sorted_values) > 1 else []
 
+        # Use Decimal("0") as start to ensure sum returns Decimal, not int
         result.total_deposits = sum(
-            dv.cash_flow for dv in subsequent_values if dv.cash_flow > 0
+            (dv.cash_flow for dv in subsequent_values if dv.cash_flow > 0),
+            Decimal("0")
         )
         result.total_withdrawals = abs(sum(
-            dv.cash_flow for dv in subsequent_values if dv.cash_flow < 0
+            (dv.cash_flow for dv in subsequent_values if dv.cash_flow < 0),
+            Decimal("0")
         ))
 
-        # Total gain (end - start - net cash flows)
-        # This is the TRUE investment gain, excluding money added/removed
-        net_cash_flow = result.total_deposits - result.total_withdrawals
-        result.total_gain = result.end_value - result.start_value - net_cash_flow
+        # =====================================================================
+        # SIMPLE RETURN CALCULATION
+        # =====================================================================
+        #
+        # For portfolios WITH cash tracking (has DEPOSIT/WITHDRAWAL):
+        #   - start_value is meaningful (initial cash balance)
+        #   - total_gain = end_value - start_value - net_cash_flows
+        #   - simple_return = total_gain / start_value
+        #
+        # For portfolios WITHOUT cash tracking (only BUY/SELL):
+        #   - start_value is just the first transaction value (not meaningful)
+        #   - We should use cost_basis as the denominator
+        #   - simple_return = (end_value - cost_basis) / cost_basis
+        #   - This equals: unrealized_pnl / cost_basis
+        #
+        # We detect which case we're in by checking if cost_basis is provided
+        # and if it differs significantly from the start_value approach.
+        # =====================================================================
 
-        # Simple return - based on actual investment gain, not just value change
-        # Formula: total_gain / start_value
-        # This removes the effect of deposits/withdrawals during the period
-        if result.start_value > 0:
-            result.simple_return = result.total_gain / result.start_value
+        if cost_basis is not None and cost_basis > 0:
+            # Use cost_basis for simple_return (more accurate for portfolios
+            # without cash tracking, and still correct for portfolios with it)
+            result.total_gain = result.end_value - cost_basis
+            result.simple_return = result.total_gain / cost_basis
+            result.cost_basis = cost_basis  # Store for reference
         else:
-            result.simple_return = None
+            # Fallback: traditional calculation using start_value
+            # This works for portfolios with explicit cash tracking
+            net_cash_flow = result.total_deposits - result.total_withdrawals
+            result.total_gain = result.end_value - result.start_value - net_cash_flow
+
+            if result.start_value > 0:
+                result.simple_return = result.total_gain / result.start_value
+            else:
+                result.simple_return = None
 
         if result.simple_return is not None and result.calendar_days > 0:
             result.simple_return_annualized = annualize_return(

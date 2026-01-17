@@ -86,75 +86,104 @@ class YahooFinanceProvider(MarketDataProvider):
     # US exchanges (NASDAQ, NYSE) use no suffix.
 
     EXCHANGE_SUFFIXES: dict[str, str] = {
-        # US Exchanges (no suffix)
+        # US
         "NASDAQ": "",
         "NYSE": "",
         "NYSEARCA": "",
         "NYSEMKT": "",
         "BATS": "",
         "AMEX": "",
-        "NMS": "",  # NASDAQ National Market System
+        "NMS": "",
 
-        # German Exchanges
+        # Germany
+        "IBIS": ".DE",
+        "IBIS2": ".DE",
         "XETRA": ".DE",
         "FRA": ".F",
         "FRANKFURT": ".F",
-        "TGATE": ".DE",  # Tradegate
+        "TGATE": ".DE",
 
-        # UK Exchanges
+        # UK
         "LSE": ".L",
         "LONDON": ".L",
         "LON": ".L",
 
-        # French Exchanges
+        # France
         "EPA": ".PA",
         "EURONEXT": ".PA",
         "SBF": ".PA",
         "PARIS": ".PA",
 
-        # Dutch Exchanges
+        # Netherlands
         "AMS": ".AS",
         "AEB": ".AS",
-        "AMSTERDAM": ".AS",
 
-        # Belgian Exchanges
+        # Belgium
         "BRU": ".BR",
         "EBR": ".BR",
 
-        # Italian Exchanges
+        # Italy
+        "BVME": ".MI",
         "MIL": ".MI",
         "BIT": ".MI",
 
-        # Spanish Exchanges
+        # Spain
         "BME": ".MC",
         "MCE": ".MC",
 
-        # Swiss Exchanges
+        # Switzerland
         "SWX": ".SW",
-        "SWISS": ".SW",
         "VTX": ".SW",
 
-        # Japanese Exchanges
+        # Japan
         "TYO": ".T",
         "TSE": ".T",
-        "TOKYO": ".T",
         "JPX": ".T",
 
-        # Hong Kong Exchanges
+        # Hong Kong
         "HKG": ".HK",
         "HKEX": ".HK",
 
-        # Chinese Exchanges
+        # China
         "SHA": ".SS",
+        "SSE": ".SS",
         "SHE": ".SZ",
+        "SZSE": ".SZ",
 
-        # Canadian Exchanges
+        # Canada
         "TSX": ".TO",
         "TORONTO": ".TO",
         "CVE": ".V",
 
-        # Australian Exchanges
+        # Australia
         "ASX": ".AX",
+
+        # India
+        "NSE": ".NS",
+        "BSE": ".BO",
+
+        # Korea
+        "KOSPI": ".KS",
+        "KOSDAQ": ".KQ",
+
+        # Nordics
+        "STO": ".ST",  # Sweden
+        "CPH": ".CO",  # Denmark
+        "HEL": ".HE",  # Finland
+        "OSL": ".OL",  # Norway
+
+        # Latin America
+        "B3": ".SA",  # Brazil
+        "BMV": ".MX",  # Mexico
+        "BCBA": ".BA",  # Argentina
+        "SN": ".SN",  # Chile
+
+        # Middle East
+        "TASE": ".TA",
+        "TADAWUL": ".SR",
+
+        # Africa
+        "JSE": ".JO",
     }
 
     # =========================================================================

@@ -325,15 +325,16 @@ class AnalyticsService:
                 amount=-daily_values[-1].value,  # Negative = outflow
             ))
 
-        # Get cost_basis from valuation for accurate simple_return calculation
+        # Get cost_basis and realized_pnl from valuation for accurate simple_return calculation
         # This is crucial for portfolios without cash tracking (no DEPOSIT/WITHDRAWAL)
-        cost_basis = self._get_valuation_data(db, portfolio_id, end_date)
+        cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Calculate all return metrics
         result = ReturnsCalculator.calculate_all(
             daily_values,
             cash_flows,
             cost_basis=cost_basis,
+            realized_pnl=realized_pnl,
         )
 
         return result
@@ -398,14 +399,15 @@ class AnalyticsService:
                 warnings=["No valuation data available for the period"],
             )
 
-        # Get cost_basis for accurate CAGR calculation (needed for Calmar ratio)
-        cost_basis = self._get_valuation_data(db, portfolio_id, end_date)
+        # Get cost_basis and realized_pnl for accurate CAGR calculation (needed for Calmar ratio)
+        cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Get performance metrics for CAGR (needed for Calmar ratio)
-        # Pass cost_basis for accurate simple_return/CAGR calculation
+        # Pass cost_basis and realized_pnl for accurate simple_return/CAGR calculation
         performance = ReturnsCalculator.calculate_all(
             daily_values,
             cost_basis=cost_basis,
+            realized_pnl=realized_pnl,
         )
 
         # Calculate all risk metrics
@@ -558,36 +560,37 @@ class AnalyticsService:
             portfolio_id: Portfolio to analyze
             start_date: Start of analysis period
             end_date: End of analysis period
-            benchmark_symbol: Optional benchmark for comparison
-            risk_free_rate: Annual risk-free rate
+            benchmark_symbol: Optional benchmark ticker (e.g., "^SPX")
+            risk_free_rate: Annual risk-free rate for Sharpe ratio
 
         Returns:
-            AnalyticsResult with all metrics combined
-        """
-        # Check cache first
-        cached_result = self._cache.get(
-            portfolio_id, start_date, end_date, benchmark_symbol
-        )
-        if cached_result is not None:
-            logger.info(f"Returning cached analytics for portfolio {portfolio_id}")
-            return cached_result
+            AnalyticsResult with all metrics
 
+        Raises:
+            BenchmarkNotSyncedError: If benchmark requested but not synced
+        """
         logger.info(
             f"Calculating full analytics for portfolio {portfolio_id} "
             f"from {start_date} to {end_date}"
         )
 
-        # Get portfolio info
+        # Check cache first
+        cached = self._cache.get(portfolio_id, start_date, end_date, benchmark_symbol)
+        if cached is not None:
+            logger.debug(f"Cache hit for portfolio {portfolio_id}")
+            return cached
+
+        # Verify portfolio exists
         portfolio = db.get(Portfolio, portfolio_id)
-        if not portfolio:
+        if portfolio is None:
             return AnalyticsResult(
                 portfolio_id=portfolio_id,
-                portfolio_currency="USD",
+                portfolio_currency="EUR",
                 period=AnalyticsPeriod(
                     from_date=start_date,
                     to_date=end_date,
                     trading_days=0,
-                    calendar_days=(end_date - start_date).days,
+                    calendar_days=0,
                 ),
                 performance=PerformanceMetrics(has_sufficient_data=False),
                 risk=RiskMetrics(has_sufficient_data=False),
@@ -598,8 +601,8 @@ class AnalyticsService:
         # Get daily values once (reuse for all calculations)
         daily_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
 
-        # Get cost_basis for accurate simple_return/CAGR calculation
-        cost_basis = self._get_valuation_data(db, portfolio_id, end_date)
+        # Get cost_basis and realized_pnl for accurate simple_return/CAGR calculation
+        cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Performance metrics
         cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)
@@ -612,6 +615,7 @@ class AnalyticsService:
             daily_values,
             cash_flows,
             cost_basis=cost_basis,
+            realized_pnl=realized_pnl,
         )
 
         # Risk metrics

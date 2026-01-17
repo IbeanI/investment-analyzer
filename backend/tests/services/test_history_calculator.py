@@ -485,11 +485,12 @@ class TestPriceFallback:
         }
 
         # Lookup for Jan 12 (Saturday) should fall back to Jan 10
-        price = history_calc._lookup_price_with_fallback(
+        price, price_date = history_calc._lookup_price_with_fallback(
             price_map, asset_id=1, target_date=date(2024, 1, 12)
         )
 
         assert price == Decimal("150.00")
+        assert price_date == date(2024, 1, 10)
 
     def test_price_fallback_beyond_limit_returns_none(self, history_calc):
         """Price lookup beyond fallback limit should return None."""
@@ -499,11 +500,12 @@ class TestPriceFallback:
         }
 
         # Lookup for Jan 15 (14 days later) should fail
-        price = history_calc._lookup_price_with_fallback(
+        price, price_date = history_calc._lookup_price_with_fallback(
             price_map, asset_id=1, target_date=date(2024, 1, 15)
         )
 
         assert price is None
+        assert price_date is None
 
     def test_exact_date_match_no_fallback(self, history_calc):
         """Exact date match should not use fallback."""
@@ -512,11 +514,12 @@ class TestPriceFallback:
             (1, date(2024, 1, 14)): Decimal("150.00"),  # Previous day
         }
 
-        price = history_calc._lookup_price_with_fallback(
+        price, price_date = history_calc._lookup_price_with_fallback(
             price_map, asset_id=1, target_date=date(2024, 1, 15)
         )
 
         assert price == Decimal("155.00")  # Not the fallback
+        assert price_date == date(2024, 1, 15)  # Exact match
 
 
 # =============================================================================

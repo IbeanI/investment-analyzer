@@ -96,7 +96,6 @@ class YahooFinanceProvider(MarketDataProvider):
         "NMS": "",
 
         # Germany
-        "IBIS": ".DE",
         "IBIS2": ".DE",
         "XETRA": ".DE",
         "FRA": ".F",

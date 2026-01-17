@@ -405,8 +405,9 @@ class AnalyticsService:
 
         Returns:
             BenchmarkMetrics with comparison analysis.
-            If benchmark is not found or has no data, returns BenchmarkMetrics
-            with has_sufficient_data=False and error details in warnings.
+
+        Raises:
+            BenchmarkNotSyncedError: If benchmark not found or has no data.
         """
         # Get portfolio to determine currency for default benchmark
         portfolio = db.get(Portfolio, portfolio_id)
@@ -433,18 +434,10 @@ class AnalyticsService:
                 warnings=["No portfolio valuation data available"],
             )
 
-        # Get benchmark prices (may raise BenchmarkNotSyncedError)
-        try:
-            benchmark_prices = self._get_benchmark_prices(
-                db, benchmark_symbol, start_date, end_date
-            )
-        except BenchmarkNotSyncedError as e:
-            # Convert to BenchmarkMetrics with error info
-            return BenchmarkMetrics(
-                benchmark_symbol=benchmark_symbol,
-                has_sufficient_data=False,
-                warnings=[e.message],
-            )
+        # Get benchmark prices (raises BenchmarkNotSyncedError if not found)
+        benchmark_prices = self._get_benchmark_prices(
+            db, benchmark_symbol, start_date, end_date
+        )
 
         if not benchmark_prices:
             return BenchmarkMetrics(

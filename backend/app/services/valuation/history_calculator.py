@@ -330,13 +330,18 @@ class HistoryCalculator:
         all_complete = True
 
         for position in positions:
-            # Cost basis
+            # Cost basis (will be 0 for closed positions)
             cost_result = self._cost_calc.calculate(position, portfolio_currency)
             total_cost += cost_result.portfolio_amount
 
-            # Realized P&L
+            # Realized P&L (calculated for all positions with sales)
             realized_pnl, _ = self._realized_pnl_calc.calculate(position)
             total_realized += realized_pnl
+
+            # Skip current value calculation for closed positions
+            # (quantity=0 means nothing to value, but we still counted realized P&L)
+            if position.quantity == Decimal("0"):
+                continue
 
             # Current value (using batch-fetched data)
             price = self._lookup_price_with_fallback(
@@ -394,6 +399,7 @@ class HistoryCalculator:
             total_pnl = None
             final_value = None
             final_cash = None if tracks_cash else None  # stays None
+            final_equity = None
             final_equity = None
 
         return HistoryPoint(

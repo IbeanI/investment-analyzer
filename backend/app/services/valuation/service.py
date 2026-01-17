@@ -209,14 +209,14 @@ class ValuationService:
             db, portfolio_id, valuation_date
         )
 
-        # Step 6: Calculate holdings
+        # Step 5: Calculate holdings
         positions = self._holdings_calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency=portfolio_currency,
         )
 
-        # Step 7: Value each holding
+        # Step 6: Value each holding
         holdings: list[HoldingValuation] = []
         total_cost_basis = Decimal("0")
         total_value = Decimal("0")
@@ -226,6 +226,15 @@ class ValuationService:
         portfolio_warnings: list[str] = []
 
         for position in positions:
+            # For closed positions (quantity=0), only count realized P&L
+            # Don't add to holdings list or try to get current value
+            if position.quantity == Decimal("0"):
+                # Calculate realized P&L for fully closed position
+                realized_amount, _ = self._realized_pnl_calc.calculate(position)
+                total_realized_pnl += realized_amount
+                continue
+
+            # For open positions, calculate full valuation
             holding = self._value_holding(
                 db=db,
                 position=position,
@@ -246,7 +255,7 @@ class ValuationService:
             else:
                 all_complete = False
 
-        # Step 8: Convert cash to portfolio currency (only if tracking cash)
+        # Step 7: Convert cash to portfolio currency (only if tracking cash)
         cash_balances: list[CashBalance] = []
         total_cash: Decimal | None = None
 
@@ -293,7 +302,7 @@ class ValuationService:
                         ))
                         total_cash += amount_portfolio
 
-        # Step 9: Calculate totals
+        # Step 8: Calculate totals
         if all_complete:
             total_pnl = total_unrealized_pnl + total_realized_pnl
             # total_equity = securities + cash (or just securities if not tracking cash)

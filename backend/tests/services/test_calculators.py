@@ -223,8 +223,13 @@ class TestHoldingsCalculator:
         # Proceeds = 30 × $180 - $10 fee = $5390
         assert pos.total_sold_proceeds_portfolio == Decimal("5390.00")
 
-    def test_full_sell_excludes_position(self, aapl_asset):
-        """Position with quantity=0 should be excluded from results."""
+    def test_full_sell_includes_position_for_realized_pnl(self, aapl_asset):
+        """
+        Position with quantity=0 should be INCLUDED for realized P&L calculation.
+
+        This changed from the old behavior where closed positions were excluded.
+        Now we include them so we can track realized P&L from fully closed positions.
+        """
         calc = HoldingsCalculator()
 
         transactions = [
@@ -259,8 +264,13 @@ class TestHoldingsCalculator:
             portfolio_currency="USD",
         )
 
-        # Position fully sold - should not appear in results
-        assert len(positions) == 0
+        # Position fully sold - NOW included for realized P&L calculation
+        assert len(positions) == 1
+        pos = positions[0]
+        assert pos.quantity == Decimal("0")  # Closed position
+        assert pos.total_sold_qty == Decimal("50")
+        # Proceeds = 50 × $120 = $6000
+        assert pos.total_sold_proceeds_portfolio == Decimal("6000.0")
 
     def test_fx_conversion_on_buy(self, euro_asset):
         """BUY in foreign currency should convert cost to portfolio currency."""

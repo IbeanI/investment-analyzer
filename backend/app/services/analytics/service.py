@@ -806,13 +806,17 @@ class AnalyticsService:
 
             cash_flows = []
             for txn in transactions:
+                # exchange_rate convention: "1 portfolio_currency = X transaction_currency"
+                # To convert TO portfolio currency, DIVIDE by exchange_rate
+                exchange_rate = txn.exchange_rate or Decimal("1")
+
                 if txn.transaction_type == TransactionType.DEPOSIT:
                     # Money into portfolio (positive cash flow)
-                    amount = txn.quantity * txn.exchange_rate
+                    amount = txn.quantity / exchange_rate
                     cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
                 elif txn.transaction_type == TransactionType.WITHDRAWAL:
                     # Money out of portfolio (negative cash flow)
-                    amount = -txn.quantity * txn.exchange_rate
+                    amount = -txn.quantity / exchange_rate
                     cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
 
         else:
@@ -832,14 +836,21 @@ class AnalyticsService:
 
             cash_flows = []
             for txn in transactions:
-                # Calculate transaction value in portfolio currency
-                txn_value = txn.quantity * txn.price_per_share * txn.exchange_rate
+                # exchange_rate convention: "1 portfolio_currency = X transaction_currency"
+                # To convert TO portfolio currency, DIVIDE by exchange_rate
+                exchange_rate = txn.exchange_rate or Decimal("1")
 
                 if txn.transaction_type == TransactionType.BUY:
                     # Money INTO portfolio (investor adds money to buy assets)
+                    # Cost includes fee: cost = qty × price + fee
+                    txn_value_local = (txn.quantity * txn.price_per_share) + txn.fee
+                    txn_value = txn_value_local / exchange_rate
                     cash_flows.append(CashFlow(date=txn.date.date(), amount=txn_value))
                 elif txn.transaction_type == TransactionType.SELL:
                     # Money OUT of portfolio (investor removes money from selling)
+                    # Proceeds excludes fee: proceeds = qty × price - fee
+                    txn_value_local = (txn.quantity * txn.price_per_share) - txn.fee
+                    txn_value = txn_value_local / exchange_rate
                     cash_flows.append(CashFlow(date=txn.date.date(), amount=-txn_value))
 
         return cash_flows

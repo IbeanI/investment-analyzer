@@ -97,8 +97,10 @@ class HoldingsCalculator:
                 portfolio_currency=portfolio_currency,
             )
 
-            # Only include open positions (quantity > 0)
-            if position.has_position:
+            # Include positions that are either:
+            # 1. Open (quantity > 0) - for current holdings display
+            # 2. Closed but have sales (total_sold_qty > 0) - for realized P&L
+            if position.has_position or position.total_sold_qty > 0:
                 positions.append(position)
 
         return positions
@@ -241,20 +243,24 @@ class HoldingsCalculator:
         """
         Convert holdings state dict to list of HoldingPosition objects.
 
-        Only returns positions with quantity > 0.
+        Returns positions that are either:
+        - Open (quantity > 0)
+        - Closed but have sales (for realized P&L calculation)
 
         Args:
             holdings_state: Holdings state from apply_transaction calls
 
         Returns:
-            List of HoldingPosition for open positions
+            List of HoldingPosition for positions with activity
         """
         positions: list[HoldingPosition] = []
 
         for asset_id, state in holdings_state.items():
             quantity = state['total_bought_qty'] - state['total_sold_qty']
+            total_sold_qty = state['total_sold_qty']
 
-            if quantity > Decimal("0"):
+            # Include if open OR has sales (for realized P&L)
+            if quantity > Decimal("0") or total_sold_qty > Decimal("0"):
                 positions.append(HoldingPosition(
                     asset_id=asset_id,
                     asset=state['asset'],
@@ -262,7 +268,7 @@ class HoldingsCalculator:
                     total_bought_qty=state['total_bought_qty'],
                     total_bought_cost_local=state['total_bought_cost_local'],
                     total_bought_cost_portfolio=state['total_bought_cost_portfolio'],
-                    total_sold_qty=state['total_sold_qty'],
+                    total_sold_qty=total_sold_qty,
                     total_sold_proceeds_portfolio=state['total_sold_proceeds_portfolio'],
                 ))
 

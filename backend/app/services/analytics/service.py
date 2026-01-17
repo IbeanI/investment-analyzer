@@ -391,9 +391,9 @@ class AnalyticsService:
     ) -> BenchmarkMetrics:
         """
         Calculate benchmark comparison metrics.
-        
+
         Compares portfolio to a benchmark index.
-        
+
         Args:
             db: Database session
             portfolio_id: Portfolio to analyze
@@ -402,12 +402,11 @@ class AnalyticsService:
             benchmark_symbol: Benchmark ticker (e.g., "^SPX", "IWDA.AS").
                             If None, uses default based on portfolio currency.
             risk_free_rate: Annual risk-free rate
-            
+
         Returns:
-            BenchmarkMetrics with comparison analysis
-            
-        Raises:
-            BenchmarkNotSyncedError: If benchmark not found or has no data
+            BenchmarkMetrics with comparison analysis.
+            If benchmark is not found or has no data, returns BenchmarkMetrics
+            with has_sufficient_data=False and error details in warnings.
         """
         # Get portfolio to determine currency for default benchmark
         portfolio = db.get(Portfolio, portfolio_id)

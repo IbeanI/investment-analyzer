@@ -92,10 +92,13 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
 # HELPER FUNCTIONS
 # =============================================================================
 
-def _decimal_to_str(value: Decimal | None) -> str | None:
-    """Convert Decimal to string, preserving None."""
+def _decimal_to_str(value: Decimal | int | None) -> str | None:
+    """Convert Decimal or int to string, preserving None."""
     if value is None:
         return None
+    # Convert int to Decimal if necessary
+    if isinstance(value, int):
+        value = Decimal(str(value))
     # Format to reasonable precision (8 decimal places)
     return str(value.quantize(Decimal("0.00000001")).normalize())
 

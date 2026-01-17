@@ -8,11 +8,9 @@ Provides performance, risk, and benchmark metrics:
 - GET /portfolios/{id}/analytics/risk - Risk metrics only
 - GET /portfolios/{id}/analytics/benchmark - Benchmark comparison only
 
-All endpoints require:
-- from_date: Start of analysis period
-- to_date: End of analysis period
-
 Optional parameters:
+- from_date: Start of analysis period (default: first transaction date)
+- to_date: End of analysis period (default: today)
 - benchmark_symbol: Benchmark ticker (e.g., "^SPX", "IWDA.AS")
 - risk_free_rate: Annual risk-free rate as decimal (default: 0.02)
 
@@ -24,10 +22,11 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Portfolio
+from app.models import Portfolio, Transaction
 from app.schemas.analytics import (
     PeriodInfo,
     PerformanceMetricsResponse,
@@ -45,6 +44,7 @@ from app.services.analytics import (
     PerformanceMetrics,
     RiskMetrics,
     BenchmarkMetrics,
+    AnalyticsResult,
     AnalyticsPeriod,
     DrawdownPeriod,
 )
@@ -86,6 +86,55 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
         )
 
     return portfolio
+
+
+def _get_first_transaction_date(db: Session, portfolio_id: int) -> date | None:
+    """Get the date of the first transaction for a portfolio."""
+    stmt = select(func.min(Transaction.date)).where(
+        Transaction.portfolio_id == portfolio_id
+    )
+    result = db.execute(stmt).scalar()
+    # Transaction.date is datetime, convert to date
+    if result is not None:
+        return result.date() if hasattr(result, 'date') else result
+    return None
+
+
+def _resolve_date_range(
+        db: Session,
+        portfolio_id: int,
+        from_date: date | None,
+        to_date: date | None,
+) -> tuple[date, date]:
+    """
+    Resolve date range with smart defaults.
+
+    Args:
+        db: Database session
+        portfolio_id: Portfolio ID
+        from_date: Start date (None = first transaction date)
+        to_date: End date (None = today)
+
+    Returns:
+        Tuple of (resolved_from_date, resolved_to_date)
+
+    Raises:
+        HTTPException: If no transactions found and from_date not provided
+    """
+    # Default to_date to today
+    if to_date is None:
+        to_date = date.today()
+
+    # Default from_date to first transaction date
+    if from_date is None:
+        from_date = _get_first_transaction_date(db, portfolio_id)
+        if from_date is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No transactions found for this portfolio. Please provide from_date."
+            )
+
+    return from_date, to_date
 
 
 # =============================================================================
@@ -225,14 +274,14 @@ def _map_benchmark(bench: BenchmarkMetrics) -> BenchmarkMetricsResponse:
 )
 def get_portfolio_analytics(
         portfolio_id: int,
-        from_date: date = Query(
-            ...,
-            description="Start date of analysis period",
+        from_date: date | None = Query(
+            default=None,
+            description="Start date of analysis period (default: first transaction date)",
             alias="from_date"
         ),
-        to_date: date = Query(
-            ...,
-            description="End date of analysis period",
+        to_date: date | None = Query(
+            default=None,
+            description="End date of analysis period (default: today)",
             alias="to_date"
         ),
         benchmark_symbol: str | None = Query(
@@ -277,9 +326,14 @@ def get_portfolio_analytics(
 
     **Note:** Results are cached for 1 hour to improve performance.
     """
+    # Verify portfolio exists first
+    portfolio = get_portfolio_or_404(db, portfolio_id)
+
+    # Resolve date defaults (from_date = first txn, to_date = today)
+    from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
+
     # Validate inputs
     _validate_date_range(from_date, to_date)
-    portfolio = get_portfolio_or_404(db, portfolio_id)
 
     # Get analytics from service
     try:
@@ -322,13 +376,13 @@ def get_portfolio_analytics(
 )
 def get_portfolio_performance(
         portfolio_id: int,
-        from_date: date = Query(
-            ...,
-            description="Start date of analysis period"
+        from_date: date | None = Query(
+            default=None,
+            description="Start date of analysis period (default: first transaction date)"
         ),
-        to_date: date = Query(
-            ...,
-            description="End date of analysis period"
+        to_date: date | None = Query(
+            default=None,
+            description="End date of analysis period (default: today)"
         ),
         db: Session = Depends(get_db),
         service: AnalyticsService = Depends(get_analytics_service),
@@ -346,9 +400,14 @@ def get_portfolio_performance(
     **Use this endpoint when you only need returns**, without risk
     or benchmark analysis. It's faster than the full analytics endpoint.
     """
+    # Verify portfolio exists first
+    portfolio = get_portfolio_or_404(db, portfolio_id)
+
+    # Resolve date defaults
+    from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
+
     # Validate inputs
     _validate_date_range(from_date, to_date)
-    portfolio = get_portfolio_or_404(db, portfolio_id)
 
     # Get performance from service
     performance = service.get_performance(
@@ -382,13 +441,13 @@ def get_portfolio_performance(
 )
 def get_portfolio_risk(
         portfolio_id: int,
-        from_date: date = Query(
-            ...,
-            description="Start date of analysis period"
+        from_date: date | None = Query(
+            default=None,
+            description="Start date of analysis period (default: first transaction date)"
         ),
-        to_date: date = Query(
-            ...,
-            description="End date of analysis period"
+        to_date: date | None = Query(
+            default=None,
+            description="End date of analysis period (default: today)"
         ),
         risk_free_rate: Decimal = Query(
             default=DEFAULT_RISK_FREE_RATE,
@@ -417,9 +476,14 @@ def get_portfolio_risk(
 
     **Note:** Risk metrics require daily data internally for accuracy.
     """
+    # Verify portfolio exists first
+    portfolio = get_portfolio_or_404(db, portfolio_id)
+
+    # Resolve date defaults
+    from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
+
     # Validate inputs
     _validate_date_range(from_date, to_date)
-    portfolio = get_portfolio_or_404(db, portfolio_id)
 
     # Get risk from service
     risk = service.get_risk(
@@ -458,13 +522,13 @@ def get_portfolio_risk(
 )
 def get_portfolio_benchmark(
         portfolio_id: int,
-        from_date: date = Query(
-            ...,
-            description="Start date of analysis period"
+        from_date: date | None = Query(
+            default=None,
+            description="Start date of analysis period (default: first transaction date)"
         ),
-        to_date: date = Query(
-            ...,
-            description="End date of analysis period"
+        to_date: date | None = Query(
+            default=None,
+            description="End date of analysis period (default: today)"
         ),
         benchmark_symbol: str = Query(
             ...,
@@ -507,9 +571,14 @@ def get_portfolio_benchmark(
 
     **Error:** Returns 400 if benchmark is not synced to database.
     """
+    # Verify portfolio exists first
+    portfolio = get_portfolio_or_404(db, portfolio_id)
+
+    # Resolve date defaults
+    from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
+
     # Validate inputs
     _validate_date_range(from_date, to_date)
-    portfolio = get_portfolio_or_404(db, portfolio_id)
 
     # Get benchmark comparison from service
     try:

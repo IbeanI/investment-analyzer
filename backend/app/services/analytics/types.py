@@ -103,6 +103,7 @@ class PerformanceMetrics:
     total_realized_pnl: Decimal | None = None
     total_deposits: Decimal = field(default_factory=lambda: Decimal("0"))
     total_withdrawals: Decimal = field(default_factory=lambda: Decimal("0"))
+    net_invested: Decimal | None = None  # Actual capital invested (= cost_basis for portfolios without cash tracking)
 
     # Period info
     trading_days: int = 0

@@ -69,10 +69,11 @@ echo ""
 echo "🌱 Seeding Sample Data..."
 docker-compose exec -T backend python /app/scripts/seed_sample_data.py
 
-# 7. Run Proxy Mappings (if exists)
+# 7. Run Proxy Mappings and Setup
+echo ""
+echo "🗺️  Setting up Proxy Backcasting..."
 if [ -f backend/scripts/migrate_proxy_mappings.py ]; then
-    echo "🗺️  Seeding Proxy Mappings..."
-    docker-compose exec -T backend python -m scripts.migrate_proxy_mappings
+    docker-compose exec -T backend python -m scripts.migrate_proxy_mappings || true
 fi
 
 # 8. Sync Market Data for Sample Portfolio

@@ -105,6 +105,12 @@ class PerformanceMetricsResponse(BaseModel):
         "0",
         description="Sum of all withdrawals during period (positive number)"
     )
+    net_invested: str | None = Field(
+        None,
+        description="Actual capital invested by user (equals cost_basis). "
+                    "Use this instead of total_deposits to see real money invested. "
+                    "total_deposits may be inflated by broker swaps/restructures."
+    )
 
     # Data quality
     has_sufficient_data: bool = Field(

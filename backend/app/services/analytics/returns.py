@@ -479,9 +479,9 @@ class ReturnsCalculator:
             result.total_gain = unrealized_pnl + total_realized
             result.total_realized_pnl = total_realized
 
-            # Simple return = total gain / cost basis
             result.simple_return = result.total_gain / cost_basis
             result.cost_basis = cost_basis
+            result.net_invested = cost_basis  # Actual capital invested by user
         else:
             # Fallback: traditional calculation using start_value
             # This works for portfolios with explicit cash tracking
@@ -490,6 +490,7 @@ class ReturnsCalculator:
 
             if result.start_value > 0:
                 result.simple_return = result.total_gain / result.start_value
+                result.net_invested = result.start_value  # For cash-tracked portfolios
             else:
                 result.simple_return = None
 

@@ -44,7 +44,6 @@ from app.services.analytics import (
     PerformanceMetrics,
     RiskMetrics,
     BenchmarkMetrics,
-    AnalyticsResult,
     AnalyticsPeriod,
     DrawdownPeriod,
 )
@@ -202,6 +201,7 @@ def _map_performance(perf: PerformanceMetrics) -> PerformanceMetricsResponse:
         cost_basis=_decimal_to_str(perf.cost_basis),
         total_deposits=_decimal_to_str(perf.total_deposits) or "0",
         total_withdrawals=_decimal_to_str(perf.total_withdrawals) or "0",
+        net_invested=_decimal_to_str(perf.net_invested),
         has_sufficient_data=perf.has_sufficient_data,
         warnings=perf.warnings,
         total_realized_pnl=_decimal_to_str(perf.total_realized_pnl),

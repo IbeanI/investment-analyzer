@@ -720,12 +720,16 @@ class AnalyticsService:
             end_date: date,
     ) -> list[DailyValue]:
         """
-        Get daily portfolio values from ValuationService.
+        Get daily portfolio values for analytics calculations.
 
         IMPORTANT: Always uses daily interval internally.
         Risk metrics (Volatility, Sharpe, Beta) require daily data points.
 
         Converts PortfolioHistory to list of DailyValue for calculators.
+
+        CRITICAL FIX: Cash flows from transaction dates without equity data
+        are assigned to the NEXT date with valid equity. This ensures all
+        cash flows are counted for TWR/deposit/withdrawal calculations.
         """
         try:
             # CRITICAL: Always use daily interval for risk metrics
@@ -737,20 +741,62 @@ class AnalyticsService:
                 interval=_INTERNAL_INTERVAL,  # Always "daily"
             )
 
+            # Step 1: Build list of DailyValue for dates with valid equity
             daily_values = []
             for point in history.data:
                 if point.equity is not None:
                     daily_values.append(DailyValue(
                         date=point.date,
                         value=point.equity,
-                        cash_flow=Decimal("0"),  # Will be filled from transactions
+                        cash_flow=Decimal("0"),
                     ))
 
-            # Add cash flows from transactions
+            if not daily_values:
+                return []
+
+            # Step 2: Get ALL cash flows from transactions
             cash_flow_map = self._get_cash_flow_map(db, portfolio_id, start_date, end_date)
-            for dv in daily_values:
-                if dv.date in cash_flow_map:
-                    dv.cash_flow = cash_flow_map[dv.date]
+
+            if not cash_flow_map:
+                return daily_values
+
+            # Step 3: Build a sorted list of dates that have DailyValue entries
+            daily_value_dates = sorted(dv.date for dv in daily_values)
+            date_to_index = {dv.date: i for i, dv in enumerate(daily_values)}
+
+            # Step 4: Assign each cash flow to the appropriate DailyValue
+            # If the cash flow date has a DailyValue, assign directly.
+            # If not, assign to the NEXT date with a DailyValue.
+            # This handles weekends, holidays, and missing market data.
+
+            for cf_date, cf_amount in cash_flow_map.items():
+                if cf_date in date_to_index:
+                    # Exact match - assign directly
+                    daily_values[date_to_index[cf_date]].cash_flow += cf_amount
+                else:
+                    # Find the next date with valid equity
+                    # Use binary search for efficiency
+                    next_date = None
+                    for dv_date in daily_value_dates:
+                        if dv_date > cf_date:
+                            next_date = dv_date
+                            break
+
+                    if next_date is not None:
+                        # Assign to next available date
+                        daily_values[date_to_index[next_date]].cash_flow += cf_amount
+                        logger.debug(
+                            f"Cash flow on {cf_date} ({cf_amount}) assigned to {next_date} "
+                            f"(no equity on transaction date)"
+                        )
+                    elif daily_values:
+                        # No future date - assign to last available date
+                        # This handles edge case of transactions after last market data
+                        daily_values[-1].cash_flow += cf_amount
+                        logger.debug(
+                            f"Cash flow on {cf_date} ({cf_amount}) assigned to last date "
+                            f"{daily_values[-1].date} (no future equity data)"
+                        )
 
             return daily_values
 

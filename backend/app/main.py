@@ -24,6 +24,7 @@ from app.routers import (
     portfolios_router,
     transactions_router,
     upload_router,
+    sync_router,
     valuation_router,
 )
 from app.schemas.errors import ErrorDetail
@@ -171,6 +172,7 @@ app.include_router(assets_router)  # /assets/*
 app.include_router(portfolios_router)  # /portfolios/*
 app.include_router(transactions_router)  # /transactions/*
 app.include_router(upload_router)  # /upload/*
+app.include_router(sync_router)  # /portfolios/{id}/sync/* (Phase 3)
 app.include_router(valuation_router)  # /portfolios/{id}/valuation/* (Phase 4)
 
 

@@ -329,6 +329,9 @@ class HistoryCalculator:
         total_realized = Decimal("0")
         all_complete = True
 
+        # Track the latest price date for consistent FX lookups
+        latest_price_date: date | None = None
+
         for position in positions:
             # Cost basis (will be 0 for closed positions)
             cost_result = self._cost_calc.calculate(position, portfolio_currency)
@@ -344,24 +347,28 @@ class HistoryCalculator:
                 continue
 
             # Current value (using batch-fetched data)
-            price = self._lookup_price_with_fallback(
+            price, price_date = self._lookup_price_with_fallback(
                 price_map, position.asset_id, target_date
             )
 
-            if price is None:
+            if price is None or price_date is None:
                 all_complete = False
                 continue
+
+            # Track the latest price date found (for cash FX consistency)
+            if latest_price_date is None or price_date > latest_price_date:
+                latest_price_date = price_date
 
             # Calculate local value
             value_local = position.quantity * price
 
-            # FX conversion
+            # FX conversion - use price_date for consistency
             asset_currency = position.asset.currency.upper()
             if asset_currency == portfolio_currency.upper():
                 total_value += value_local
             else:
                 fx_rate = self._lookup_fx_with_fallback(
-                    fx_map, asset_currency, portfolio_currency, target_date
+                    fx_map, asset_currency, portfolio_currency, price_date
                 )
                 if fx_rate is None:
                     all_complete = False
@@ -372,12 +379,15 @@ class HistoryCalculator:
         total_cash: Decimal | None = None
         if tracks_cash:
             total_cash = Decimal("0")
+            # Use latest_price_date for cash FX to ensure consistency,
+            # fall back to target_date if no prices were found
+            fx_reference_date = latest_price_date or target_date
             for currency, balance in cash_state.items():
                 if currency.upper() == portfolio_currency.upper():
                     total_cash += balance
                 else:
                     fx_rate = self._lookup_fx_with_fallback(
-                        fx_map, currency.upper(), portfolio_currency, target_date
+                        fx_map, currency.upper(), portfolio_currency, fx_reference_date
                     )
                     if fx_rate is None:
                         all_complete = False
@@ -399,7 +409,6 @@ class HistoryCalculator:
             total_pnl = None
             final_value = None
             final_cash = None if tracks_cash else None  # stays None
-            final_equity = None
             final_equity = None
 
         return HistoryPoint(
@@ -673,25 +682,29 @@ class HistoryCalculator:
             asset_id: int,
             target_date: date,
             max_fallback_days: int = 5,
-    ) -> Decimal | None:
+    ) -> tuple[Decimal | None, date | None]:
         """
         Look up price with fallback to recent dates.
 
         For weekends/holidays, looks back up to max_fallback_days.
+
+        Returns:
+            Tuple of (price, actual_date) - the date the price was found for.
+            Both are None if no price found within fallback window.
         """
         # Try exact date first
         price = price_map.get((asset_id, target_date))
         if price is not None:
-            return price
+            return price, target_date
 
         # Fallback to recent dates
         for days_back in range(1, max_fallback_days + 1):
             fallback_date = target_date - timedelta(days=days_back)
             price = price_map.get((asset_id, fallback_date))
             if price is not None:
-                return price
+                return price, fallback_date
 
-        return None
+        return None, None
 
     def _lookup_fx_with_fallback(
             self,

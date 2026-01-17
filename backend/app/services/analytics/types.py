@@ -100,6 +100,7 @@ class PerformanceMetrics:
     start_value: Decimal | None = None
     end_value: Decimal | None = None
     cost_basis: Decimal | None = None  # Total invested in current positions
+    total_realized_pnl: Decimal | None = None
     total_deposits: Decimal = field(default_factory=lambda: Decimal("0"))
     total_withdrawals: Decimal = field(default_factory=lambda: Decimal("0"))
 

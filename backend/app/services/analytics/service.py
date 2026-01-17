@@ -327,7 +327,7 @@ class AnalyticsService:
 
         # Get cost_basis from valuation for accurate simple_return calculation
         # This is crucial for portfolios without cash tracking (no DEPOSIT/WITHDRAWAL)
-        cost_basis = self._get_cost_basis(db, portfolio_id, end_date)
+        cost_basis = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Calculate all return metrics
         result = ReturnsCalculator.calculate_all(
@@ -338,17 +338,17 @@ class AnalyticsService:
 
         return result
 
-    def _get_cost_basis(
+    def _get_valuation_data(
             self,
             db: Session,
             portfolio_id: int,
             valuation_date: date,
-    ) -> Decimal | None:
+    ) -> tuple[Decimal | None, Decimal | None]:
         """
-        Get the total cost basis from valuation service.
+        Get cost basis and realized P&L from valuation service.
 
-        This is the actual money invested in current positions.
-        Used for accurate simple_return calculation.
+        Returns:
+            Tuple of (cost_basis, realized_pnl) - both can be None if error
         """
         try:
             valuation = self._valuation_service.get_valuation(
@@ -356,11 +356,10 @@ class AnalyticsService:
                 portfolio_id=portfolio_id,
                 valuation_date=valuation_date,
             )
-            # PortfolioValuation dataclass has total_cost_basis as direct attribute
-            return valuation.total_cost_basis
+            return valuation.total_cost_basis, valuation.total_realized_pnl
         except Exception as e:
-            logger.warning(f"Could not get cost_basis: {e}")
-            return None
+            logger.warning(f"Could not get valuation data: {e}")
+            return None, None
 
     def get_risk(
             self,
@@ -400,7 +399,7 @@ class AnalyticsService:
             )
 
         # Get cost_basis for accurate CAGR calculation (needed for Calmar ratio)
-        cost_basis = self._get_cost_basis(db, portfolio_id, end_date)
+        cost_basis = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Get performance metrics for CAGR (needed for Calmar ratio)
         # Pass cost_basis for accurate simple_return/CAGR calculation
@@ -600,7 +599,7 @@ class AnalyticsService:
         daily_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
 
         # Get cost_basis for accurate simple_return/CAGR calculation
-        cost_basis = self._get_cost_basis(db, portfolio_id, end_date)
+        cost_basis = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Performance metrics
         cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)

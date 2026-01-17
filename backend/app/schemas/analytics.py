@@ -59,6 +59,10 @@ class PerformanceMetricsResponse(BaseModel):
         None,
         description="Simple return annualized to 1 year"
     )
+    total_realized_pnl: str | None = Field(
+        None,
+        description="Total realized P&L from closed positions"
+    )
     twr: str | None = Field(
         None,
         description="Time-Weighted Return (removes cash flow timing bias)"

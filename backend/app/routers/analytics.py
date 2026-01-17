@@ -204,6 +204,7 @@ def _map_performance(perf: PerformanceMetrics) -> PerformanceMetricsResponse:
         total_withdrawals=_decimal_to_str(perf.total_withdrawals) or "0",
         has_sufficient_data=perf.has_sufficient_data,
         warnings=perf.warnings,
+        total_realized_pnl=_decimal_to_str(perf.total_realized_pnl),
     )
 
 

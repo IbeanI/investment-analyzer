@@ -402,6 +402,7 @@ class ReturnsCalculator:
             daily_values: list[DailyValue],
             cash_flows: list[CashFlow] | None = None,
             cost_basis: Decimal | None = None,
+            realized_pnl: Decimal | None = None,
     ) -> PerformanceMetrics:
         """
         Calculate all return metrics.
@@ -469,11 +470,18 @@ class ReturnsCalculator:
         # =====================================================================
 
         if cost_basis is not None and cost_basis > 0:
-            # Use cost_basis for simple_return (more accurate for portfolios
-            # without cash tracking, and still correct for portfolios with it)
-            result.total_gain = result.end_value - cost_basis
+            # Unrealized P&L = end_value - cost_basis
+            unrealized_pnl = result.end_value - cost_basis
+
+            # Total gain includes both unrealized and realized P&L
+            # Realized P&L comes from closed positions (sales)
+            total_realized = realized_pnl if realized_pnl is not None else Decimal("0")
+            result.total_gain = unrealized_pnl + total_realized
+            result.total_realized_pnl = total_realized
+
+            # Simple return = total gain / cost basis
             result.simple_return = result.total_gain / cost_basis
-            result.cost_basis = cost_basis  # Store for reference
+            result.cost_basis = cost_basis
         else:
             # Fallback: traditional calculation using start_value
             # This works for portfolios with explicit cash tracking

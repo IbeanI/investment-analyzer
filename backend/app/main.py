@@ -26,6 +26,7 @@ from app.routers import (
     upload_router,
     sync_router,
     valuation_router,
+    analytics_router,
 )
 from app.schemas.errors import ErrorDetail
 from app.services.exceptions import (
@@ -174,6 +175,7 @@ app.include_router(transactions_router)  # /transactions/*
 app.include_router(upload_router)  # /upload/*
 app.include_router(sync_router)  # /portfolios/{id}/sync/* (Phase 3)
 app.include_router(valuation_router)  # /portfolios/{id}/valuation/* (Phase 4)
+app.include_router(analytics_router)  # /portfolios/{id}/analytics/* (Phase 5)
 
 
 # =============================================================================

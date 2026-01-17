@@ -9,8 +9,10 @@ Each router handles a specific domain:
 - upload: File upload for bulk transaction import
 - sync: Market data synchronization (Phase 3)
 - valuation: Portfolio valuation and performance (Phase 4)
+- analytics: Portfolio analytics (performance, risk, benchmark) (Phase 5)
 """
 
+from app.routers.analytics import router as analytics_router
 from app.routers.assets import router as assets_router
 from app.routers.portfolios import router as portfolios_router
 from app.routers.sync import router as sync_router
@@ -28,5 +30,6 @@ __all__ = [
     "upload_router",
     "sync_router",
     "valuation_router",
+    "analytics_router",
     # "users_router",
 ]

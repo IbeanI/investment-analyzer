@@ -40,7 +40,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -619,7 +619,7 @@ class ValuationService:
                 select(MarketData).where(
                     and_(
                         MarketData.asset_id == asset_id,
-                        MarketData.date == check_date,
+                        func.date(MarketData.date) == check_date,
                     )
                 )
             )

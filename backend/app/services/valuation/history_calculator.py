@@ -79,6 +79,12 @@ class HistoryCalculator:
         _fx_service: Service for FX rate lookups (used for batch fetch)
     """
 
+    # Maximum days to look back for missing prices (weekends/holidays)
+    PRICE_FALLBACK_DAYS: int = 5
+
+    # Maximum days to look back for missing FX rates
+    FX_FALLBACK_DAYS: int = 7
+
     def __init__(
             self,
             holdings_calc: HoldingsCalculator,
@@ -477,17 +483,25 @@ class HistoryCalculator:
         """
         Batch fetch all prices for given assets in date range.
 
+        IMPORTANT: Extends the fetch range backwards by PRICE_FALLBACK_DAYS
+        to enable fallback lookups for weekends/holidays at the start of
+        the requested range.
+
         Returns dict mapping (asset_id, date) -> close_price
         """
         if not asset_ids:
             return {}
+
+        # Extend range backwards to include potential fallback prices
+        # This ensures we have data for weekends/holidays at range start
+        extended_start = start_date - timedelta(days=self.PRICE_FALLBACK_DAYS)
 
         query = (
             select(MarketData)
             .where(
                 and_(
                     MarketData.asset_id.in_(asset_ids),
-                    MarketData.date >= start_date,
+                    MarketData.date >= extended_start,  # CHANGED
                     MarketData.date <= end_date,
                 )
             )
@@ -503,7 +517,10 @@ class HistoryCalculator:
             )
             price_map[(record.asset_id, record_date)] = record.close_price
 
-        logger.debug(f"Fetched {len(price_map)} price records for {len(asset_ids)} assets")
+        logger.debug(
+            f"Fetched {len(price_map)} price records for {len(asset_ids)} assets "
+            f"(extended range: {extended_start} to {end_date})"
+        )
         return price_map
 
     def _fetch_fx_rates_batch(
@@ -517,10 +534,17 @@ class HistoryCalculator:
         """
         Batch fetch all FX rates for given currencies in date range.
 
+        IMPORTANT: Extends the fetch range backwards by FX_FALLBACK_DAYS
+        to enable fallback lookups for weekends/holidays at the start of
+        the requested range.
+
         Returns dict mapping (base_currency, quote_currency, date) -> rate
         """
         if not currencies:
             return {}
+
+        # Extend range backwards to include potential fallback rates
+        extended_start = start_date - timedelta(days=self.FX_FALLBACK_DAYS)
 
         query = (
             select(ExchangeRate)
@@ -528,7 +552,7 @@ class HistoryCalculator:
                 and_(
                     ExchangeRate.base_currency.in_(currencies),
                     ExchangeRate.quote_currency == portfolio_currency.upper(),
-                    ExchangeRate.date >= start_date,
+                    ExchangeRate.date >= extended_start,  # CHANGED
                     ExchangeRate.date <= end_date,
                 )
             )
@@ -548,7 +572,10 @@ class HistoryCalculator:
                 record_date
             )] = record.rate
 
-        logger.debug(f"Fetched {len(fx_map)} FX rate records for {len(currencies)} currencies")
+        logger.debug(
+            f"Fetched {len(fx_map)} FX rate records for {len(currencies)} currencies "
+            f"(extended range: {extended_start} to {end_date})"
+        )
         return fx_map
 
     # =========================================================================
@@ -681,7 +708,7 @@ class HistoryCalculator:
             price_map: dict[tuple[int, date], Decimal],
             asset_id: int,
             target_date: date,
-            max_fallback_days: int = 5,
+            max_fallback_days: int | None = None,
     ) -> tuple[Decimal | None, date | None]:
         """
         Look up price with fallback to recent dates.
@@ -692,6 +719,9 @@ class HistoryCalculator:
             Tuple of (price, actual_date) - the date the price was found for.
             Both are None if no price found within fallback window.
         """
+        if max_fallback_days is None:
+            max_fallback_days = self.PRICE_FALLBACK_DAYS
+
         # Try exact date first
         price = price_map.get((asset_id, target_date))
         if price is not None:
@@ -712,13 +742,16 @@ class HistoryCalculator:
             base_currency: str,
             quote_currency: str,
             target_date: date,
-            max_fallback_days: int = 7,
+            max_fallback_days: int | None = None,
     ) -> Decimal | None:
         """
         Look up FX rate with fallback to recent dates.
 
         For weekends/holidays, looks back up to max_fallback_days.
         """
+        if max_fallback_days is None:
+            max_fallback_days = self.FX_FALLBACK_DAYS
+
         # Try exact date first
         rate = fx_map.get((base_currency, quote_currency.upper(), target_date))
         if rate is not None:

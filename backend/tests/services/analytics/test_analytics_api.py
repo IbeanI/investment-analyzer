@@ -588,23 +588,26 @@ class TestGetBenchmarkEndpoint:
         assert "tracking_error" in bench
         assert "information_ratio" in bench
 
-    def test_benchmark_requires_benchmark_param(
+    def test_benchmark_uses_default_when_no_param(
             self, client: TestClient, test_db: Session
     ):
-        """Benchmark endpoint requires benchmark query parameter."""
+        """Benchmark endpoint uses default benchmark when none specified."""
         portfolio, _, _ = seed_basic_analytics_data(test_db)
 
+        # No benchmark param - should use default based on portfolio currency
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/benchmark",
             params={
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
-                # Missing benchmark parameter
             }
         )
 
-        # Should return 422 (validation error) because benchmark is required
-        assert response.status_code == 422
+        # Should succeed with default benchmark (may be 400 if default not synced)
+        assert response.status_code in (200, 400)
+        if response.status_code == 400:
+            data = response.json()
+            assert data["detail"]["error"] == "BenchmarkNotSynced"
 
 
 # =============================================================================

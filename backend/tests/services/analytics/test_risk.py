@@ -231,9 +231,9 @@ class TestDrawdowns:
             DailyValue(date=date(2024, 1, 3), value=Decimal("110")),
         ]
         
-        max_dd, periods = calculate_drawdowns(daily_values)
+        max_dd, max_dd_period, periods = calculate_drawdowns(daily_values)
         
-        assert max_dd == Decimal("0")  # No drawdown
+        assert max_dd is None  # No drawdown returns None
         assert len(periods) == 0
 
     def test_single_drawdown(self):
@@ -246,7 +246,7 @@ class TestDrawdowns:
             DailyValue(date=date(2024, 1, 5), value=Decimal("105")),  # New peak
         ]
         
-        max_dd, periods = calculate_drawdowns(daily_values)
+        max_dd, max_dd_period, periods = calculate_drawdowns(daily_values)
         
         assert max_dd is not None
         assert max_dd < Decimal("0")  # Negative
@@ -261,7 +261,7 @@ class TestDrawdowns:
             DailyValue(date=date(2024, 1, 3), value=Decimal("85")),   # Still down
         ]
         
-        max_dd, periods = calculate_drawdowns(daily_values)
+        max_dd, max_dd_period, periods = calculate_drawdowns(daily_values)
         
         assert max_dd is not None
         assert max_dd < Decimal("0")
@@ -279,7 +279,7 @@ class TestDrawdowns:
             DailyValue(date=date(2024, 1, 5), value=Decimal("110")),  # Recovery
         ]
         
-        max_dd, periods = calculate_drawdowns(daily_values)
+        max_dd, max_dd_period, periods = calculate_drawdowns(daily_values)
         
         assert max_dd is not None
         assert max_dd < Decimal("0")
@@ -409,12 +409,11 @@ class TestRiskCalculator:
             DailyValue(date=date(2024, 1, i), value=Decimal(str(100 + i)))
             for i in range(1, 31)  # 30 days of gradual growth
         ]
-        
+
         result = RiskCalculator.calculate_all(
             daily_values=daily_values,
-            total_return_annualized=Decimal("0.12"),
-            cagr=Decimal("0.11"),
             risk_free_rate=Decimal("0.02"),
+            annualized_return=Decimal("0.12"),
         )
         
         assert result.has_sufficient_data is True
@@ -433,12 +432,11 @@ class TestRiskCalculator:
             DailyValue(date=date(2024, 1, 5), value=Decimal("100")),  # Recovery
             DailyValue(date=date(2024, 1, 6), value=Decimal("110")),  # New high
         ]
-        
+
         result = RiskCalculator.calculate_all(
             daily_values=daily_values,
-            total_return_annualized=Decimal("0.10"),
-            cagr=Decimal("0.10"),
             risk_free_rate=Decimal("0.02"),
+            annualized_return=Decimal("0.10"),
         )
         
         assert result.max_drawdown is not None
@@ -449,12 +447,11 @@ class TestRiskCalculator:
         daily_values = [
             DailyValue(date=date(2024, 1, 1), value=Decimal("100")),
         ]
-        
+
         result = RiskCalculator.calculate_all(
             daily_values=daily_values,
-            total_return_annualized=None,
-            cagr=None,
             risk_free_rate=Decimal("0.02"),
+            annualized_return=None,
         )
         
         assert result.has_sufficient_data is False

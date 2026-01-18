@@ -19,7 +19,7 @@ Note: These endpoints are nested under /portfolios/{id} because analytics
 are always in the context of a specific portfolio.
 """
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -113,16 +113,22 @@ def _resolve_date_range(
     - from_date defaults to first transaction date
     - to_date defaults to today
     """
-    if to_date is None:
-        to_date = date.today()
+
+    def ensure_date(d: date | datetime | None) -> date | None:
+        """Convert datetime to date if needed."""
+        if d is None:
+            return None
+        if isinstance(d, datetime):
+            return d.date()
+        return d
+
+    to_date = ensure_date(to_date) or date.today()
 
     if from_date is None:
         first_txn_date = _get_first_transaction_date(db, portfolio_id)
-        if first_txn_date is None:
-            # No transactions - use today for both
-            from_date = to_date
-        else:
-            from_date = first_txn_date
+        from_date = ensure_date(first_txn_date) or to_date
+    else:
+        from_date = ensure_date(from_date)
 
     return from_date, to_date
 

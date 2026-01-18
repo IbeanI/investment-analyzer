@@ -9,7 +9,7 @@ This file:
 - Registers all routers
 - Defines global endpoints (health checks)
 """
-# WORKING VERSION
+# WORKING VERSION - Checked
 import logging
 
 from fastapi import FastAPI, Depends, Request

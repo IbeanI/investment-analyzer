@@ -145,7 +145,7 @@ def _decimal_to_str(value: Decimal | None) -> str | None:
     if isinstance(value, int):
         value = Decimal(str(value))
     # Format to reasonable precision (8 decimal places)
-    return str(value.quantize(Decimal("0.00000001")).normalize())
+    return f"{float(value):.8f}".rstrip('0').rstrip('.')
 
 
 def _validate_date_range(from_date: date, to_date: date) -> None:

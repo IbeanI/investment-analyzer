@@ -101,6 +101,10 @@ from app.services.analytics.types import (
     # Input types
     CashFlow,
     DailyValue,
+    # Investment period tracking (GIPS)
+    InvestmentPeriod,
+    MeasurementPeriodInfo,
+    AnalysisScope,
     # Result types
     PerformanceMetrics,
     RiskMetrics,
@@ -120,6 +124,11 @@ __all__ = [
     # Input types
     "CashFlow",
     "DailyValue",
+
+    # Investment period tracking (GIPS)
+    "InvestmentPeriod",
+    "MeasurementPeriodInfo",
+    "AnalysisScope",
 
     # Result types
     "PerformanceMetrics",

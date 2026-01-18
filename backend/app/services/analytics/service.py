@@ -369,6 +369,7 @@ class AnalyticsService:
             start_date: date,
             end_date: date,
             risk_free_rate: Decimal = DEFAULT_RISK_FREE_RATE,
+            scope: str = "current_period"
     ) -> RiskMetrics:
         """
         Calculate risk metrics for a portfolio.
@@ -415,11 +416,10 @@ class AnalyticsService:
         # from daily returns and doesn't need cost_basis adjustment
         result = RiskCalculator.calculate_all(
             daily_values=daily_values,
-            total_return_annualized=performance.twr_annualized,
-            cagr=performance.cagr,
             risk_free_rate=risk_free_rate,
+            annualized_return=performance.twr_annualized,
+            scope=scope,
         )
-
         return result
 
     def get_benchmark(
@@ -544,6 +544,7 @@ class AnalyticsService:
             end_date: date,
             benchmark_symbol: str | None = None,
             risk_free_rate: Decimal = DEFAULT_RISK_FREE_RATE,
+            scope: str = "current_period",
     ) -> AnalyticsResult:
         """
         Calculate all analytics metrics for a portfolio.
@@ -621,9 +622,9 @@ class AnalyticsService:
         # Risk metrics
         risk = RiskCalculator.calculate_all(
             daily_values=daily_values,
-            total_return_annualized=performance.twr_annualized,
-            cagr=performance.cagr,
             risk_free_rate=risk_free_rate,
+            annualized_return=performance.twr_annualized,
+            scope=scope,
         )
 
         # Benchmark (optional) - let BenchmarkNotSyncedError propagate to router

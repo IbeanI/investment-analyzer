@@ -17,6 +17,19 @@ Architecture:
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from enum import Enum
+
+
+class AnalysisScope(str, Enum):
+    """
+    Scope for analytics calculations.
+
+    Attributes:
+        CURRENT_PERIOD: Calculate metrics for active investment period only (GIPS-compliant)
+        FULL_HISTORY: Chain all periods together, skip zero-equity days
+    """
+    CURRENT_PERIOD = "current_period"
+    FULL_HISTORY = "full_history"
 
 
 # =============================================================================
@@ -53,6 +66,53 @@ class DailyValue:
     date: date
     value: Decimal
     cash_flow: Decimal = field(default_factory=lambda: Decimal("0"))
+
+
+@dataclass
+class InvestmentPeriod:
+    """
+    A continuous period where the portfolio had holdings.
+
+    GIPS defines a measurement period as ending when:
+    - Full liquidation occurs (equity → 0)
+    - Significant cash flow (>10% of portfolio) - optional
+    - Client-defined period end
+
+    Attributes:
+        period_number: Sequential identifier (1, 2, 3, ...)
+        start_date: First day with holdings
+        end_date: Last day with holdings (or current if active)
+        start_value: Portfolio value at period start
+        end_value: Portfolio value at period end
+        end_reason: Why the period ended
+        is_active: True if this is the current active period
+        trading_days: Number of trading days with data
+    """
+    period_number: int
+    start_date: date
+    end_date: date
+    start_value: Decimal
+    end_value: Decimal
+    end_reason: str  # "full_liquidation", "active", "data_gap"
+    is_active: bool = False
+    trading_days: int = 0
+
+
+@dataclass
+class MeasurementPeriodInfo:
+    """
+    Information about the measurement period used for metrics calculation.
+
+    Attributes:
+        start_date: Start of the measurement period
+        end_date: End of the measurement period
+        trading_days: Number of trading days in the period
+        period_number: Which investment period this corresponds to
+    """
+    start_date: date
+    end_date: date
+    trading_days: int
+    period_number: int
 
 
 # =============================================================================
@@ -205,6 +265,11 @@ class RiskMetrics:
 
     # Detailed drawdown history
     drawdown_periods: list[DrawdownPeriod] = field(default_factory=list)
+
+    measurement_period: MeasurementPeriodInfo | None = None
+    investment_periods: list[InvestmentPeriod] = field(default_factory=list)
+    total_periods: int = 0
+    scope: str = "current_period"  # "current_period" or "full_history"
 
     # Data quality
     has_sufficient_data: bool = True

@@ -160,6 +160,38 @@ class DrawdownPeriodResponse(BaseModel):
     )
 
 
+class InvestmentPeriodResponse(BaseModel):
+    """Details of an investment period (GIPS compliance)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    period_index: int = Field(..., description="Period number (1-indexed)")
+    start_date: date = Field(..., description="Start of investment period")
+    end_date: date | None = Field(None, description="End of period (null if current)")
+    is_active: bool = Field(..., description="True if this is the current active period")
+
+    # Contribution tracking
+    contribution_date: date | None = Field(None, description="Date of contribution")
+    contribution_value: str | None = Field(None, description="Value contributed")
+
+    # Period values
+    start_value: str | None = Field(None, description="Value at period start")
+    end_value: str | None = Field(None, description="Value at period end")
+    trading_days: int = Field(0, description="Trading days in this period")
+
+
+class MeasurementPeriodResponse(BaseModel):
+    """Measurement period info for risk calculations (GIPS compliance)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    period_type: str = Field(..., description="Type: 'active', 'historical', or 'full'")
+    start_date: date = Field(..., description="Measurement start date")
+    end_date: date = Field(..., description="Measurement end date")
+    trading_days: int = Field(0, description="Number of trading days")
+    description: str | None = Field(None, description="Human-readable description")
+
+
 class RiskMetricsResponse(BaseModel):
     """
     Risk metrics response.
@@ -248,6 +280,23 @@ class RiskMetricsResponse(BaseModel):
     drawdown_periods: list[DrawdownPeriodResponse] = Field(
         default_factory=list,
         description="Top 5 most significant drawdown periods"
+    )
+
+    measurement_period: MeasurementPeriodResponse | None = Field(
+        None,
+        description="The period used for calculating metrics"
+    )
+    investment_periods: list[InvestmentPeriodResponse] = Field(
+        default_factory=list,
+        description="All detected investment periods"
+    )
+    total_periods: int = Field(
+        default=1,
+        description="Total number of investment periods detected"
+    )
+    scope: str = Field(
+        default="current_period",
+        description="Scope used: 'current_period' or 'full_history'"
     )
 
     # Data quality

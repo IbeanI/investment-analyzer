@@ -13,6 +13,7 @@ Optional parameters:
 - to_date: End of analysis period (default: today)
 - benchmark_symbol: Benchmark ticker (e.g., "^SPX", "IWDA.AS")
 - risk_free_rate: Annual risk-free rate as decimal (default: 0.02)
+- scope: Analysis scope - "current_period" (GIPS default) or "full_history"
 
 Note: These endpoints are nested under /portfolios/{id} because analytics
 are always in the context of a specific portfolio.
@@ -32,6 +33,8 @@ from app.schemas.analytics import (
     PerformanceMetricsResponse,
     PerformanceResponse,
     DrawdownPeriodResponse,
+    InvestmentPeriodResponse,
+    MeasurementPeriodResponse,
     RiskMetricsResponse,
     RiskResponse,
     BenchmarkMetricsResponse,
@@ -46,6 +49,8 @@ from app.services.analytics import (
     BenchmarkMetrics,
     AnalyticsPeriod,
     DrawdownPeriod,
+    InvestmentPeriod,
+    MeasurementPeriodInfo,
 )
 
 # =============================================================================
@@ -89,14 +94,11 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
 
 def _get_first_transaction_date(db: Session, portfolio_id: int) -> date | None:
     """Get the date of the first transaction for a portfolio."""
-    stmt = select(func.min(Transaction.date)).where(
-        Transaction.portfolio_id == portfolio_id
-    )
-    result = db.execute(stmt).scalar()
-    # Transaction.date is datetime, convert to date
-    if result is not None:
-        return result.date() if hasattr(result, 'date') else result
-    return None
+    result = db.execute(
+        select(func.min(Transaction.date))
+        .where(Transaction.portfolio_id == portfolio_id)
+    ).scalar()
+    return result
 
 
 def _resolve_date_range(
@@ -106,32 +108,21 @@ def _resolve_date_range(
         to_date: date | None,
 ) -> tuple[date, date]:
     """
-    Resolve date range with smart defaults.
+    Resolve date range defaults.
 
-    Args:
-        db: Database session
-        portfolio_id: Portfolio ID
-        from_date: Start date (None = first transaction date)
-        to_date: End date (None = today)
-
-    Returns:
-        Tuple of (resolved_from_date, resolved_to_date)
-
-    Raises:
-        HTTPException: If no transactions found and from_date not provided
+    - from_date defaults to first transaction date
+    - to_date defaults to today
     """
-    # Default to_date to today
     if to_date is None:
         to_date = date.today()
 
-    # Default from_date to first transaction date
     if from_date is None:
-        from_date = _get_first_transaction_date(db, portfolio_id)
-        if from_date is None:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No transactions found for this portfolio. Please provide from_date."
-            )
+        first_txn_date = _get_first_transaction_date(db, portfolio_id)
+        if first_txn_date is None:
+            # No transactions - use today for both
+            from_date = to_date
+        else:
+            from_date = first_txn_date
 
     return from_date, to_date
 
@@ -140,8 +131,8 @@ def _resolve_date_range(
 # HELPER FUNCTIONS
 # =============================================================================
 
-def _decimal_to_str(value: Decimal | int | None) -> str | None:
-    """Convert Decimal to string, preserving None."""
+def _decimal_to_str(value: Decimal | None) -> str | None:
+    """Convert Decimal to string for JSON response, preserving precision."""
     if value is None:
         return None
     # Convert int to Decimal if needed (safety net)
@@ -183,6 +174,34 @@ def _map_drawdown_period(dd: DrawdownPeriod) -> DrawdownPeriodResponse:
         depth=_decimal_to_str(dd.depth),
         duration_days=dd.duration_days,
         recovery_days=dd.recovery_days,
+    )
+
+
+def _map_investment_period(period: InvestmentPeriod) -> InvestmentPeriodResponse:
+    """Map internal InvestmentPeriod to Pydantic schema."""
+    return InvestmentPeriodResponse(
+        period_index=period.period_number,
+        start_date=period.start_date,
+        end_date=period.end_date,
+        is_active=period.is_active,
+        contribution_date=None,  # Not tracked at this level
+        contribution_value=None,  # Not tracked at this level
+        start_value=_decimal_to_str(period.start_value),
+        end_value=_decimal_to_str(period.end_value),
+        trading_days=period.trading_days,
+    )
+
+
+def _map_measurement_period(period: MeasurementPeriodInfo | None) -> MeasurementPeriodResponse | None:
+    """Map internal MeasurementPeriodInfo to Pydantic schema."""
+    if period is None:
+        return None
+    return MeasurementPeriodResponse(
+        period_type="current_period" if period.period_number > 0 else "full_history",
+        start_date=period.start_date,
+        end_date=period.end_date,
+        trading_days=period.trading_days,
+        description=f"Period {period.period_number}" if period.period_number > 0 else "All periods combined",
     )
 
 
@@ -237,6 +256,12 @@ def _map_risk(risk: RiskMetrics) -> RiskMetricsResponse:
         worst_day=_decimal_to_str(risk.worst_day),
         worst_day_date=risk.worst_day_date,
         drawdown_periods=[_map_drawdown_period(dd) for dd in sorted_drawdowns],
+        # GIPS investment period tracking
+        measurement_period=_map_measurement_period(risk.measurement_period),
+        investment_periods=[_map_investment_period(p) for p in risk.investment_periods],
+        total_periods=risk.total_periods,
+        scope=risk.scope,
+        # Data quality
         has_sufficient_data=risk.has_sufficient_data,
         warnings=risk.warnings,
     )
@@ -297,35 +322,28 @@ def get_portfolio_analytics(
             description="Annual risk-free rate as decimal (0.02 = 2%)",
             alias="risk_free_rate"
         ),
+        scope: str = Query(
+            default="current_period",
+            description="Analysis scope: 'current_period' (GIPS-compliant, default) or 'full_history'",
+        ),
         db: Session = Depends(get_db),
         service: AnalyticsService = Depends(get_analytics_service),
 ) -> AnalyticsResponse:
     """
     Get complete portfolio analytics for a date range.
 
-    Returns:
-    - **performance**: TWR, XIRR, CAGR, simple return, total gain
-    - **risk**: Volatility, Sharpe, Sortino, Drawdown, VaR
-    - **benchmark**: Beta, Alpha, Correlation (if benchmark_symbol provided)
+    Returns comprehensive metrics including:
+    - **Performance**: TWR, XIRR, CAGR, simple return
+    - **Risk**: Volatility, Sharpe, Sortino, Drawdowns, VaR
+    - **Benchmark** (optional): Beta, Alpha, Correlation
 
-    **Performance Metrics:**
-    - `twr`: Time-Weighted Return (removes cash flow timing bias)
-    - `xirr`: Extended IRR (money-weighted, accounts for cash flow timing)
-    - `cagr`: Compound Annual Growth Rate
-    - `simple_return`: Cash-flow adjusted return (total_gain / start_value)
+    **GIPS Compliance (scope parameter):**
+    - `current_period`: Metrics for active investment period only (default, GIPS-compliant)
+    - `full_history`: Chain all periods together, excluding zero-equity days
 
-    **Risk Metrics:**
-    - `sharpe_ratio`: Risk-adjusted return (higher is better)
-    - `sortino_ratio`: Downside risk-adjusted return
-    - `max_drawdown`: Largest peak-to-trough decline
-    - `var_95`: Value at Risk at 95% confidence
-
-    **Benchmark Metrics (if benchmark provided):**
-    - `beta`: Systematic risk (β > 1 = more volatile than market)
-    - `alpha`: Excess return above expected
-    - `correlation`: How closely portfolio tracks benchmark
-
-    **Note:** Results are cached for 1 hour to improve performance.
+    **Note**: If the portfolio has multiple investment periods (separated by full
+    liquidations), the default behavior shows metrics for the current period only.
+    Use `scope=full_history` to see combined metrics across all periods.
     """
     # Verify portfolio exists first
     portfolio = get_portfolio_or_404(db, portfolio_id)
@@ -336,6 +354,13 @@ def get_portfolio_analytics(
     # Validate inputs
     _validate_date_range(from_date, to_date)
 
+    # Validate scope
+    if scope not in ("current_period", "full_history"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid scope '{scope}'. Must be 'current_period' or 'full_history'"
+        )
+
     # Get analytics from service
     try:
         result = service.get_analytics(
@@ -345,6 +370,7 @@ def get_portfolio_analytics(
             end_date=to_date,
             benchmark_symbol=benchmark_symbol,
             risk_free_rate=risk_free_rate,
+            scope=scope,
         )
     except BenchmarkNotSyncedError as e:
         raise HTTPException(
@@ -456,6 +482,10 @@ def get_portfolio_risk(
             le=Decimal("1"),
             description="Annual risk-free rate as decimal (0.02 = 2%)"
         ),
+        scope: str = Query(
+            default="current_period",
+            description="Analysis scope: 'current_period' (GIPS-compliant, default) or 'full_history'",
+        ),
         db: Session = Depends(get_db),
         service: AnalyticsService = Depends(get_analytics_service),
 ) -> RiskResponse:
@@ -468,6 +498,11 @@ def get_portfolio_risk(
     - **Drawdown analysis**: Max drawdown, current drawdown, top 5 periods
     - **Value at Risk**: VaR and CVaR at 95% confidence
     - **Win statistics**: Positive/negative days, best/worst day
+    - **Investment periods**: GIPS-compliant period detection
+
+    **GIPS Compliance (scope parameter):**
+    - `current_period`: Metrics for active investment period only (default)
+    - `full_history`: Chain all periods together, excluding zero-equity days
 
     **Sharpe Ratio Interpretation:**
     - < 1.0: Sub-optimal
@@ -486,6 +521,13 @@ def get_portfolio_risk(
     # Validate inputs
     _validate_date_range(from_date, to_date)
 
+    # Validate scope
+    if scope not in ("current_period", "full_history"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid scope '{scope}'. Must be 'current_period' or 'full_history'"
+        )
+
     # Get risk from service
     risk = service.get_risk(
         db=db,
@@ -493,19 +535,24 @@ def get_portfolio_risk(
         start_date=from_date,
         end_date=to_date,
         risk_free_rate=risk_free_rate,
+        scope=scope,
     )
 
-    # Build period info (we need trading_days from the risk result)
-    # Since RiskMetrics doesn't have this, we approximate from daily values
-    calendar_days = (to_date - from_date).days
-    trading_days = risk.positive_days + risk.negative_days
-
-    period = PeriodInfo(
-        from_date=from_date,
-        to_date=to_date,
-        trading_days=trading_days,
-        calendar_days=calendar_days,
-    )
+    # Build period info using measurement period if available
+    if risk.measurement_period:
+        period = PeriodInfo(
+            from_date=risk.measurement_period.start_date,
+            to_date=risk.measurement_period.end_date,
+            trading_days=risk.measurement_period.trading_days,
+            calendar_days=(risk.measurement_period.end_date - risk.measurement_period.start_date).days,
+        )
+    else:
+        period = PeriodInfo(
+            from_date=from_date,
+            to_date=to_date,
+            trading_days=0,
+            calendar_days=(to_date - from_date).days,
+        )
 
     return RiskResponse(
         portfolio_id=portfolio_id,
@@ -518,7 +565,7 @@ def get_portfolio_risk(
 @router.get(
     "/{portfolio_id}/analytics/benchmark",
     response_model=BenchmarkResponse,
-    summary="Get benchmark comparison",
+    summary="Get benchmark comparison only",
     response_description="Benchmark metrics (Beta, Alpha, Correlation)"
 )
 def get_portfolio_benchmark(
@@ -531,9 +578,9 @@ def get_portfolio_benchmark(
             default=None,
             description="End date of analysis period (default: today)"
         ),
-        benchmark_symbol: str = Query(
-            ...,
-            description="Benchmark ticker (e.g., '^SPX', 'IWDA.AS')",
+        benchmark_symbol: str | None = Query(
+            default=None,
+            description="Benchmark ticker (e.g., '^SPX', 'IWDA.AS'). Uses default if not provided.",
             alias="benchmark"
         ),
         risk_free_rate: Decimal = Query(
@@ -546,31 +593,24 @@ def get_portfolio_benchmark(
         service: AnalyticsService = Depends(get_analytics_service),
 ) -> BenchmarkResponse:
     """
-    Compare portfolio performance against a benchmark.
+    Get benchmark comparison metrics for a portfolio.
 
-    Requires `benchmark` query parameter with a valid ticker symbol.
-    The benchmark must be synced to the database before use.
-
-    **Common benchmarks:**
-    - `^SPX`: S&P 500 Index (US large cap)
-    - `IWDA.AS`: iShares MSCI World ETF (Global developed markets)
-
-    **Metrics returned:**
-    - `beta`: Systematic risk (β > 1 = more volatile than market)
-    - `alpha`: Jensen's Alpha (excess return above expected)
-    - `correlation`: Pearson correlation (-1 to 1)
-    - `r_squared`: How much variance is explained by benchmark
-    - `tracking_error`: Standard deviation of return differences
-    - `information_ratio`: Active return per unit of tracking risk
-    - `up_capture` / `down_capture`: Performance in up/down markets
+    Compares portfolio performance against a benchmark index:
+    - **CAPM metrics**: Beta (systematic risk), Alpha (excess return)
+    - **Correlation**: How closely the portfolio tracks the benchmark
+    - **Tracking error**: Standard deviation of return differences
+    - **Information ratio**: Active return per unit of active risk
 
     **Beta Interpretation:**
-    - β = 1.0: Moves with market
-    - β > 1.0: More volatile than market
-    - β < 1.0: Less volatile than market
-    - β < 0: Moves opposite to market (rare)
+    - β > 1: More volatile than market
+    - β < 1: Less volatile than market
+    - β = 1: Moves with market
 
-    **Error:** Returns 400 if benchmark is not synced to database.
+    **Alpha Interpretation:**
+    - α > 0: Outperforming risk-adjusted expectations
+    - α < 0: Underperforming risk-adjusted expectations
+
+    **Note:** Benchmark must be synced (have price data) before comparison.
     """
     # Verify portfolio exists first
     portfolio = get_portfolio_or_404(db, portfolio_id)
@@ -581,7 +621,7 @@ def get_portfolio_benchmark(
     # Validate inputs
     _validate_date_range(from_date, to_date)
 
-    # Get benchmark comparison from service
+    # Get benchmark from service
     try:
         benchmark = service.get_benchmark(
             db=db,
@@ -602,13 +642,11 @@ def get_portfolio_benchmark(
         )
 
     # Build period info
-    calendar_days = (to_date - from_date).days
-
     period = PeriodInfo(
         from_date=from_date,
         to_date=to_date,
-        trading_days=0,  # We don't have this from benchmark-only call
-        calendar_days=calendar_days,
+        trading_days=0,  # We don't have this from benchmark response
+        calendar_days=(to_date - from_date).days,
     )
 
     return BenchmarkResponse(

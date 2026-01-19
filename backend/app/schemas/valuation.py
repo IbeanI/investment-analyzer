@@ -10,6 +10,7 @@ These schemas handle:
 """
 
 import datetime as dt
+from datetime import date
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -159,6 +160,24 @@ class HoldingValuation(BaseModel):
         description="False if price or FX data is missing"
     )
 
+    # Synthetic data tracking (all optional for backwards compatibility)
+    price_is_synthetic: bool = Field(
+        default=False,
+        description="True if price was derived from proxy backcasting"
+    )
+    price_source: str = Field(
+        default="market",
+        description="Price source: 'market', 'proxy_backcast', or 'unavailable'"
+    )
+    proxy_ticker: str | None = Field(
+        default=None,
+        description="Ticker of proxy asset used for synthetic price"
+    )
+    proxy_exchange: str | None = Field(
+        default=None,
+        description="Exchange of proxy asset used for synthetic price"
+    )
+
 
 # =============================================================================
 # PORTFOLIO VALUATION SCHEMAS
@@ -259,6 +278,16 @@ class PortfolioValuationResponse(BaseModel):
         description="Portfolio-level warnings"
     )
 
+    # Synthetic data summary
+    has_synthetic_data: bool = Field(
+        default=False,
+        description="True if any holding uses synthetic (proxy-backcast) prices"
+    )
+    synthetic_holdings_count: int = Field(
+        default=0,
+        description="Number of holdings with synthetic prices"
+    )
+
 
 # =============================================================================
 # VALUATION HISTORY SCHEMAS
@@ -301,6 +330,16 @@ class ValuationHistoryPoint(BaseModel):
     )
     has_complete_data: bool
 
+    # Synthetic data tracking
+    has_synthetic_data: bool = Field(
+        default=False,
+        description="True if any holding on this date uses synthetic prices"
+    )
+    synthetic_holdings: list[str] = Field(
+        default_factory=list,
+        description="Tickers of holdings with synthetic prices on this date"
+    )
+
 
 class PortfolioHistoryResponse(BaseModel):
     """Portfolio valuation history (time series)."""
@@ -330,6 +369,24 @@ class PortfolioHistoryResponse(BaseModel):
     warnings: list[str] = Field(
         default_factory=list,
         description="Warnings about data gaps or missing prices"
+    )
+
+    # Synthetic data summary
+    has_synthetic_data: bool = Field(
+        default=False,
+        description="True if any data points include synthetic prices"
+    )
+    synthetic_holdings: dict[str, str | None] = Field(
+        default_factory=dict,
+        description="Holdings with synthetic data: {ticker: proxy_ticker_used}"
+    )
+    synthetic_date_range: tuple[date, date] | None = Field(
+        default=None,
+        description="Date range where synthetic data was used"
+    )
+    synthetic_data_percentage: Decimal = Field(
+        default=Decimal("0"),
+        description="Percentage of price lookups that used synthetic data"
     )
 
 

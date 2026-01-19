@@ -449,6 +449,28 @@ class AnalyticsResponse(BaseModel):
         description="Aggregated warnings from all calculations"
     )
 
+    # Data quality indicators
+    has_synthetic_data: bool = Field(
+        default=False,
+        description="True if analytics were calculated using synthetic price data"
+    )
+    synthetic_data_percentage: Decimal | None = Field(
+        default=None,
+        description="Percentage of price lookups that used synthetic data"
+    )
+    synthetic_holdings: dict[str, str | None] = Field(
+        default_factory=dict,
+        description="Holdings with synthetic data: {ticker: proxy_ticker_used}"
+    )
+    synthetic_date_range: tuple[date, date] | None = Field(
+        default=None,
+        description="Date range where synthetic data was used (start, end)"
+    )
+    reliability_notes: list[str] = Field(
+        default_factory=list,
+        description="Notes about data quality and metric reliability"
+    )
+
 
 # =============================================================================
 # REQUEST VALIDATION (Query Parameters)

@@ -398,6 +398,11 @@ def get_portfolio_analytics(
         benchmark=_map_benchmark(result.benchmark) if result.benchmark else None,
         has_complete_data=result.has_complete_data,
         warnings=result.warnings,
+        has_synthetic_data=result.has_synthetic_data,
+        synthetic_data_percentage=result.synthetic_data_percentage,
+        synthetic_holdings=result.synthetic_holdings,
+        synthetic_date_range=result.synthetic_date_range,
+        reliability_notes=result.reliability_notes,
     )
 
 

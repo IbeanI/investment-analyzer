@@ -14,6 +14,7 @@ Each router handles a specific domain:
 
 from app.routers.analytics import router as analytics_router
 from app.routers.assets import router as assets_router
+from app.routers.portfolio_settings import router as portfolio_settings_router
 from app.routers.portfolios import router as portfolios_router
 from app.routers.sync import router as sync_router
 from app.routers.transactions import router as transactions_router
@@ -32,4 +33,5 @@ __all__ = [
     "valuation_router",
     "analytics_router",
     # "users_router",
+    "portfolio_settings_router",
 ]

@@ -75,7 +75,21 @@ from app.services.market_data import (
     SyncResult,
     PortfolioAnalysis,
 )
-# Valuation Service (Phase 4)
+# Portfolio Settings Service
+from app.services.portfolio_settings_service import (
+    PortfolioSettingsService,
+    SettingsUpdateResult,
+)
+# Proxy Mapping Service
+from app.services.proxy_mapping_service import (
+    ProxyMappingService,
+    ProxyConfig,
+    ProxyMappingResult,
+    ProxyApplied,
+    ProxySkipped,
+    ProxyFailed,
+)
+# Valuation Service
 from app.services.valuation import ValuationService
 
 __all__ = [
@@ -99,8 +113,20 @@ __all__ = [
     "BatchResult",
     "OHLCVData",
     "HistoricalPricesResult",
-    # Valuation Service (Phase 4)
+    # Valuation Service
     "ValuationService",
+
+    # Portfolio Settings Service
+    "PortfolioSettingsService",
+    "SettingsUpdateResult",
+
+    # Proxy Mapping Service
+    "ProxyMappingService",
+    "ProxyConfig",
+    "ProxyMappingResult",
+    "ProxyApplied",
+    "ProxySkipped",
+    "ProxyFailed",
 
     # ==========================================================================
     # Exceptions

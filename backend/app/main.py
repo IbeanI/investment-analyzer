@@ -30,6 +30,7 @@ from app.routers import (
     valuation_router,
     analytics_router,
 )
+from app.routers.portfolio_settings import router as portfolio_settings_router
 from app.schemas.errors import ErrorDetail
 from app.services.exceptions import (
     ServiceError,
@@ -178,6 +179,7 @@ app.include_router(upload_router)  # /upload/*
 app.include_router(sync_router)  # /portfolios/{id}/sync/* (Phase 3)
 app.include_router(valuation_router)  # /portfolios/{id}/valuation/* (Phase 4)
 app.include_router(analytics_router)  # /portfolios/{id}/analytics/* (Phase 5)
+app.include_router(portfolio_settings_router)  # /portfolios/{id}/settings
 
 
 # =============================================================================

@@ -157,10 +157,18 @@ class HistoryCalculator:
 
         # Step 3: Identify all assets involved and fetch them
         asset_ids = list({txn.asset_id for txn in transactions if txn.asset_id is not None})
-        assets = self._fetch_assets(db, asset_ids)
 
         # Step 4: Batch fetch ALL prices in date range
         price_map = self._fetch_prices_batch(db, asset_ids, start_date, end_date)
+
+        # Step 4b: Collect proxy asset IDs from synthetic prices and add to asset fetch
+        proxy_asset_ids = {
+            proxy_id
+            for (price, is_synthetic, proxy_id) in price_map.values()
+            if is_synthetic and proxy_id is not None
+        }
+        all_asset_ids = set(asset_ids) | proxy_asset_ids
+        assets = self._fetch_assets(db, list(all_asset_ids))
 
         # Step 5: Batch fetch ALL FX rates in date range
         currencies_needed = {
@@ -194,6 +202,32 @@ class HistoryCalculator:
                 f"incomplete price or FX data"
             )
 
+        # Aggregate synthetic data statistics across all data points
+        has_synthetic = any(point.has_synthetic_data for point in data_points)
+
+        # Collect all synthetic holdings and their proxies
+        all_synthetic_holdings: dict[str, str | None] = {}
+        synthetic_dates: list[date] = []
+        total_lookups = 0
+        synthetic_lookups = 0
+
+        for point in data_points:
+            # Count price lookups (one per active holding per day)
+            total_lookups += point.holdings_count
+            synthetic_lookups += len(point.synthetic_holdings)
+
+            if point.has_synthetic_data:
+                synthetic_dates.append(point.date)
+                for ticker, proxy in point.synthetic_holdings.items():
+                    # Keep first proxy seen (they should all be same for a given ticker)
+                    if ticker not in all_synthetic_holdings:
+                        all_synthetic_holdings[ticker] = proxy
+
+        # Calculate date range of synthetic data usage
+        synthetic_date_range: tuple[date, date] | None = None
+        if synthetic_dates:
+            synthetic_date_range = (min(synthetic_dates), max(synthetic_dates))
+
         return PortfolioHistory(
             portfolio_id=portfolio_id,
             portfolio_currency=portfolio_currency,
@@ -203,6 +237,11 @@ class HistoryCalculator:
             tracks_cash=tracks_cash,
             data=data_points,
             warnings=warnings,
+            has_synthetic_data=has_synthetic,
+            synthetic_holdings=all_synthetic_holdings,
+            synthetic_date_range=synthetic_date_range,
+            synthetic_lookups=synthetic_lookups,
+            total_lookups=total_lookups,
         )
 
     def _calculate_history_rolling(
@@ -211,7 +250,7 @@ class HistoryCalculator:
             assets: dict[int, Asset],
             portfolio_currency: str,
             target_dates: list[date],
-            price_map: dict[tuple[int, date], Decimal],
+            price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]],
             fx_map: dict[tuple[str, str, date], Decimal],
             tracks_cash: bool,
     ) -> list[HistoryPoint]:
@@ -282,6 +321,7 @@ class HistoryCalculator:
                 price_map=price_map,
                 fx_map=fx_map,
                 tracks_cash=tracks_cash,
+                assets=assets,
             )
             data_points.append(point)
 
@@ -293,9 +333,10 @@ class HistoryCalculator:
             cash_state: dict[str, Decimal],
             portfolio_currency: str,
             target_date: date,
-            price_map: dict[tuple[int, date], Decimal],
+            price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]],
             fx_map: dict[tuple[str, str, date], Decimal],
             tracks_cash: bool,
+            assets: dict[int, Asset],
     ) -> HistoryPoint:
         """
         Take a snapshot of current state and calculate valuation.
@@ -327,6 +368,9 @@ class HistoryCalculator:
                 realized_pnl=Decimal("0"),
                 total_pnl=Decimal("0"),
                 has_complete_data=True,
+                has_synthetic_data=False,
+                synthetic_holdings={},
+                holdings_count=0,
             )
 
         # Calculate totals
@@ -334,6 +378,10 @@ class HistoryCalculator:
         total_value = Decimal("0")
         total_realized = Decimal("0")
         all_complete = True
+
+        # Track synthetic data for this day
+        day_has_synthetic = False
+        synthetic_holdings_map: dict[str, str | None] = {}  # {ticker: proxy_ticker}
 
         # Track the latest price date for consistent FX lookups
         latest_price_date: date | None = None
@@ -352,8 +400,8 @@ class HistoryCalculator:
             if position.quantity == Decimal("0"):
                 continue
 
-            # Current value (using batch-fetched data)
-            price, price_date = self._lookup_price_with_fallback(
+            # Current value (using batch-fetched data with synthetic info)
+            price, price_date, is_synthetic, proxy_source_id = self._lookup_price_with_fallback(
                 price_map, position.asset_id, target_date
             )
 
@@ -361,7 +409,16 @@ class HistoryCalculator:
                 all_complete = False
                 continue
 
-            # Track the latest price date found (for cash FX consistency)
+            # Track synthetic data
+            if is_synthetic:
+                day_has_synthetic = True
+                # Get proxy ticker from proxy_source_id
+                proxy_ticker: str | None = None
+                if proxy_source_id and proxy_source_id in assets:
+                    proxy_ticker = assets[proxy_source_id].ticker
+                synthetic_holdings_map[position.asset.ticker] = proxy_ticker
+
+                # Track the latest price date found (for cash FX consistency)
             if latest_price_date is None or price_date > latest_price_date:
                 latest_price_date = price_date
 
@@ -417,6 +474,9 @@ class HistoryCalculator:
             final_cash = None if tracks_cash else None  # stays None
             final_equity = None
 
+        # Count active holdings (non-zero quantity)
+        active_holdings_count = sum(1 for p in positions if p.quantity > Decimal("0"))
+
         return HistoryPoint(
             date=target_date,
             value=final_value.quantize(Decimal("0.01")) if final_value is not None else None,
@@ -427,6 +487,9 @@ class HistoryCalculator:
             realized_pnl=total_realized.quantize(Decimal("0.01")),
             total_pnl=total_pnl.quantize(Decimal("0.01")) if total_pnl is not None else None,
             has_complete_data=all_complete,
+            has_synthetic_data=day_has_synthetic,
+            synthetic_holdings=synthetic_holdings_map,
+            holdings_count=active_holdings_count,
         )
 
     # =========================================================================
@@ -479,7 +542,7 @@ class HistoryCalculator:
             asset_ids: list[int],
             start_date: date,
             end_date: date,
-    ) -> dict[tuple[int, date], Decimal]:
+    ) -> dict[tuple[int, date], tuple[Decimal, bool, int | None]]:
         """
         Batch fetch all prices for given assets in date range.
 
@@ -487,7 +550,7 @@ class HistoryCalculator:
         to enable fallback lookups for weekends/holidays at the start of
         the requested range.
 
-        Returns dict mapping (asset_id, date) -> close_price
+        Returns dict mapping (asset_id, date) -> (close_price, is_synthetic, proxy_source_id)
         """
         if not asset_ids:
             return {}
@@ -501,13 +564,13 @@ class HistoryCalculator:
             .where(
                 and_(
                     MarketData.asset_id.in_(asset_ids),
-                    MarketData.date >= extended_start,  # CHANGED
+                    MarketData.date >= extended_start,
                     MarketData.date <= end_date,
                 )
             )
         )
 
-        price_map: dict[tuple[int, date], Decimal] = {}
+        price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]] = {}
         for record in db.scalars(query).all():
             # Handle both date and datetime
             record_date = (
@@ -515,7 +578,11 @@ class HistoryCalculator:
                 if hasattr(record.date, 'date')
                 else record.date
             )
-            price_map[(record.asset_id, record_date)] = record.close_price
+            price_map[(record.asset_id, record_date)] = (
+                record.close_price,
+                record.is_synthetic,
+                record.proxy_source_id,
+            )
 
         logger.debug(
             f"Fetched {len(price_map)} price records for {len(asset_ids)} assets "
@@ -705,36 +772,36 @@ class HistoryCalculator:
 
     def _lookup_price_with_fallback(
             self,
-            price_map: dict[tuple[int, date], Decimal],
+            price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]],
             asset_id: int,
             target_date: date,
             max_fallback_days: int | None = None,
-    ) -> tuple[Decimal | None, date | None]:
+    ) -> tuple[Decimal | None, date | None, bool, int | None]:
         """
         Look up price with fallback to recent dates.
 
         For weekends/holidays, looks back up to max_fallback_days.
 
         Returns:
-            Tuple of (price, actual_date) - the date the price was found for.
-            Both are None if no price found within fallback window.
+            Tuple of (price, actual_date, is_synthetic, proxy_source_id).
+            Price and date are None if no price found within fallback window.
         """
         if max_fallback_days is None:
             max_fallback_days = self.PRICE_FALLBACK_DAYS
 
         # Try exact date first
-        price = price_map.get((asset_id, target_date))
-        if price is not None:
-            return price, target_date
+        price_data = price_map.get((asset_id, target_date))
+        if price_data is not None:
+            return price_data[0], target_date, price_data[1], price_data[2]
 
         # Fallback to recent dates
         for days_back in range(1, max_fallback_days + 1):
             fallback_date = target_date - timedelta(days=days_back)
-            price = price_map.get((asset_id, fallback_date))
-            if price is not None:
-                return price, fallback_date
+            price_data = price_map.get((asset_id, fallback_date))
+            if price_data is not None:
+                return price_data[0], fallback_date, price_data[1], price_data[2]
 
-        return None, None
+        return None, None, False, None
 
     def _lookup_fx_with_fallback(
             self,

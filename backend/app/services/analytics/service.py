@@ -79,6 +79,11 @@ _INTERNAL_INTERVAL = "daily"
 # Default risk-free rate (2% annual)
 DEFAULT_RISK_FREE_RATE = Decimal("0.02")
 
+# Synthetic data reliability thresholds
+# These trigger warnings about data quality in analytics results
+SYNTHETIC_WARNING_THRESHOLD = Decimal("20")  # Warn if >20% synthetic data
+SYNTHETIC_CRITICAL_THRESHOLD = Decimal("50")  # Critical warning if >50% synthetic
+
 # Default benchmarks by portfolio currency
 # ^SPX = S&P 500 Index
 # IWDA.AS = iShares MSCI World ETF (Amsterdam)
@@ -563,6 +568,7 @@ class AnalyticsService:
             end_date: End of analysis period
             benchmark_symbol: Optional benchmark ticker (e.g., "^SPX")
             risk_free_rate: Annual risk-free rate for Sharpe ratio
+            scope: Analysis scope - "current_period" or "full_history"
 
         Returns:
             AnalyticsResult with all metrics
@@ -599,7 +605,19 @@ class AnalyticsService:
                 warnings=["Portfolio not found"],
             )
 
-        # Get daily values once (reuse for all calculations)
+        # Get portfolio history (includes daily values AND synthetic data metadata)
+        # This is used for synthetic data tracking
+        history = self._valuation_service.get_history(
+            db=db,
+            portfolio_id=portfolio_id,
+            start_date=start_date,
+            end_date=end_date,
+            interval="daily",
+        )
+
+        # Get daily values WITH cash flows properly assigned
+        # CRITICAL: Must use _get_daily_values() to include cash flows for TWR calculation
+        # Without cash flows, TWR treats deposits as returns (inflating the result)
         daily_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
 
         # Get cost_basis and realized_pnl for accurate simple_return/CAGR calculation
@@ -612,12 +630,28 @@ class AnalyticsService:
                 date=daily_values[-1].date,
                 amount=-daily_values[-1].value,
             ))
+        # Filter daily values based on scope for TWR calculation
+        # This excludes zero-equity periods (full liquidation gaps) to prevent
+        # TWR from being poisoned by -100% days (GIPS-compliant)
+        filtered_daily_values = self._filter_to_active_periods(daily_values, scope)
+
         performance = ReturnsCalculator.calculate_all(
-            daily_values,
+            filtered_daily_values,
             cash_flows,
             cost_basis=cost_basis,
             realized_pnl=realized_pnl,
         )
+
+        # Add warning if multiple periods detected and using current_period scope
+        if scope == "current_period" and len(daily_values) != len(filtered_daily_values):
+            # Check if there were actually multiple periods (not just edge filtering)
+            zero_value_days = sum(1 for dv in daily_values if dv.value <= 0)
+            if zero_value_days > 0:
+                performance.warnings.append(
+                    f"TWR calculated for current investment period only. "
+                    f"Portfolio had {zero_value_days} zero-equity days (full liquidation). "
+                    f"Use scope=full_history to chain all active periods."
+                )
 
         # Risk metrics
         risk = RiskCalculator.calculate_all(
@@ -657,6 +691,7 @@ class AnalyticsService:
                 (benchmark is None or benchmark.has_sufficient_data)
         )
 
+        # Build result with data quality info from history
         result = AnalyticsResult(
             portfolio_id=portfolio_id,
             portfolio_currency=portfolio.currency,
@@ -666,6 +701,14 @@ class AnalyticsService:
             benchmark=benchmark,
             has_complete_data=has_complete,
             warnings=all_warnings,
+            # Data quality fields (from history metadata)
+            has_synthetic_data=history.has_synthetic_data,
+            synthetic_data_percentage=history.synthetic_percentage if history.has_synthetic_data else None,
+            synthetic_holdings=history.synthetic_holdings if history.has_synthetic_data else {},
+            synthetic_date_range=history.synthetic_date_range,
+            reliability_notes=self._generate_reliability_notes(
+                history.synthetic_percentage
+            ) if history.has_synthetic_data else [],
         )
 
         # Cache the result
@@ -1009,3 +1052,118 @@ class AnalyticsService:
 
         exponent = Decimal("365") / Decimal(str(days))
         return Decimal(str(float(base) ** float(exponent))) - Decimal("1")
+
+    def _filter_to_active_periods(
+            self,
+            daily_values: list[DailyValue],
+            scope: str,
+    ) -> list[DailyValue]:
+        """
+        Filter daily values to exclude zero-equity periods (full liquidation gaps).
+
+        For scope='current_period': Returns only the current (most recent) investment period.
+        For scope='full_history': Returns all days with positive equity (chains active periods).
+
+        Investment periods are separated by days where portfolio equity is zero
+        (full liquidation). This is GIPS-compliant handling.
+
+        Args:
+            daily_values: Full list of daily values (may include zero-value days)
+            scope: 'current_period' or 'full_history'
+
+        Returns:
+            Filtered list of DailyValue with only active investment days
+        """
+        if not daily_values:
+            return []
+
+        # Sort by date
+        sorted_values = sorted(daily_values, key=lambda x: x.date)
+
+        # Identify investment periods (contiguous days with positive equity)
+        periods: list[list[DailyValue]] = []
+        current_period: list[DailyValue] = []
+
+        for dv in sorted_values:
+            if dv.value > 0:
+                # Active day - add to current period
+                current_period.append(dv)
+            else:
+                # Zero/negative value - end of period (if any)
+                if current_period:
+                    periods.append(current_period)
+                    current_period = []
+
+        # Don't forget the last period
+        if current_period:
+            periods.append(current_period)
+
+        if not periods:
+            return []
+
+        if scope == "current_period":
+            # Return only the most recent (last) investment period
+            logger.debug(
+                f"Filtering to current period: {len(periods[-1])} days "
+                f"(from {periods[-1][0].date} to {periods[-1][-1].date})"
+            )
+            return periods[-1]
+        else:
+            # full_history: Chain all active periods together (skip gaps)
+            all_active = []
+            for period in periods:
+                all_active.extend(period)
+            logger.debug(
+                f"Chaining {len(periods)} investment periods: {len(all_active)} total active days"
+            )
+            return all_active
+
+    def _generate_reliability_notes(
+            self,
+            synthetic_percentage: Decimal | None,
+    ) -> list[str]:
+        """
+        Generate reliability notes based on synthetic data percentage.
+
+        Args:
+            synthetic_percentage: Percentage of data points that are synthetic
+
+        Returns:
+            List of warning/informational notes about data reliability
+        """
+        notes: list[str] = []
+
+        if synthetic_percentage is None or synthetic_percentage == Decimal("0"):
+            return notes
+
+        if synthetic_percentage >= SYNTHETIC_CRITICAL_THRESHOLD:
+            notes.append(
+                f"⚠️ CRITICAL: {synthetic_percentage}% of price data is synthetic "
+                f"(proxy-backcast). Performance and risk metrics may not reflect "
+                f"actual historical behavior. Use with extreme caution."
+            )
+            notes.append(
+                "Risk metrics (Volatility, Sharpe, Sortino, VaR) are based primarily "
+                "on proxy asset characteristics, not actual asset performance."
+            )
+            notes.append(
+                "Beta and Alpha calculations may be invalid if synthetic data "
+                "was derived from the benchmark or correlated assets."
+            )
+        elif synthetic_percentage >= SYNTHETIC_WARNING_THRESHOLD:
+            notes.append(
+                f"⚠️ WARNING: {synthetic_percentage}% of price data is synthetic "
+                f"(proxy-backcast). Some metrics may have reduced accuracy."
+            )
+            notes.append(
+                "Risk metrics incorporate estimated volatility from proxy assets "
+                "for periods with missing data."
+            )
+        else:
+            # Low percentage - informational only
+            notes.append(
+                f"ℹ️ {synthetic_percentage}% of price data is synthetic (proxy-backcast). "
+                f"Impact on metrics is minimal."
+            )
+
+        return notes

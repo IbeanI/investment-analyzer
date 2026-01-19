@@ -55,6 +55,8 @@ from app.services.market_data.base import (
     OHLCVData,
 )
 from app.services.market_data.yahoo import YahooFinanceProvider
+from app.services.portfolio_settings_service import PortfolioSettingsService
+from app.services.proxy_mapping_service import ProxyMappingService, ProxyMappingResult
 
 logger = logging.getLogger(__name__)
 
@@ -117,6 +119,13 @@ class SyncResult:
     fx_pairs_synced: int = 0
     fx_rates_fetched: int = 0
 
+    # Backcasting results
+    backcasting_enabled: bool = False
+    proxies_applied: int = 0
+    assets_backcast: int = 0
+    synthetic_prices_created: int = 0
+    proxy_mapping_result: ProxyMappingResult | None = None
+
     # Date range
     from_date: date | None = None
     to_date: date | None = None
@@ -169,18 +178,24 @@ class MarketDataSyncService:
             self,
             provider: MarketDataProvider | None = None,
             fx_service: FXRateService | None = None,
+            settings_service: PortfolioSettingsService | None = None,
+            proxy_mapping_service: ProxyMappingService | None = None,
             staleness_threshold_hours: int | None = None,
     ) -> None:
         """
-        Initialize the sync service.
+        Initialize the market data sync service.
 
         Args:
             provider: Market data provider (defaults to YahooFinanceProvider)
             fx_service: FX rate service (defaults to new FXRateService with same provider)
+            settings_service: Portfolio settings service (defaults to new instance)
+            proxy_mapping_service: Proxy mapping service (defaults to new instance)
             staleness_threshold_hours: Hours after which data is stale (default: 24)
         """
         self._provider = provider or YahooFinanceProvider()
         self._fx_service = fx_service or FXRateService(provider=self._provider)
+        self._settings_service = settings_service or PortfolioSettingsService()
+        self._proxy_mapping_service = proxy_mapping_service or ProxyMappingService()
         self._staleness_threshold_hours = (
                 staleness_threshold_hours or self.DEFAULT_STALENESS_HOURS
         )
@@ -207,9 +222,12 @@ class MarketDataSyncService:
         This is the main entry point. It:
         1. Sets sync status to IN_PROGRESS
         2. Analyzes portfolio (assets, dates, currencies)
+        2b. Check backcasting settings (NEW)
+        2c. Apply proxy mappings if enabled (NEW)
         3. Fetches missing price data for each asset
         4. Fetches missing FX rates
-        5. Updates sync status to COMPLETED/PARTIAL/FAILED
+        5. Backcast with proxies if enabled (NEW)
+        6. Updates sync status to COMPLETED/PARTIAL/FAILED
 
         Args:
             db: Database session
@@ -253,6 +271,28 @@ class MarketDataSyncService:
             result.from_date = analysis.earliest_date
             result.to_date = analysis.latest_date
 
+            # 2b. Check backcasting setting
+            backcasting_enabled = self._settings_service.is_backcasting_enabled(
+                db, portfolio_id
+            )
+            result.backcasting_enabled = backcasting_enabled
+
+            # 2c. Apply proxy mappings if backcasting enabled
+            if backcasting_enabled:
+                logger.info(f"Applying proxy mappings for portfolio {portfolio_id}")
+                proxy_result = self._proxy_mapping_service.apply_mappings(
+                    db,
+                    [db.get(Asset, a.asset_id) for a in analysis.assets]
+                )
+                result.proxy_mapping_result = proxy_result
+                result.proxies_applied = proxy_result.total_applied
+                result.warnings.extend(proxy_result.warnings)
+
+                if proxy_result.total_applied > 0:
+                    logger.info(
+                        f"Applied {proxy_result.total_applied} proxy mappings"
+                    )
+
             # 3. Sync price data for each asset
             for asset_info in analysis.assets:
                 asset_result = self._sync_asset_prices(
@@ -293,7 +333,49 @@ class MarketDataSyncService:
                             f"{fx_result.errors}"
                         )
 
-            # 5. Determine final status
+            # 4b. Backcast with proxies if enabled
+            if backcasting_enabled:
+                total_synthetic = 0
+                assets_backcast_count = 0
+
+                for asset_info in analysis.assets:
+                    # Reload asset to get proxy_asset_id (may have been set by mapping)
+                    asset = db.get(Asset, asset_info.asset_id)
+                    if asset and asset.proxy_asset_id:
+                        # Detect gap in real price data
+                        gap_start, gap_end = self._detect_price_gap(
+                            db, asset.id, asset_info.first_transaction_date
+                        )
+
+                        if gap_start and gap_end:
+                            # Ensure proxy has data for the gap period
+                            if self._ensure_proxy_data(
+                                    db, asset.proxy_asset_id, gap_start, gap_end
+                            ):
+                                # Generate synthetic prices
+                                created = self._backcast_with_proxy(
+                                    db, asset.id, asset.proxy_asset_id,
+                                    gap_start, gap_end
+                                )
+                                if created > 0:
+                                    total_synthetic += created
+                                    assets_backcast_count += 1
+                                    logger.info(
+                                        f"Backcast {asset.ticker}: "
+                                        f"{created} synthetic prices "
+                                        f"({gap_start} to {gap_end})"
+                                    )
+
+                result.synthetic_prices_created = total_synthetic
+                result.assets_backcast = assets_backcast_count
+
+                if total_synthetic > 0:
+                    result.warnings.append(
+                        f"Generated {total_synthetic} synthetic prices for "
+                        f"{assets_backcast_count} asset(s) using proxy backcasting"
+                    )
+
+            # 5. Determine final status  (was step 5, now renumbered)
             result.sync_completed = datetime.now(timezone.utc)
 
             if result.assets_failed == 0:
@@ -326,6 +408,7 @@ class MarketDataSyncService:
                 f"assets={result.assets_synced}/{len(analysis.assets)}, "
                 f"prices={result.prices_fetched}, "
                 f"fx_pairs={result.fx_pairs_synced}"
+                f"{f', synthetic={result.synthetic_prices_created}' if result.synthetic_prices_created else ''}"
             )
 
             return result
@@ -1113,22 +1196,34 @@ class MarketDataSyncService:
 
         return True
 
-    def _get_backcasting_enabled(self, db: Session, portfolio_id: int) -> bool:
+    def _detect_price_gap(
+            self,
+            db: Session,
+            asset_id: int,
+            first_transaction_date: date,
+    ) -> tuple[date | None, date | None]:
         """
-        Check if proxy backcasting is enabled for this portfolio.
+        Detect if there's a gap in price data before the first available price.
 
-        Returns False if:
-        - No PortfolioSettings record exists
-        - enable_proxy_backcasting is False
+        Returns:
+            Tuple of (gap_start, gap_end) or (None, None) if no gap
         """
-        from app.models import PortfolioSettings
-
-        settings = db.execute(
-            select(PortfolioSettings)
-            .where(PortfolioSettings.portfolio_id == portfolio_id)
+        # Find earliest price we have
+        earliest_price = db.execute(
+            select(func.min(MarketData.date))
+            .where(
+                MarketData.asset_id == asset_id,
+                MarketData.is_synthetic == False,  # Only real prices
+            )
         ).scalar()
 
-        if settings is None:
-            return False  # Default: backcasting disabled
+        if earliest_price is None:
+            # No prices at all - gap is entire history
+            return first_transaction_date, date.today()
 
-        return settings.enable_proxy_backcasting
+        if earliest_price > first_transaction_date:
+            # Gap exists between first transaction and first price
+            return first_transaction_date, earliest_price - timedelta(days=1)
+
+        # No gap
+        return None, None

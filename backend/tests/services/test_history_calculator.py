@@ -60,6 +60,23 @@ class MockTransaction:
 
 
 # =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def make_price_map(
+        prices: dict[tuple[int, date], Decimal]
+) -> dict[tuple[int, date], tuple[Decimal, bool, int | None]]:
+    """
+    Convert simple price dict to full format with synthetic metadata.
+
+    This helper makes tests cleaner by allowing simple price definitions
+    while still working with the updated price_map format that includes
+    (price, is_synthetic, proxy_source_id) tuples.
+    """
+    return {k: (v, False, None) for k, v in prices.items()}
+
+
+# =============================================================================
 # FIXTURES
 # =============================================================================
 
@@ -221,10 +238,11 @@ class TestRollingStateAlgorithm:
         target_dates = [date(2024, 1, 15), date(2024, 1, 25)]
 
         # Mock price lookup - constant price for simplicity
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 15)): Decimal("105"),
             (1, date(2024, 1, 25)): Decimal("115"),
-        }
+        })
 
         # Run rolling state calculation
         data_points = history_calc._calculate_history_rolling(
@@ -285,10 +303,11 @@ class TestRollingStateAlgorithm:
         assets = {1: aapl_asset}
         target_dates = [date(2024, 1, 15), date(2024, 1, 31)]
 
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 15)): Decimal("110"),
             (1, date(2024, 1, 31)): Decimal("115"),
-        }
+        })
 
         data_points = history_calc._calculate_history_rolling(
             transactions=transactions,
@@ -350,9 +369,10 @@ class TestRollingStateAlgorithm:
         assets = {1: aapl_asset}
         target_dates = [date(2024, 1, 15)]
 
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 15)): Decimal("50"),
-        }
+        })
 
         data_points = history_calc._calculate_history_rolling(
             transactions=transactions,
@@ -406,10 +426,11 @@ class TestCashTrackingInHistory:
         assets = {1: aapl_asset}
         target_dates = [date(2024, 1, 5), date(2024, 1, 15)]
 
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 5)): Decimal("100"),  # Won't be used (no holdings yet)
             (1, date(2024, 1, 15)): Decimal("110"),
-        }
+        })
 
         data_points = history_calc._calculate_history_rolling(
             transactions=transactions,
@@ -450,9 +471,10 @@ class TestCashTrackingInHistory:
         assets = {1: aapl_asset}
         target_dates = [date(2024, 1, 15)]
 
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 15)): Decimal("110"),
-        }
+        })
 
         data_points = history_calc._calculate_history_rolling(
             transactions=transactions,
@@ -480,46 +502,74 @@ class TestPriceFallback:
     def test_price_fallback_within_limit(self, history_calc):
         """Price lookup should fall back to previous days within limit."""
         # Price only on Jan 10
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 10)): Decimal("150.00"),
-        }
+        })
 
         # Lookup for Jan 12 (Saturday) should fall back to Jan 10
-        price, price_date = history_calc._lookup_price_with_fallback(
+        # Updated: now returns 4 values
+        price, price_date, is_synthetic, proxy_source_id = history_calc._lookup_price_with_fallback(
             price_map, asset_id=1, target_date=date(2024, 1, 12)
         )
 
         assert price == Decimal("150.00")
         assert price_date == date(2024, 1, 10)
+        assert is_synthetic is False
+        assert proxy_source_id is None
 
     def test_price_fallback_beyond_limit_returns_none(self, history_calc):
         """Price lookup beyond fallback limit should return None."""
         # Price only on Jan 1
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 1)): Decimal("150.00"),
-        }
+        })
 
         # Lookup for Jan 15 (14 days later) should fail
-        price, price_date = history_calc._lookup_price_with_fallback(
+        # Updated: now returns 4 values
+        price, price_date, is_synthetic, proxy_source_id = history_calc._lookup_price_with_fallback(
             price_map, asset_id=1, target_date=date(2024, 1, 15)
         )
 
         assert price is None
         assert price_date is None
+        assert is_synthetic is False
+        assert proxy_source_id is None
 
     def test_exact_date_match_no_fallback(self, history_calc):
         """Exact date match should not use fallback."""
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, date(2024, 1, 15)): Decimal("155.00"),
             (1, date(2024, 1, 14)): Decimal("150.00"),  # Previous day
-        }
+        })
 
-        price, price_date = history_calc._lookup_price_with_fallback(
+        # Updated: now returns 4 values
+        price, price_date, is_synthetic, proxy_source_id = history_calc._lookup_price_with_fallback(
             price_map, asset_id=1, target_date=date(2024, 1, 15)
         )
 
         assert price == Decimal("155.00")  # Not the fallback
         assert price_date == date(2024, 1, 15)  # Exact match
+        assert is_synthetic is False
+        assert proxy_source_id is None
+
+    def test_synthetic_price_metadata_preserved(self, history_calc):
+        """Synthetic price metadata should be preserved through lookup."""
+        # Create a price map with synthetic data
+        price_map = {
+            (1, date(2024, 1, 15)): (Decimal("155.00"), True, 42),  # is_synthetic=True, proxy_source_id=42
+        }
+
+        price, price_date, is_synthetic, proxy_source_id = history_calc._lookup_price_with_fallback(
+            price_map, asset_id=1, target_date=date(2024, 1, 15)
+        )
+
+        assert price == Decimal("155.00")
+        assert price_date == date(2024, 1, 15)
+        assert is_synthetic is True
+        assert proxy_source_id == 42
 
 
 # =============================================================================
@@ -575,9 +625,10 @@ class TestAlgorithmComplexity:
         ]
 
         # Prices at each date
-        price_map = {
+        # Updated format: (price, is_synthetic, proxy_source_id)
+        price_map = make_price_map({
             (1, d): Decimal("100") for d in target_dates
-        }
+        })
 
         data_points = history_calc._calculate_history_rolling(
             transactions=transactions,

@@ -160,9 +160,15 @@ def calculate_twr(daily_values: list[DailyValue]) -> Decimal | None:
         curr_value = sorted_values[i].value  # V_end (today's end value)
         cash_flow = sorted_values[i].cash_flow  # CF (cash flow today)
 
-        # Skip if previous value is zero or negative
+        # Skip if previous value is zero or negative (handles start of liquidation gap)
         if prev_value <= 0:
-            logger.warning(f"TWR: Invalid previous value at {sorted_values[i].date}")
+            logger.debug(f"TWR: Skipping date {sorted_values[i].date} - previous value is zero/negative")
+            continue
+
+        # Skip if current value is zero or negative (handles end of liquidation gap)
+        # This prevents -100% return when portfolio is fully liquidated
+        if curr_value <= 0:
+            logger.debug(f"TWR: Skipping date {sorted_values[i].date} - current value is zero/negative")
             continue
 
         # Daily Linking Method: r = (V_end - CF) / V_start - 1

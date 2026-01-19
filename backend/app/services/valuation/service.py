@@ -321,6 +321,10 @@ class ValuationService:
                 "Some holdings or cash have incomplete price or FX data"
             )
 
+        # Aggregate synthetic data stats from holdings
+        has_synthetic = any(h.price_is_synthetic for h in holdings)
+        synthetic_count = sum(1 for h in holdings if h.price_is_synthetic)
+
         return PortfolioValuation(
             portfolio_id=portfolio_id,
             portfolio_name=portfolio.name,
@@ -353,6 +357,8 @@ class ValuationService:
             ),
             warnings=portfolio_warnings,
             has_complete_data=all_complete,
+            has_synthetic_data=has_synthetic,
+            synthetic_holdings_count=synthetic_count,
         )
 
     def get_holdings(
@@ -536,9 +542,18 @@ class ValuationService:
         cost_basis = self._cost_calc.calculate(position, portfolio_currency)
 
         # Get price (with fallback for weekends/holidays)
-        price, price_date = self._get_price_with_fallback(
+        price, price_date, is_synthetic, proxy_source_id = self._get_price_with_fallback(
             db, position.asset_id, valuation_date
         )
+
+        # Get proxy ticker if synthetic
+        proxy_ticker: str | None = None
+        proxy_exchange: str | None = None
+        if is_synthetic and proxy_source_id:
+            proxy_asset = db.get(Asset, proxy_source_id)
+            if proxy_asset:
+                proxy_ticker = proxy_asset.ticker
+                proxy_exchange = proxy_asset.exchange
 
         # Current value
         current_value = self._value_calc.calculate(
@@ -583,6 +598,14 @@ class ValuationService:
 
         has_complete_data = current_value.has_complete_data
 
+        # Determine price source
+        if price is None:
+            price_source = "unavailable"
+        elif is_synthetic:
+            price_source = "proxy_backcast"
+        else:
+            price_source = "market"
+
         return HoldingValuation(
             asset_id=position.asset_id,
             ticker=position.asset.ticker,
@@ -595,6 +618,10 @@ class ValuationService:
             pnl=pnl,
             warnings=warnings,
             has_complete_data=has_complete_data,
+            price_is_synthetic=is_synthetic,
+            price_source=price_source,
+            proxy_ticker=proxy_ticker,
+            proxy_exchange=proxy_exchange,
         )
 
     def _get_price_with_fallback(
@@ -602,14 +629,15 @@ class ValuationService:
             db: Session,
             asset_id: int,
             target_date: date,
-    ) -> tuple[Decimal | None, date | None]:
+    ) -> tuple[Decimal | None, date | None, bool, int | None]:
         """
         Get market price with fallback for weekends/holidays.
 
         Looks back up to PRICE_FALLBACK_DAYS for the most recent price.
 
         Returns:
-            Tuple of (price, price_date) - both None if not found
+            Tuple of (price, price_date, is_synthetic, proxy_source_id)
+            All None if not found within fallback window.
         """
         # Try each date from target back to fallback limit
         for days_back in range(self.PRICE_FALLBACK_DAYS + 1):
@@ -631,6 +659,11 @@ class ValuationService:
                     if hasattr(price_record.date, 'date')
                     else price_record.date
                 )
-                return price_record.close_price, record_date
+                return (
+                    price_record.close_price,
+                    record_date,
+                    price_record.is_synthetic,
+                    price_record.proxy_source_id,
+                )
 
-        return None, None
+        return None, None, False, None

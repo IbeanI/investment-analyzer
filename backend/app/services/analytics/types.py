@@ -373,3 +373,10 @@ class AnalyticsResult:
     # Overall data quality
     has_complete_data: bool = True
     warnings: list[str] = field(default_factory=list)
+
+    # Data quality from valuation (transparency)
+    has_synthetic_data: bool = False
+    synthetic_data_percentage: Decimal | None = None
+    synthetic_holdings: dict[str, str | None] = field(default_factory=dict)  # {ticker: proxy_ticker}
+    synthetic_date_range: tuple[date, date] | None = None
+    reliability_notes: list[str] = field(default_factory=list)

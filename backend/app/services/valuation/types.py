@@ -179,6 +179,22 @@ class ValueResult:
         return self.price is not None and self.portfolio_amount is not None
 
 
+@dataclass
+class PriceResult:
+    """
+    Result of fetching a price with quality metadata.
+
+    Tracks whether the price is synthetic (from proxy backcasting)
+    and which proxy asset was used.
+    """
+    price: Decimal | None
+    date: date
+    is_synthetic: bool = False
+    proxy_source_id: int | None = None
+    proxy_ticker: str | None = None
+    proxy_exchange: str | None = None
+
+
 # =============================================================================
 # PROFIT & LOSS
 # =============================================================================
@@ -261,6 +277,12 @@ class HoldingValuation:
     warnings: list[str] = field(default_factory=list)
     has_complete_data: bool = True
 
+    # Synthetic data tracking (for transparency)
+    price_is_synthetic: bool = False
+    price_source: str = "market"  # "market" | "proxy_backcast" | "unavailable"
+    proxy_ticker: str | None = None
+    proxy_exchange: str | None = None
+
 
 # =============================================================================
 # CASH BALANCE
@@ -339,6 +361,10 @@ class PortfolioValuation:
     warnings: list[str] = field(default_factory=list)
     has_complete_data: bool = True
 
+    # Synthetic data summary (for transparency)
+    has_synthetic_data: bool = False
+    synthetic_holdings_count: int = 0
+
     @property
     def total_pnl_percentage(self) -> Decimal | None:
         """Total P&L as percentage of cost basis."""
@@ -384,6 +410,9 @@ class HistoryPoint:
     realized_pnl: Decimal
     total_pnl: Decimal | None
     has_complete_data: bool = True
+    has_synthetic_data: bool = False
+    synthetic_holdings: dict[str, str | None] = field(default_factory=dict)  # {ticker: proxy_ticker}
+    holdings_count: int = 0  # Total holdings on this day (for % calculation)
 
     @property
     def pnl_percentage(self) -> Decimal | None:
@@ -426,6 +455,20 @@ class PortfolioHistory:
     tracks_cash: bool
     data: list[HistoryPoint]
     warnings: list[str] = field(default_factory=list)
+    has_synthetic_data: bool = False
+    synthetic_holdings: dict[str, str | None] = field(default_factory=dict)  # {ticker: proxy_ticker}
+    synthetic_date_range: tuple[date, date] | None = None  # (start, end) when synthetic data used
+    synthetic_lookups: int = 0  # Number of price lookups that were synthetic
+    total_lookups: int = 0  # Total number of price lookups
+
+    @property
+    def synthetic_percentage(self) -> Decimal:
+        """Percentage of price lookups that used synthetic data."""
+        if self.total_lookups == 0:
+            return Decimal("0")
+        return (
+                Decimal(str(self.synthetic_lookups)) / Decimal(str(self.total_lookups)) * Decimal("100")
+        ).quantize(Decimal("0.01"))
 
     @property
     def total_points(self) -> int:

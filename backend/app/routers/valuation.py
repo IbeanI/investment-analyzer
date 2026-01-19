@@ -117,6 +117,10 @@ def _map_holding(holding) -> HoldingValuation:
         pnl=_map_pnl(holding.pnl),
         warnings=holding.warnings,
         has_complete_data=holding.has_complete_data,
+        price_is_synthetic=holding.price_is_synthetic,
+        price_source=holding.price_source,
+        proxy_ticker=holding.proxy_ticker,
+        proxy_exchange=holding.proxy_exchange,
     )
 
 
@@ -154,7 +158,7 @@ def _map_history_point(point) -> ValuationHistoryPoint:
     "/{portfolio_id}/valuation",
     response_model=PortfolioValuationResponse,
     summary="Get portfolio valuation",
-    response_description="Complete portfolio valuation with holdings breakdown"
+    response_description="Complete portfolio valuation with holdings breakdown",
 )
 def get_portfolio_valuation(
         portfolio_id: int,
@@ -220,6 +224,8 @@ def get_portfolio_valuation(
         cash_balances=[_map_cash_balance(c) for c in valuation.cash_balances],
         has_complete_data=valuation.has_complete_data,
         warnings=valuation.warnings,
+        has_synthetic_data=valuation.has_synthetic_data,
+        synthetic_holdings_count=valuation.synthetic_holdings_count,
     )
 
 

@@ -1080,41 +1080,48 @@ class MarketDataSyncService:
         """
         Update or create sync status for a portfolio.
 
-        Uses upsert to handle both insert and update cases.
+        Uses PostgreSQL's INSERT ... ON CONFLICT DO UPDATE for atomic upsert,
+        preventing race conditions under concurrent sync requests.
         """
-        # Check if exists
-        existing = db.scalar(
-            select(SyncStatus).where(SyncStatus.portfolio_id == portfolio_id)
+        # Build the values for insert
+        values = {
+            "portfolio_id": portfolio_id,
+            "status": status,
+            "last_sync_started": sync_started,
+            "last_sync_completed": sync_completed,
+            "coverage_summary": coverage_summary or {},
+            "last_error": last_error if last_error is not None else (
+                None if status == SyncStatusEnum.COMPLETED else None
+            ),
+        }
+
+        # Build update set - only update fields that were explicitly provided
+        update_set = {"status": status}
+        if sync_started is not None:
+            update_set["last_sync_started"] = sync_started
+        if sync_completed is not None:
+            update_set["last_sync_completed"] = sync_completed
+        if coverage_summary is not None:
+            update_set["coverage_summary"] = coverage_summary
+        if last_error is not None:
+            update_set["last_error"] = last_error
+        elif status == SyncStatusEnum.COMPLETED:
+            update_set["last_error"] = None
+
+        # Use PostgreSQL upsert for atomic operation
+        stmt = pg_insert(SyncStatus).values(**values)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["portfolio_id"],
+            set_=update_set,
         )
 
-        if existing:
-            existing.status = status
-            if sync_started:
-                existing.last_sync_started = sync_started
-            if sync_completed:
-                existing.last_sync_completed = sync_completed
-            if coverage_summary is not None:
-                existing.coverage_summary = coverage_summary
-            if last_error is not None:
-                existing.last_error = last_error
-            elif status == SyncStatusEnum.COMPLETED:
-                existing.last_error = None
+        db.execute(stmt)
+        db.commit()
 
-            db.commit()
-            return existing
-        else:
-            new_status = SyncStatus(
-                portfolio_id=portfolio_id,
-                status=status,
-                last_sync_started=sync_started,
-                last_sync_completed=sync_completed,
-                coverage_summary=coverage_summary or {},
-                last_error=last_error,
-            )
-            db.add(new_status)
-            db.commit()
-            db.refresh(new_status)
-            return new_status
+        # Fetch and return the updated/created record
+        return db.scalar(
+            select(SyncStatus).where(SyncStatus.portfolio_id == portfolio_id)
+        )
 
     def _build_coverage_summary(
             self,
@@ -1412,6 +1419,14 @@ class MarketDataSyncService:
 
         anchor_price = anchor.close_price
         anchor_date = anchor.date
+
+        # Guard against invalid anchor price
+        if anchor_price is None or anchor_price == Decimal("0"):
+            logger.warning(
+                f"Anchor price is zero or None for asset {asset_id} "
+                f"on {anchor_date}, cannot calculate scale factor"
+            )
+            return 0
 
         # Get proxy price on anchor date
         proxy_anchor = db.execute(

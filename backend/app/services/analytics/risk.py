@@ -44,6 +44,8 @@ from app.services.constants import (
     ZERO,
     DRAWDOWN_RECORDING_THRESHOLD,
     MIN_EQUITY_THRESHOLD,
+    MIN_DAYS_FOR_VOLATILITY,
+    MIN_VAR_SAMPLE_SIZE,
 )
 
 logger = logging.getLogger(__name__)
@@ -232,7 +234,7 @@ def calculate_daily_returns(daily_values: list[DailyValue]) -> list[Decimal]:
     Returns:
         List of daily returns (one less than input length)
     """
-    if len(daily_values) < 2:
+    if len(daily_values) < MIN_DAYS_FOR_VOLATILITY:
         return []
 
     returns = []
@@ -271,7 +273,7 @@ def _decimal_stdev(values: list[Decimal]) -> Decimal | None:
     Returns:
         Standard deviation as Decimal, or None if insufficient data
     """
-    if len(values) < 2:
+    if len(values) < MIN_DAYS_FOR_VOLATILITY:
         return None
 
     n = Decimal(str(len(values)))
@@ -336,7 +338,7 @@ def calculate_volatility(
     Returns:
         Volatility as decimal (e.g., 0.20 = 20%), or None if insufficient data
     """
-    if len(daily_returns) < 2:
+    if len(daily_returns) < MIN_DAYS_FOR_VOLATILITY:
         return None
 
     vol = _decimal_stdev(daily_returns)
@@ -375,7 +377,7 @@ def calculate_downside_deviation(
     """
     downside_returns = [r for r in daily_returns if r < target_return]
 
-    if len(downside_returns) < 2:
+    if len(downside_returns) < MIN_DAYS_FOR_VOLATILITY:
         return None
 
     # Calculate deviation from target using pure Decimal
@@ -522,7 +524,7 @@ def calculate_drawdowns(
         if dv.value is not None and dv.value >= MIN_EQUITY_THRESHOLD
     ]
 
-    if len(valid_values) < 2:
+    if len(valid_values) < MIN_DAYS_FOR_VOLATILITY:
         return None, None, []
 
     # Sort by date
@@ -650,7 +652,7 @@ def calculate_var(
     Returns:
         VaR as negative decimal (e.g., -0.02 = -2% daily VaR)
     """
-    if len(daily_returns) < 10:
+    if len(daily_returns) < MIN_VAR_SAMPLE_SIZE:
         return None
 
     sorted_returns = sorted(daily_returns)
@@ -765,7 +767,7 @@ class RiskCalculator:
         result = RiskMetrics()
         result.scope = scope
 
-        if len(daily_values) < 2:
+        if len(daily_values) < MIN_DAYS_FOR_VOLATILITY:
             result.has_sufficient_data = False
             result.warnings.append("Insufficient data: need at least 2 data points")
             return result
@@ -821,7 +823,7 @@ class RiskCalculator:
                 period_number=active_period.period_number,
             )
 
-        if len(analysis_values) < 2:
+        if len(analysis_values) < MIN_DAYS_FOR_VOLATILITY:
             result.has_sufficient_data = False
             result.warnings.append("Insufficient data in selected scope")
             return result

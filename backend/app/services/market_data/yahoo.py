@@ -556,7 +556,7 @@ class YahooFinanceProvider(MarketDataProvider):
                 ))
 
             except Exception as e:
-                logger.warning(f"Error parsing row {idx}: {e}")
+                logger.warning(f"Error parsing row {idx}: {e}", exc_info=True)
                 continue
 
         return prices

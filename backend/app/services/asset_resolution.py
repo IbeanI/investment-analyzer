@@ -328,7 +328,7 @@ class AssetResolutionService:
                 for asset in new_assets:
                     result.resolved[(asset.ticker, asset.exchange)] = asset
             except Exception as e:
-                logger.error(f"Failed to create cached assets: {e}")
+                logger.error(f"Failed to create cached assets: {e}", exc_info=True)
                 for info in cached_infos:
                     result.errors[(info.ticker, info.exchange)] = e
 
@@ -351,7 +351,7 @@ class AssetResolutionService:
                 for asset in new_assets:
                     result.resolved[(asset.ticker, asset.exchange)] = asset
             except Exception as e:
-                logger.error(f"Failed to create new assets: {e}")
+                logger.error(f"Failed to create new assets: {e}", exc_info=True)
                 for info in infos_to_create:
                     result.errors[(info.ticker, info.exchange)] = e
 

@@ -175,7 +175,7 @@ class CSVTransactionParser(TransactionFileParser):
         try:
             content = self._read_file_content(file)
         except Exception as e:
-            logger.error(f"Failed to read file {filename}: {e}")
+            logger.error(f"Failed to read file {filename}: {e}", exc_info=True)
             result.errors.append(ParseError(
                 row_number=0,
                 error_type="file_read_error",
@@ -397,7 +397,7 @@ class CSVTransactionParser(TransactionFileParser):
             return parsed_row, None
 
         except Exception as e:
-            logger.warning(f"Unexpected error parsing row {row_number}: {e}")
+            logger.warning(f"Unexpected error parsing row {row_number}: {e}", exc_info=True)
             return None, ParseError(
                 row_number=row_number,
                 error_type="parse_error",

@@ -194,6 +194,39 @@ MIN_DAYS_FOR_DRAWDOWN: int = 5
 
 
 # =============================================================================
+# DECIMAL PRECISION CONSTANTS
+# =============================================================================
+# Standardized precision levels for financial calculations
+# Using named constants prevents typos and ensures consistency
+
+# Currency amounts: 2 decimal places (e.g., $1234.56)
+# Used for: portfolio value, cost basis, P&L amounts, cash balances
+CURRENCY_PRECISION: Decimal = Decimal("0.01")
+
+# Share quantities and FX rates: 8 decimal places
+# Used for: fractional shares, average cost per share, exchange rates
+# Supports crypto (BTC has 8 decimals) and high-precision FX rates
+SHARE_PRECISION: Decimal = Decimal("0.00000001")
+
+# Percentage values: 4 decimal places (e.g., 12.3456%)
+# Used for: drawdown percentages, return percentages in intermediate calculations
+PERCENTAGE_PRECISION: Decimal = Decimal("0.0001")
+
+# Display percentage: 2 decimal places (e.g., 12.34%)
+# Used for: final display of P&L percentages, return percentages
+DISPLAY_PERCENTAGE_PRECISION: Decimal = Decimal("0.01")
+
+
+# =============================================================================
+# RISK CALCULATION THRESHOLDS
+# =============================================================================
+
+# Minimum sample size for Value at Risk (VaR) calculation
+# Need enough data points for statistically meaningful percentile
+MIN_VAR_SAMPLE_SIZE: int = 10
+
+
+# =============================================================================
 # UTILITY CONSTANTS
 # =============================================================================
 

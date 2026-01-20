@@ -384,7 +384,7 @@ class AnalyticsService:
             )
             return valuation.total_cost_basis, valuation.total_realized_pnl
         except Exception as e:
-            logger.warning(f"Could not get valuation data: {e}")
+            logger.warning(f"Could not get valuation data: {e}", exc_info=True)
             return None, None
 
     def get_risk(
@@ -779,7 +779,7 @@ class AnalyticsService:
             return daily_values
 
         except Exception as e:
-            logger.error(f"Error getting daily values: {e}")
+            logger.error(f"Error getting daily values: {e}", exc_info=True)
             return []
 
     def _calculate_cash_flow_amount(

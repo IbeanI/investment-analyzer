@@ -228,7 +228,7 @@ class UploadService:
             result.add_error(0, "parsing", "unsupported_file_type", str(e))
             return result
         except Exception as e:
-            logger.error(f"Parsing error: {e}")
+            logger.error(f"Parsing error: {e}", exc_info=True)
             result.add_error(0, "parsing", "parse_error", str(e))
             return result
 
@@ -255,7 +255,7 @@ class UploadService:
         try:
             resolution_result = self._asset_service.resolve_assets_batch(db, asset_requests)
         except Exception as e:
-            logger.error(f"Resolution failed: {e}")
+            logger.error(f"Resolution failed: {e}", exc_info=True)
             result.add_error(0, "asset_resolution", "resolution_error", str(e))
             return result
 
@@ -356,7 +356,7 @@ class UploadService:
                 logger.info(f"Upload complete. Created: {result.created_count}, Warnings: {len(result.warnings)}")
             except Exception as e:
                 db.rollback()
-                logger.error(f"Save failed: {e}")
+                logger.error(f"Save failed: {e}", exc_info=True)
                 result.add_error(0, "persistence", "database_error", str(e))
 
         return result

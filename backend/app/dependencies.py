@@ -28,6 +28,7 @@ from functools import lru_cache
 from app.services.asset_resolution import AssetResolutionService
 from app.services.analytics.service import AnalyticsService
 from app.services.market_data.sync_service import MarketDataSyncService
+from app.services.market_data.yahoo import YahooFinanceProvider
 from app.services.valuation.service import ValuationService
 from app.services.fx_rate_service import FXRateService
 
@@ -39,6 +40,50 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Using @lru_cache ensures the function returns the same instance on every call
 # This is a clean pattern for lazy singleton initialization in Python
+#
+# Order matters: define dependencies before dependents
+# 1. get_market_data_provider (no deps)
+# 2. get_fx_rate_service (depends on provider)
+# 3. get_asset_resolution_service (depends on provider)
+# 4. get_valuation_service (depends on fx_service)
+# 5. get_analytics_service (depends on valuation_service)
+# 6. get_sync_service (depends on provider, fx_service)
+
+
+@lru_cache(maxsize=1)
+def get_market_data_provider() -> YahooFinanceProvider:
+    """
+    Get the singleton market data provider instance.
+
+    Shares the provider (and its circuit breaker) across all services,
+    ensuring rate limits are respected globally.
+    """
+    logger.debug("Initializing singleton YahooFinanceProvider")
+    return YahooFinanceProvider()
+
+
+@lru_cache(maxsize=1)
+def get_fx_rate_service() -> FXRateService:
+    """
+    Get the singleton FXRateService instance.
+
+    Shares the FX rate provider and cache across all requests.
+    """
+    logger.debug("Initializing singleton FXRateService")
+    return FXRateService(provider=get_market_data_provider())
+
+
+@lru_cache(maxsize=1)
+def get_asset_resolution_service() -> AssetResolutionService:
+    """
+    Get the singleton AssetResolutionService instance.
+
+    Shares the LRU cache for resolved assets across all requests,
+    reducing database lookups and external API calls.
+    Uses the shared provider to ensure circuit breaker state is consistent.
+    """
+    logger.debug("Initializing singleton AssetResolutionService")
+    return AssetResolutionService(provider=get_market_data_provider())
 
 
 @lru_cache(maxsize=1)
@@ -47,9 +92,10 @@ def get_valuation_service() -> ValuationService:
     Get the singleton ValuationService instance.
 
     Used by routers and other services for portfolio valuation.
+    Uses the shared FX service to ensure circuit breaker state is consistent.
     """
     logger.debug("Initializing singleton ValuationService")
-    return ValuationService()
+    return ValuationService(fx_service=get_fx_rate_service())
 
 
 @lru_cache(maxsize=1)
@@ -61,31 +107,7 @@ def get_analytics_service() -> AnalyticsService:
     works correctly and avoiding redundant computations.
     """
     logger.debug("Initializing singleton AnalyticsService")
-    # Use the singleton valuation service
     return AnalyticsService(valuation_service=get_valuation_service())
-
-
-@lru_cache(maxsize=1)
-def get_asset_resolution_service() -> AssetResolutionService:
-    """
-    Get the singleton AssetResolutionService instance.
-
-    Shares the LRU cache for resolved assets across all requests,
-    reducing database lookups and external API calls.
-    """
-    logger.debug("Initializing singleton AssetResolutionService")
-    return AssetResolutionService()
-
-
-@lru_cache(maxsize=1)
-def get_fx_rate_service() -> FXRateService:
-    """
-    Get the singleton FXRateService instance.
-
-    Shares the FX rate provider and cache across all requests.
-    """
-    logger.debug("Initializing singleton FXRateService")
-    return FXRateService()
 
 
 @lru_cache(maxsize=1)
@@ -98,8 +120,10 @@ def get_sync_service() -> MarketDataSyncService:
     are respected globally.
     """
     logger.debug("Initializing singleton MarketDataSyncService")
-    # Use the singleton FX service
-    return MarketDataSyncService(fx_service=get_fx_rate_service())
+    return MarketDataSyncService(
+        provider=get_market_data_provider(),
+        fx_service=get_fx_rate_service(),
+    )
 
 
 # =============================================================================
@@ -113,9 +137,10 @@ def clear_service_caches() -> None:
     Useful for testing or when you need to reset state.
     """
     # Clear the LRU caches (this will cause new instances to be created on next call)
+    get_market_data_provider.cache_clear()
+    get_fx_rate_service.cache_clear()
+    get_asset_resolution_service.cache_clear()
     get_valuation_service.cache_clear()
     get_analytics_service.cache_clear()
-    get_asset_resolution_service.cache_clear()
-    get_fx_rate_service.cache_clear()
     get_sync_service.cache_clear()
     logger.info("Cleared all service singleton caches")

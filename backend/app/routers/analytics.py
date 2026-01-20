@@ -43,7 +43,6 @@ from app.schemas.analytics import (
 )
 from app.services.analytics import (
     AnalyticsService,
-    BenchmarkNotSyncedError,
     PerformanceMetrics,
     RiskMetrics,
     BenchmarkMetrics,
@@ -368,26 +367,16 @@ def get_portfolio_analytics(
             detail=f"Invalid scope '{scope}'. Must be 'current_period' or 'full_history'"
         )
 
-    # Get analytics from service
-    try:
-        result = service.get_analytics(
-            db=db,
-            portfolio_id=portfolio_id,
-            start_date=from_date,
-            end_date=to_date,
-            benchmark_symbol=benchmark_symbol,
-            risk_free_rate=risk_free_rate,
-            scope=scope,
-        )
-    except BenchmarkNotSyncedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "BenchmarkNotSynced",
-                "message": e.message,
-                "benchmark_symbol": e.symbol,
-            }
-        )
+    # Get analytics from service (BenchmarkNotSyncedError handled by global handler)
+    result = service.get_analytics(
+        db=db,
+        portfolio_id=portfolio_id,
+        start_date=from_date,
+        end_date=to_date,
+        benchmark_symbol=benchmark_symbol,
+        risk_free_rate=risk_free_rate,
+        scope=scope,
+    )
 
     # Map to response schema
     return AnalyticsResponse(
@@ -634,25 +623,15 @@ def get_portfolio_benchmark(
     # Validate inputs
     _validate_date_range(from_date, to_date)
 
-    # Get benchmark from service
-    try:
-        benchmark = service.get_benchmark(
-            db=db,
-            portfolio_id=portfolio_id,
-            start_date=from_date,
-            end_date=to_date,
-            benchmark_symbol=benchmark_symbol,
-            risk_free_rate=risk_free_rate,
-        )
-    except BenchmarkNotSyncedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={
-                "error": "BenchmarkNotSynced",
-                "message": e.message,
-                "benchmark_symbol": e.symbol,
-            }
-        )
+    # Get benchmark from service (BenchmarkNotSyncedError handled by global handler)
+    benchmark = service.get_benchmark(
+        db=db,
+        portfolio_id=portfolio_id,
+        start_date=from_date,
+        end_date=to_date,
+        benchmark_symbol=benchmark_symbol,
+        risk_free_rate=risk_free_rate,
+    )
 
     # Build period info
     period = PeriodInfo(

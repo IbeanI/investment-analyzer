@@ -291,7 +291,9 @@ class TestGetValuationEndpoint:
         response = client.get("/portfolios/99999/valuation")
 
         assert response.status_code == 404
-        assert "not found" in response.json()["detail"].lower()
+        data = response.json()
+        assert data["error"] == "NotFoundError"
+        assert "not found" in data["message"].lower()
 
     def test_valuation_defaults_to_today_without_date_param(
             self, client: TestClient, test_db: Session
@@ -441,7 +443,9 @@ class TestGetValuationHistoryEndpoint:
         )
 
         assert response.status_code == 400
-        assert "before" in response.json()["detail"].lower()
+        data = response.json()
+        assert data["error"] == "BadRequestError"
+        assert "before" in data["message"].lower()
 
     def test_history_validates_interval_parameter(
             self, client: TestClient, test_db: Session

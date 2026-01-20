@@ -14,7 +14,8 @@ This file:
 
 import logging
 
-from fastapi import FastAPI, Depends, Request
+from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -31,7 +32,7 @@ from app.routers import (
     analytics_router,
 )
 from app.routers.portfolio_settings import router as portfolio_settings_router
-from app.schemas.errors import ErrorDetail
+from app.schemas.errors import ErrorDetail, ValidationErrorDetail
 from app.services.exceptions import (
     ServiceError,
     AssetNotFoundError,
@@ -41,6 +42,7 @@ from app.services.exceptions import (
     RateLimitError,
     MarketDataError,
 )
+from app.services.analytics.service import BenchmarkNotSyncedError
 from app.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -164,6 +166,84 @@ async def service_error_handler(request: Request, exc: ServiceError) -> JSONResp
             error="ServiceError",
             message=str(exc),
             details=None,
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(BenchmarkNotSyncedError)
+async def benchmark_not_synced_handler(
+    request: Request, exc: BenchmarkNotSyncedError
+) -> JSONResponse:
+    """Handle benchmark not synced errors (400)."""
+    logger.warning(f"Benchmark not synced: {exc.symbol}")
+    return JSONResponse(
+        status_code=400,
+        content=ErrorDetail(
+            error="BenchmarkNotSyncedError",
+            message=exc.message,
+            details={"benchmark_symbol": exc.symbol},
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """
+    Handle all HTTPExceptions with consistent error format.
+
+    Converts FastAPI's default {"detail": "..."} format to our standard
+    ErrorDetail format for API consistency.
+    """
+    # Determine error type from status code
+    error_types = {
+        400: "BadRequestError",
+        401: "UnauthorizedError",
+        403: "ForbiddenError",
+        404: "NotFoundError",
+        405: "MethodNotAllowedError",
+        409: "ConflictError",
+        422: "ValidationError",
+        429: "RateLimitError",
+        500: "InternalServerError",
+        503: "ServiceUnavailableError",
+    }
+    error_type = error_types.get(exc.status_code, "HTTPError")
+
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorDetail(
+            error=error_type,
+            message=str(exc.detail) if exc.detail else "An error occurred",
+            details=None,
+        ).model_dump(),
+        headers=exc.headers,
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """
+    Handle Pydantic validation errors with consistent format.
+
+    Converts the default 422 validation error to our ValidationErrorDetail format.
+    """
+    # Extract validation errors in a cleaner format
+    errors = []
+    for error in exc.errors():
+        errors.append({
+            "field": ".".join(str(loc) for loc in error["loc"]),
+            "message": error["msg"],
+            "type": error["type"],
+        })
+
+    return JSONResponse(
+        status_code=422,
+        content=ValidationErrorDetail(
+            error="ValidationError",
+            message="Request validation failed",
+            details=errors,
         ).model_dump(),
     )
 

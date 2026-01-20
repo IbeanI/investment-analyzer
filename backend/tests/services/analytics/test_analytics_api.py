@@ -394,8 +394,8 @@ class TestGetAnalyticsEndpoint:
 
         assert response.status_code == 400
         data = response.json()
-        assert "detail" in data
-        assert data["detail"]["error"] == "BenchmarkNotSynced"
+        assert data["error"] == "BenchmarkNotSyncedError"
+        assert "benchmark_symbol" in data["details"]
 
 
 # =============================================================================
@@ -607,7 +607,7 @@ class TestGetBenchmarkEndpoint:
         assert response.status_code in (200, 400)
         if response.status_code == 400:
             data = response.json()
-            assert data["detail"]["error"] == "BenchmarkNotSynced"
+            assert data["error"] == "BenchmarkNotSyncedError"
 
 
 # =============================================================================

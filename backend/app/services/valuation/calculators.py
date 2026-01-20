@@ -624,6 +624,38 @@ class CashCalculator:
             for txn in transactions
         )
 
+    @staticmethod
+    def _get_transaction_cash_delta(txn: Transaction) -> Decimal:
+        """
+        Calculate the cash balance change for a transaction.
+
+        Returns a signed amount: positive increases cash, negative decreases.
+
+        Args:
+            txn: Transaction to process
+
+        Returns:
+            Decimal amount to add to cash balance (can be negative)
+        """
+        if txn.transaction_type == TransactionType.DEPOSIT:
+            # DEPOSIT: Add cash (amount = qty × price - fee)
+            return (txn.quantity * txn.price_per_share) - txn.fee
+
+        elif txn.transaction_type == TransactionType.WITHDRAWAL:
+            # WITHDRAWAL: Remove cash (amount = qty × price + fee)
+            return -((txn.quantity * txn.price_per_share) + txn.fee)
+
+        elif txn.transaction_type == TransactionType.BUY:
+            # BUY: Remove cash for the purchase
+            return -((txn.quantity * txn.price_per_share) + txn.fee)
+
+        elif txn.transaction_type == TransactionType.SELL:
+            # SELL: Add cash from sale proceeds
+            return (txn.quantity * txn.price_per_share) - txn.fee
+
+        # DIVIDEND or other types: no cash impact (handled separately)
+        return Decimal("0")
+
     def calculate(
             self,
             transactions: list[Transaction],
@@ -648,25 +680,7 @@ class CashCalculator:
             if currency not in cash_balances:
                 cash_balances[currency] = Decimal("0")
 
-            if txn.transaction_type == TransactionType.DEPOSIT:
-                # DEPOSIT: Add cash (amount = qty × price - fee)
-                amount = (txn.quantity * txn.price_per_share) - txn.fee
-                cash_balances[currency] += amount
-
-            elif txn.transaction_type == TransactionType.WITHDRAWAL:
-                # WITHDRAWAL: Remove cash (amount = qty × price + fee)
-                amount = (txn.quantity * txn.price_per_share) + txn.fee
-                cash_balances[currency] -= amount
-
-            elif txn.transaction_type == TransactionType.BUY:
-                # BUY: Remove cash for the purchase
-                cost = (txn.quantity * txn.price_per_share) + txn.fee
-                cash_balances[currency] -= cost
-
-            elif txn.transaction_type == TransactionType.SELL:
-                # SELL: Add cash from sale proceeds
-                proceeds = (txn.quantity * txn.price_per_share) - txn.fee
-                cash_balances[currency] += proceeds
+            cash_balances[currency] += self._get_transaction_cash_delta(txn)
 
         # Remove zero balances and round
         return {
@@ -694,18 +708,4 @@ class CashCalculator:
         if currency not in current_cash:
             current_cash[currency] = Decimal("0")
 
-        if transaction.transaction_type == TransactionType.DEPOSIT:
-            amount = (transaction.quantity * transaction.price_per_share) - transaction.fee
-            current_cash[currency] += amount
-
-        elif transaction.transaction_type == TransactionType.WITHDRAWAL:
-            amount = (transaction.quantity * transaction.price_per_share) + transaction.fee
-            current_cash[currency] -= amount
-
-        elif transaction.transaction_type == TransactionType.BUY:
-            cost = (transaction.quantity * transaction.price_per_share) + transaction.fee
-            current_cash[currency] -= cost
-
-        elif transaction.transaction_type == TransactionType.SELL:
-            proceeds = (transaction.quantity * transaction.price_per_share) - transaction.fee
-            current_cash[currency] += proceeds
+        current_cash[currency] += self._get_transaction_cash_delta(transaction)

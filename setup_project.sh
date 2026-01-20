@@ -299,6 +299,19 @@ else
     print_warn "Database: Connection may still be initializing"
 fi
 
+# -----------------------------------------------------------------------------
+# Step 9: Seed Test User
+# -----------------------------------------------------------------------------
+print_step "Seeding test user..."
+
+docker-compose exec -T investment_db psql -U admin -d investment_portfolio -c "
+INSERT INTO users (email, hashed_password, created_at, updated_at)
+VALUES ('test_user@test.com', 'test_password', NOW(), NOW())
+ON CONFLICT (email) DO NOTHING;"
+
+print_success "Test user 'test_user@test.com' created (or already exists)"
+
+
 # =============================================================================
 # FINAL OUTPUT
 # =============================================================================

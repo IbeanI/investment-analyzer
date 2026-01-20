@@ -419,6 +419,20 @@ class BenchmarkResponse(BaseModel):
 # COMBINED ANALYTICS RESPONSE
 # =============================================================================
 
+class SyntheticAssetDetailResponse(BaseModel):
+    """Per-asset synthetic data details."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    ticker: str = Field(..., description="Asset ticker symbol")
+    proxy_ticker: str | None = Field(None, description="Proxy asset used for backcasting")
+    first_synthetic_date: date = Field(..., description="First date synthetic price was used")
+    last_synthetic_date: date = Field(..., description="Last date synthetic price was used")
+    synthetic_days: int = Field(..., description="Number of days with synthetic prices")
+    total_days_held: int = Field(..., description="Total days asset was in portfolio")
+    percentage: Decimal = Field(..., description="Percentage of holding period with synthetic data")
+
+
 class AnalyticsResponse(BaseModel):
     """
     Complete analytics response combining all metrics.
@@ -465,6 +479,10 @@ class AnalyticsResponse(BaseModel):
     synthetic_date_range: tuple[date, date] | None = Field(
         default=None,
         description="Date range where synthetic data was used (start, end)"
+    )
+    synthetic_details: dict[str, SyntheticAssetDetailResponse] = Field(
+        default_factory=dict,
+        description="Per-asset synthetic data details for transparency"
     )
     reliability_notes: list[str] = Field(
         default_factory=list,

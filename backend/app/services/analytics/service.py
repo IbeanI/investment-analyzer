@@ -691,6 +691,20 @@ class AnalyticsService:
                 (benchmark is None or benchmark.has_sufficient_data)
         )
 
+        # Convert SyntheticAssetDetail objects to dicts for JSON serialization
+        synthetic_details_dict: dict[str, dict] = {}
+        if history.has_synthetic_data and hasattr(history, 'synthetic_details') and history.synthetic_details:
+            for ticker, detail in history.synthetic_details.items():
+                synthetic_details_dict[ticker] = {
+                    "ticker": detail.ticker,
+                    "proxy_ticker": detail.proxy_ticker,
+                    "first_synthetic_date": detail.first_synthetic_date,
+                    "last_synthetic_date": detail.last_synthetic_date,
+                    "synthetic_days": detail.synthetic_days,
+                    "total_days_held": detail.total_days_held,
+                    "percentage": detail.percentage,
+                }
+
         # Build result with data quality info from history
         result = AnalyticsResult(
             portfolio_id=portfolio_id,
@@ -706,6 +720,7 @@ class AnalyticsService:
             synthetic_data_percentage=history.synthetic_percentage if history.has_synthetic_data else None,
             synthetic_holdings=history.synthetic_holdings if history.has_synthetic_data else {},
             synthetic_date_range=history.synthetic_date_range,
+            synthetic_details=synthetic_details_dict,
             reliability_notes=self._generate_reliability_notes(
                 history.synthetic_percentage
             ) if history.has_synthetic_data else [],

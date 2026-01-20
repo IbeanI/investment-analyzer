@@ -379,4 +379,5 @@ class AnalyticsResult:
     synthetic_data_percentage: Decimal | None = None
     synthetic_holdings: dict[str, str | None] = field(default_factory=dict)  # {ticker: proxy_ticker}
     synthetic_date_range: tuple[date, date] | None = None
+    synthetic_details: dict[str, dict] = field(default_factory=dict)  # Per-asset details
     reliability_notes: list[str] = field(default_factory=list)

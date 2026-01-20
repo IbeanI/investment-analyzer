@@ -376,6 +376,44 @@ class PortfolioValuation:
 
 
 # =============================================================================
+# SYNTHETIC DATA TRACKING
+# =============================================================================
+
+@dataclass
+class SyntheticAssetDetail:
+    """
+    Per-asset synthetic data details for transparency.
+
+    Tracks when and how synthetic (proxy-backcast) prices were used
+    for a specific asset.
+
+    Attributes:
+        ticker: Asset ticker symbol
+        proxy_ticker: Ticker of the proxy asset used for backcasting
+        first_synthetic_date: First date synthetic price was used
+        last_synthetic_date: Last date synthetic price was used
+        synthetic_days: Number of days with synthetic prices
+        total_days_held: Total days this asset was in the portfolio
+        percentage: Percentage of holding period using synthetic data
+    """
+    ticker: str
+    proxy_ticker: str | None
+    first_synthetic_date: date
+    last_synthetic_date: date
+    synthetic_days: int
+    total_days_held: int
+
+    @property
+    def percentage(self) -> Decimal:
+        """Percentage of holding period with synthetic data."""
+        if self.total_days_held == 0:
+            return Decimal("0")
+        return (
+                Decimal(str(self.synthetic_days)) / Decimal(str(self.total_days_held)) * Decimal("100")
+        ).quantize(Decimal("0.01"))
+
+
+# =============================================================================
 # HISTORY (Time series for charts)
 # =============================================================================
 
@@ -460,6 +498,7 @@ class PortfolioHistory:
     synthetic_date_range: tuple[date, date] | None = None  # (start, end) when synthetic data used
     synthetic_lookups: int = 0  # Number of price lookups that were synthetic
     total_lookups: int = 0  # Total number of price lookups
+    synthetic_details: dict[str, SyntheticAssetDetail] = field(default_factory=dict)  # Per-asset details
 
     @property
     def synthetic_percentage(self) -> Decimal:

@@ -402,6 +402,7 @@ def get_portfolio_analytics(
         synthetic_data_percentage=result.synthetic_data_percentage,
         synthetic_holdings=result.synthetic_holdings,
         synthetic_date_range=result.synthetic_date_range,
+        synthetic_details=result.synthetic_details,
         reliability_notes=result.reliability_notes,
     )
 

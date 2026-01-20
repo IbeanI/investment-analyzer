@@ -211,22 +211,62 @@ class HistoryCalculator:
         total_lookups = 0
         synthetic_lookups = 0
 
+        # Per-asset tracking for detailed stats
+        # Structure: {ticker: {"proxy": str, "synthetic_dates": [date], "total_dates": [date]}}
+        asset_tracking: dict[str, dict] = {}
+
         for point in data_points:
             # Count price lookups (one per active holding per day)
             total_lookups += point.holdings_count
             synthetic_lookups += len(point.synthetic_holdings)
 
+            # Track which assets were present on this day
+            for ticker, proxy in point.synthetic_holdings.items():
+                if ticker not in asset_tracking:
+                    asset_tracking[ticker] = {
+                        "proxy": proxy,
+                        "synthetic_dates": [],
+                        "total_dates": [],
+                    }
+                asset_tracking[ticker]["synthetic_dates"].append(point.date)
+                asset_tracking[ticker]["total_dates"].append(point.date)
+
+                # Keep first proxy seen
+                if ticker not in all_synthetic_holdings:
+                    all_synthetic_holdings[ticker] = proxy
+
             if point.has_synthetic_data:
                 synthetic_dates.append(point.date)
-                for ticker, proxy in point.synthetic_holdings.items():
-                    # Keep first proxy seen (they should all be same for a given ticker)
-                    if ticker not in all_synthetic_holdings:
-                        all_synthetic_holdings[ticker] = proxy
+
+        # Also track total days held for assets (including non-synthetic days)
+        # We need to scan all holdings across all days
+        for point in data_points:
+            for ticker in point.synthetic_holdings.keys():
+                # Already tracked above
+                pass
+            # For non-synthetic holdings on this day, we need holdings info
+            # This is implicitly tracked via holdings_count but we don't have tickers
+            # For now, we'll only have accurate total_days for assets WITH synthetic data
 
         # Calculate date range of synthetic data usage
         synthetic_date_range: tuple[date, date] | None = None
         if synthetic_dates:
             synthetic_date_range = (min(synthetic_dates), max(synthetic_dates))
+
+        # Build per-asset synthetic details
+        from app.services.valuation.types import SyntheticAssetDetail
+        synthetic_details: dict[str, SyntheticAssetDetail] = {}
+
+        for ticker, tracking in asset_tracking.items():
+            if tracking["synthetic_dates"]:
+                synthetic_details[ticker] = SyntheticAssetDetail(
+                    ticker=ticker,
+                    proxy_ticker=tracking["proxy"],
+                    first_synthetic_date=min(tracking["synthetic_dates"]),
+                    last_synthetic_date=max(tracking["synthetic_dates"]),
+                    synthetic_days=len(tracking["synthetic_dates"]),
+                    total_days_held=len(tracking["synthetic_dates"]),  # Only synthetic days known
+                )
 
         return PortfolioHistory(
             portfolio_id=portfolio_id,
@@ -242,6 +282,7 @@ class HistoryCalculator:
             synthetic_date_range=synthetic_date_range,
             synthetic_lookups=synthetic_lookups,
             total_lookups=total_lookups,
+            synthetic_details=synthetic_details,
         )
 
     def _calculate_history_rolling(

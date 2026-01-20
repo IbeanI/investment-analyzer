@@ -47,16 +47,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import PortfolioSettings, Portfolio
+from app.services.constants import DEFAULT_ENABLE_PROXY_BACKCASTING
+from app.services.exceptions import PortfolioNotFoundError
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-# Default values for new portfolio settings
-# Backcasting is ENABLED by default (Hybrid model - opt-out)
-DEFAULT_ENABLE_PROXY_BACKCASTING: bool = True
 
 
 # =============================================================================
@@ -166,7 +160,7 @@ class PortfolioSettingsService:
         # Verify portfolio exists
         portfolio = db.get(Portfolio, portfolio_id)
         if portfolio is None:
-            raise ValueError(f"Portfolio {portfolio_id} not found")
+            raise PortfolioNotFoundError(portfolio_id)
 
         # Create with defaults
         logger.info(

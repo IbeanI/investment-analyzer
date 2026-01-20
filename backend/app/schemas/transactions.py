@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import TransactionType
 from app.schemas.assets import AssetResponse
+from app.schemas.pagination import PaginationMeta
 from app.schemas.validators import validate_ticker, validate_exchange
 
 
@@ -297,13 +298,15 @@ class TransactionResponse(TransactionBase):
 
 class TransactionListResponse(BaseModel):
     """
-    Response schemas for paginated transaction list.
+    Response schema for paginated transaction list.
+
+    Attributes:
+        items: List of transactions for current page
+        pagination: Pagination metadata with computed fields
     """
 
-    items: list[TransactionResponse]
-    total: int = Field(..., description="Total number of transactions matching filters")
-    skip: int = Field(..., description="Number of records skipped")
-    limit: int = Field(..., description="Maximum number of records returned")
+    items: list[TransactionResponse] = Field(..., description="List of transactions for current page")
+    pagination: PaginationMeta = Field(..., description="Pagination metadata")
 
 
 # =============================================================================

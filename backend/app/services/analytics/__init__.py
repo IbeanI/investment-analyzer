@@ -93,9 +93,10 @@ from app.services.analytics.risk import (
 from app.services.analytics.service import (
     AnalyticsService,
     AnalyticsCache,
-    BenchmarkNotSyncedError,
     DEFAULT_BENCHMARKS,
 )
+# Exception from centralized exceptions module
+from app.services.exceptions import BenchmarkNotSyncedError
 # Types
 from app.services.analytics.types import (
     # Input types

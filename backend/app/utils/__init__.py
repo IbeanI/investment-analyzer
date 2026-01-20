@@ -3,16 +3,33 @@
 Utility modules for the Investment Portfolio Analyzer.
 
 This package contains cross-cutting utilities used throughout the application:
-- logging: Logging configuration and setup
-- (future) validation: Common validation helpers
-- (future) formatting: Data formatting utilities
+- logging: Logging configuration and setup with correlation ID support
+- context: Request context management for correlation IDs
 
 Usage:
-    from app.utils import setup_logging
+    from app.utils import setup_logging, get_logger
+    from app.utils import get_correlation_id, set_correlation_id
 """
 
-from app.utils.logging import setup_logging
+from app.utils.context import (
+    get_correlation_id,
+    set_correlation_id,
+    clear_correlation_id,
+    get_request_context,
+    set_request_context,
+    clear_request_context,
+)
+from app.utils.logging import setup_logging, get_logger
 
 __all__ = [
+    # Logging
     "setup_logging",
+    "get_logger",
+    # Context
+    "get_correlation_id",
+    "set_correlation_id",
+    "clear_correlation_id",
+    "get_request_context",
+    "set_request_context",
+    "clear_request_context",
 ]

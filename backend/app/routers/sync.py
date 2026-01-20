@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import Portfolio, SyncStatus
 from app.services.market_data import MarketDataSyncService, SyncResult
+from app.services.analytics.service import AnalyticsService
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,11 @@ def get_sync_service() -> MarketDataSyncService:
     return MarketDataSyncService()
 
 
+def get_analytics_service() -> AnalyticsService:
+    """Dependency that provides the analytics service for cache invalidation."""
+    return AnalyticsService()
+
+
 def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
     """Get portfolio or raise 404."""
     portfolio = db.get(Portfolio, portfolio_id)
@@ -109,6 +115,7 @@ def sync_portfolio(
         request: SyncRequest = SyncRequest(),
         db: Session = Depends(get_db),
         service: MarketDataSyncService = Depends(get_sync_service),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> SyncResponse:
     """
     Synchronize market data for a portfolio.
@@ -135,6 +142,10 @@ def sync_portfolio(
             portfolio_id=portfolio_id,
             force=request.force_refresh,
         )
+
+        # Invalidate analytics cache after sync (prices/FX rates changed)
+        # Do this regardless of partial success since some data may have changed
+        analytics_service.invalidate_cache(portfolio_id)
 
         return SyncResponse(
             success=result.status in ("completed", "partial"),

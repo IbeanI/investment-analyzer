@@ -191,17 +191,12 @@ def get_portfolio_valuation(
     get_portfolio_or_404(db, portfolio_id)
 
     # Get valuation from service
-    try:
-        valuation = service.get_valuation(
-            db=db,
-            portfolio_id=portfolio_id,
-            valuation_date=valuation_date,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
+    # Domain exceptions (PortfolioNotFoundError) propagate to global handlers
+    valuation = service.get_valuation(
+        db=db,
+        portfolio_id=portfolio_id,
+        valuation_date=valuation_date,
+    )
 
     # Map to response schema
     return PortfolioValuationResponse(
@@ -280,19 +275,14 @@ def get_portfolio_valuation_history(
     get_portfolio_or_404(db, portfolio_id)
 
     # Get history from service
-    try:
-        history = service.get_history(
-            db=db,
-            portfolio_id=portfolio_id,
-            start_date=from_date,
-            end_date=to_date,
-            interval=interval,
-        )
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
+    # Domain exceptions (PortfolioNotFoundError, InvalidIntervalError) propagate to global handlers
+    history = service.get_history(
+        db=db,
+        portfolio_id=portfolio_id,
+        start_date=from_date,
+        end_date=to_date,
+        interval=interval,
+    )
 
     # Map to response schema
     return PortfolioHistoryResponse(

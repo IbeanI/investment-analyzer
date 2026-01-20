@@ -41,8 +41,14 @@ from app.services.exceptions import (
     ProviderUnavailableError,
     RateLimitError,
     MarketDataError,
+    # Centralized exceptions
+    PortfolioNotFoundError,
+    ValidationError,
+    InvalidIntervalError,
+    FXConversionError,
+    BenchmarkNotSyncedError,
+    CircuitBreakerOpen,
 )
-from app.services.analytics.service import BenchmarkNotSyncedError
 from app.utils import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -62,6 +68,17 @@ app = FastAPI(
     description="Institution-grade investment portfolio analysis API",
     version="0.1.0",
 )
+
+
+# =============================================================================
+# MIDDLEWARE (order matters: last added = first executed)
+# =============================================================================
+
+from app.middleware import CorrelationIdMiddleware
+
+# Add correlation ID tracking for request tracing
+# This extracts/generates correlation IDs and adds them to response headers
+app.add_middleware(CorrelationIdMiddleware)
 
 
 # =============================================================================
@@ -142,6 +159,25 @@ async def rate_limit_handler(request: Request, exc: RateLimitError) -> JSONRespo
     )
 
 
+@app.exception_handler(CircuitBreakerOpen)
+async def circuit_breaker_handler(request: Request, exc: CircuitBreakerOpen) -> JSONResponse:
+    """Handle circuit breaker open (503 with Retry-After)."""
+    logger.warning(f"Circuit breaker open: {exc.breaker_name}")
+    retry_after = int(exc.time_remaining) + 1  # Round up
+    return JSONResponse(
+        status_code=503,
+        content=ErrorDetail(
+            error="CircuitBreakerOpen",
+            message=f"Service temporarily unavailable. The {exc.breaker_name} circuit breaker is open.",
+            details={
+                "breaker_name": exc.breaker_name,
+                "retry_after": retry_after,
+            },
+        ).model_dump(),
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 @app.exception_handler(MarketDataError)
 async def market_data_error_handler(request: Request, exc: MarketDataError) -> JSONResponse:
     """Handle generic market data errors (500)."""
@@ -152,6 +188,73 @@ async def market_data_error_handler(request: Request, exc: MarketDataError) -> J
             error="MarketDataError",
             message=str(exc),
             details=None,
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(PortfolioNotFoundError)
+async def portfolio_not_found_handler(
+    request: Request, exc: PortfolioNotFoundError
+) -> JSONResponse:
+    """Handle portfolio not found errors (404)."""
+    logger.warning(f"Portfolio not found: {exc.portfolio_id}")
+    return JSONResponse(
+        status_code=404,
+        content=ErrorDetail(
+            error="PortfolioNotFoundError",
+            message=str(exc),
+            details={"portfolio_id": exc.portfolio_id},
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(InvalidIntervalError)
+async def invalid_interval_handler(
+    request: Request, exc: InvalidIntervalError
+) -> JSONResponse:
+    """Handle invalid interval errors (400)."""
+    logger.warning(f"Invalid interval: {exc.interval}")
+    return JSONResponse(
+        status_code=400,
+        content=ErrorDetail(
+            error="InvalidIntervalError",
+            message=str(exc),
+            details={"interval": exc.interval, "valid_options": ["daily", "weekly", "monthly"]},
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(ValidationError)
+async def validation_error_handler(
+    request: Request, exc: ValidationError
+) -> JSONResponse:
+    """Handle validation errors (400)."""
+    logger.warning(f"Validation error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content=ErrorDetail(
+            error="ValidationError",
+            message=str(exc),
+            details={"field": exc.field} if exc.field else None,
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(FXConversionError)
+async def fx_conversion_error_handler(
+    request: Request, exc: FXConversionError
+) -> JSONResponse:
+    """Handle FX conversion errors (400)."""
+    logger.warning(f"FX conversion error: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content=ErrorDetail(
+            error="FXConversionError",
+            message=str(exc),
+            details={
+                "base_currency": exc.base_currency,
+                "quote_currency": exc.quote_currency,
+            } if exc.base_currency else None,
         ).model_dump(),
     )
 

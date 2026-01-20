@@ -58,6 +58,7 @@ from app.services.market_data.base import (
 from app.services.market_data.yahoo import YahooFinanceProvider
 from app.services.portfolio_settings_service import PortfolioSettingsService
 from app.services.proxy_mapping_service import ProxyMappingService, ProxyMappingResult
+from app.services.constants import DEFAULT_STALENESS_HOURS
 
 logger = logging.getLogger(__name__)
 
@@ -172,9 +173,6 @@ class MarketDataSyncService:
         is_stale, reason = service.is_data_stale(db, portfolio_id=1)
     """
 
-    # Default staleness threshold (24 hours)
-    DEFAULT_STALENESS_HOURS: int = 24
-
     def __init__(
             self,
             provider: MarketDataProvider | None = None,
@@ -198,7 +196,7 @@ class MarketDataSyncService:
         self._settings_service = settings_service or PortfolioSettingsService()
         self._proxy_mapping_service = proxy_mapping_service or ProxyMappingService()
         self._staleness_threshold_hours = (
-                staleness_threshold_hours or self.DEFAULT_STALENESS_HOURS
+                staleness_threshold_hours or DEFAULT_STALENESS_HOURS
         )
 
         logger.info(
@@ -1039,6 +1037,11 @@ class MarketDataSyncService:
         calculate a scale factor vs the proxy, then apply that factor to
         all proxy prices in the backcast period.
 
+        This method is designed to be:
+        - Safe from division by zero (guards against zero proxy price)
+        - Free from N+1 queries (batch fetches existing dates)
+        - Race-condition safe (uses ON CONFLICT DO NOTHING for atomic upsert)
+
         Args:
             db: Database session
             asset_id: Asset needing synthetic data
@@ -1098,6 +1101,14 @@ class MarketDataSyncService:
 
         proxy_anchor_price = proxy_anchor.close_price
 
+        # Guard against division by zero
+        if proxy_anchor_price is None or proxy_anchor_price == Decimal("0"):
+            logger.warning(
+                f"Proxy anchor price is zero or None for proxy {proxy_asset_id} "
+                f"on {anchor_date}, cannot calculate scale factor"
+            )
+            return 0
+
         # Calculate scaling factor
         scale_factor = anchor_price / proxy_anchor_price
 
@@ -1117,50 +1128,76 @@ class MarketDataSyncService:
             .order_by(MarketData.date)
         ).scalars().all()
 
-        # Generate synthetic prices
-        created = 0
-        for proxy_price in proxy_prices:
-            # Check if already exists
-            existing = db.execute(
-                select(MarketData)
-                .where(
-                    MarketData.asset_id == asset_id,
-                    MarketData.date == proxy_price.date,
-                )
-            ).scalar()
+        if not proxy_prices:
+            logger.debug(f"No proxy prices found for backcast period {backcast_start} to {backcast_end}")
+            return 0
 
-            if existing:
+        # Batch fetch existing dates for this asset to avoid N+1 queries
+        proxy_dates = [p.date for p in proxy_prices]
+        existing_dates_query = (
+            select(MarketData.date)
+            .where(
+                MarketData.asset_id == asset_id,
+                MarketData.date.in_(proxy_dates),
+            )
+        )
+        existing_dates = set(db.scalars(existing_dates_query).all())
+
+        # Helper function to scale values with proper precision
+        def scale(val):
+            if val is None:
+                return None
+            return (Decimal(str(val)) * scale_factor).quantize(
+                Decimal('0.0001'), ROUND_HALF_UP
+            )
+
+        # Build records for bulk insert, excluding dates that already exist
+        records = []
+        for proxy_price in proxy_prices:
+            if proxy_price.date in existing_dates:
                 continue
 
-            # Scale proxy prices
-            def scale(val):
-                if val is None:
-                    return None
-                return (Decimal(str(val)) * scale_factor).quantize(
-                    Decimal('0.0001'), ROUND_HALF_UP
-                )
+            records.append({
+                "asset_id": asset_id,
+                "date": proxy_price.date,
+                "open_price": scale(proxy_price.open_price),
+                "high_price": scale(proxy_price.high_price),
+                "low_price": scale(proxy_price.low_price),
+                "close_price": scale(proxy_price.close_price),
+                "adjusted_close": scale(proxy_price.adjusted_close),
+                "volume": proxy_price.volume,
+                "provider": "proxy_backcast",
+                "is_synthetic": True,
+                "proxy_source_id": proxy_asset_id,
+            })
 
-            synthetic = MarketData(
-                asset_id=asset_id,
-                date=proxy_price.date,
-                open_price=scale(proxy_price.open_price),
-                high_price=scale(proxy_price.high_price),
-                low_price=scale(proxy_price.low_price),
-                close_price=scale(proxy_price.close_price),
-                adjusted_close=scale(proxy_price.adjusted_close),
-                volume=proxy_price.volume,
-                provider='proxy_backcast',
-                is_synthetic=True,
-                proxy_source_id=proxy_asset_id,
+        if not records:
+            logger.debug(f"All dates already have prices for asset {asset_id}")
+            return 0
+
+        # Use bulk upsert with ON CONFLICT DO NOTHING for race-condition safety
+        # This ensures that if a concurrent request creates the same record,
+        # we simply skip it rather than failing with IntegrityError
+        try:
+            stmt = pg_insert(MarketData).values(records)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["asset_id", "date"]
             )
-            db.add(synthetic)
-            created += 1
-
-        if created > 0:
+            result = db.execute(stmt)
             db.commit()
-            logger.info(f"Created {created} synthetic prices for asset {asset_id}")
 
-        return created
+            # rowcount reflects actual inserts (excludes conflicts)
+            created = result.rowcount if result.rowcount >= 0 else len(records)
+
+            if created > 0:
+                logger.info(f"Created {created} synthetic prices for asset {asset_id}")
+
+            return created
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating synthetic prices for asset {asset_id}: {e}")
+            raise
 
     def _ensure_proxy_data(
             self,

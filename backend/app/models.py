@@ -3,7 +3,7 @@ import enum
 from datetime import date, datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Boolean, JSON, BigInteger
+from sqlalchemy import String, Date, DateTime, ForeignKey, Enum, Numeric, UniqueConstraint, Boolean, JSON, BigInteger, Index
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -147,6 +147,12 @@ class Asset(Base):
 
 class Transaction(Base):
     __tablename__ = "transactions"
+    __table_args__ = (
+        # Composite index for point-in-time valuation queries:
+        # "Get all transactions for portfolio X up to date Y"
+        # This is the most common query pattern in valuation/history_calculator.py
+        Index('ix_transaction_portfolio_date', 'portfolio_id', 'date'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"), index=True)
@@ -252,6 +258,12 @@ class ExchangeRate(Base):
         # UniqueConstraint automatically creates an index on (base, quote, date)
         UniqueConstraint('base_currency', 'quote_currency', 'date',
                          name='uq_exchange_rate_pair_date'),
+        # Optimized index for the common FX lookup pattern:
+        # "Get rates where quote_currency = portfolio_currency AND base_currency IN (...)"
+        # quote_currency is always an equality condition (the portfolio's base currency),
+        # while base_currency varies (different asset currencies). Putting quote_currency
+        # first allows PostgreSQL to use the index more efficiently.
+        Index('ix_exchange_rate_quote_base_date', 'quote_currency', 'base_currency', 'date'),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)

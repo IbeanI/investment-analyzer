@@ -18,6 +18,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import AssetClass
+from app.schemas.pagination import PaginationMeta
 from app.schemas.validators import (
     validate_ticker,
     validate_exchange,
@@ -274,9 +275,13 @@ class AssetResponse(AssetBase):
 
 
 class AssetListResponse(BaseModel):
-    """Response schemas for paginated asset list."""
+    """
+    Response schema for paginated asset list.
 
-    items: list[AssetResponse]
-    total: int = Field(..., description="Total number of assets matching filters")
-    skip: int = Field(..., description="Number of records skipped")
-    limit: int = Field(..., description="Maximum number of records returned")
+    Attributes:
+        items: List of assets for current page
+        pagination: Pagination metadata with computed fields
+    """
+
+    items: list[AssetResponse] = Field(..., description="List of assets for current page")
+    pagination: PaginationMeta = Field(..., description="Pagination metadata")

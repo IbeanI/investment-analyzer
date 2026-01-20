@@ -48,6 +48,11 @@ from app.services.valuation.types import (
     HistoryPoint,
     PortfolioHistory,
 )
+from app.services.constants import (
+    PRICE_FALLBACK_DAYS,
+    FX_FALLBACK_DAYS,
+)
+from app.services.exceptions import PortfolioNotFoundError, InvalidIntervalError
 
 if TYPE_CHECKING:
     from app.services.fx_rate_service import FXRateService
@@ -78,12 +83,6 @@ class HistoryCalculator:
         _realized_pnl_calc: Calculator for realized P&L
         _fx_service: Service for FX rate lookups (used for batch fetch)
     """
-
-    # Maximum days to look back for missing prices (weekends/holidays)
-    PRICE_FALLBACK_DAYS: int = 5
-
-    # Maximum days to look back for missing FX rates
-    FX_FALLBACK_DAYS: int = 7
 
     def __init__(
             self,
@@ -132,7 +131,7 @@ class HistoryCalculator:
         # Step 0: Get portfolio
         portfolio = db.get(Portfolio, portfolio_id)
         if portfolio is None:
-            raise ValueError(f"Portfolio {portfolio_id} not found")
+            raise PortfolioNotFoundError(portfolio_id)
 
         portfolio_currency = portfolio.currency
 
@@ -635,7 +634,7 @@ class HistoryCalculator:
 
         # Extend range backwards to include potential fallback prices
         # This ensures we have data for weekends/holidays at range start
-        extended_start = start_date - timedelta(days=self.PRICE_FALLBACK_DAYS)
+        extended_start = start_date - timedelta(days=PRICE_FALLBACK_DAYS)
 
         query = (
             select(MarketData)
@@ -689,7 +688,7 @@ class HistoryCalculator:
             return {}
 
         # Extend range backwards to include potential fallback rates
-        extended_start = start_date - timedelta(days=self.FX_FALLBACK_DAYS)
+        extended_start = start_date - timedelta(days=FX_FALLBACK_DAYS)
 
         query = (
             select(ExchangeRate)
@@ -751,7 +750,7 @@ class HistoryCalculator:
         elif interval == "monthly":
             return self._generate_monthly(start_date, end_date)
         else:
-            raise ValueError(f"Invalid interval: {interval}. Use daily, weekly, or monthly.")
+            raise InvalidIntervalError(interval)
 
     def _generate_daily(self, start: date, end: date) -> list[date]:
         """Generate daily data points (every calendar day)."""
@@ -865,7 +864,7 @@ class HistoryCalculator:
             Price and date are None if no price found within fallback window.
         """
         if max_fallback_days is None:
-            max_fallback_days = self.PRICE_FALLBACK_DAYS
+            max_fallback_days = PRICE_FALLBACK_DAYS
 
         # Try exact date first
         price_data = price_map.get((asset_id, target_date))
@@ -895,7 +894,7 @@ class HistoryCalculator:
         For weekends/holidays, looks back up to max_fallback_days.
         """
         if max_fallback_days is None:
-            max_fallback_days = self.FX_FALLBACK_DAYS
+            max_fallback_days = FX_FALLBACK_DAYS
 
         # Try exact date first
         rate = fx_map.get((base_currency, quote_currency.upper(), target_date))

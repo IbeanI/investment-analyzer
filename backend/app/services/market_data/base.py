@@ -32,9 +32,17 @@ from tenacity import (
 )
 
 from app.models import AssetClass
+from app.services.circuit_breaker import CircuitBreaker, CircuitBreakerOpen
+from app.services.constants import (
+    CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+    CIRCUIT_BREAKER_RECOVERY_TIMEOUT,
+    CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS,
+    CIRCUIT_BREAKER_FAILURE_WINDOW,
+)
 from app.services.exceptions import (
     ProviderUnavailableError,
     RateLimitError,
+    TickerNotFoundError,
 )
 
 logger = logging.getLogger(__name__)
@@ -237,6 +245,16 @@ class MarketDataProvider(ABC):
     All market data providers (Yahoo Finance, Bloomberg, Alpha Vantage, etc.)
     must implement this interface to be usable by the application services.
 
+    Resilience Features:
+        1. Circuit Breaker: Stops requests to failing services, allowing recovery
+        2. Retry with Backoff: Automatic retries for transient failures
+
+    Circuit Breaker Behavior:
+        - Opens after CIRCUIT_BREAKER_FAILURE_THRESHOLD failures
+        - Blocks requests for CIRCUIT_BREAKER_RECOVERY_TIMEOUT seconds
+        - Tests recovery with limited requests in half-open state
+        - Configured via constants in app/services/constants.py
+
     Retry Behavior:
         The base class provides a `_execute_with_retry` method that implements
         exponential backoff retry logic. Subclasses can override the retry
@@ -253,6 +271,7 @@ class MarketDataProvider(ABC):
 
     Non-Retryable Exceptions:
         - TickerNotFoundError: Permanent failure (ticker doesn't exist)
+        - CircuitBreakerOpen: Circuit breaker is open (wait and retry later)
     """
 
     # =========================================================================
@@ -269,6 +288,36 @@ class MarketDataProvider(ABC):
     # =========================================================================
 
     MAX_BATCH_SIZE: int = 100
+
+    # =========================================================================
+    # CIRCUIT BREAKER (initialized per-provider instance)
+    # =========================================================================
+
+    _circuit_breaker: CircuitBreaker | None = None
+
+    def _get_circuit_breaker(self) -> CircuitBreaker:
+        """
+        Get or create the circuit breaker for this provider.
+
+        Lazily initializes the circuit breaker on first use.
+        TickerNotFoundError is excluded from failure counting since
+        it's a business error, not a provider failure.
+        """
+        if self._circuit_breaker is None:
+            self._circuit_breaker = CircuitBreaker(
+                name=f"market-data-{self.name}",
+                failure_threshold=CIRCUIT_BREAKER_FAILURE_THRESHOLD,
+                recovery_timeout=CIRCUIT_BREAKER_RECOVERY_TIMEOUT,
+                half_open_max_calls=CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS,
+                failure_window=CIRCUIT_BREAKER_FAILURE_WINDOW,
+                excluded_exceptions=(TickerNotFoundError,),
+            )
+        return self._circuit_breaker
+
+    @property
+    def circuit_breaker_stats(self):
+        """Get circuit breaker statistics for monitoring."""
+        return self._get_circuit_breaker().stats
 
     # =========================================================================
     # ABSTRACT PROPERTIES AND METHODS
@@ -401,14 +450,19 @@ class MarketDataProvider(ABC):
             **kwargs: Any,
     ) -> T:
         """
-        Execute a function with retry logic for transient failures.
+        Execute a function with circuit breaker and retry logic.
+
+        Protection layers (outer to inner):
+        1. Circuit Breaker - Blocks requests when service is failing
+        2. Retry with Backoff - Retries transient failures
 
         Uses exponential backoff for retryable exceptions:
         - ProviderUnavailableError
         - RateLimitError
 
         Does NOT retry on:
-        - TickerNotFoundError (permanent failure)
+        - TickerNotFoundError (permanent failure, doesn't trip circuit)
+        - CircuitBreakerOpen (circuit is open, wait for recovery)
         - Other exceptions
 
         Args:
@@ -420,8 +474,10 @@ class MarketDataProvider(ABC):
             Return value of func
 
         Raises:
+            CircuitBreakerOpen: If circuit breaker is open
             The last exception if all retries fail
         """
+        circuit_breaker = self._get_circuit_breaker()
 
         @retry(
             stop=stop_after_attempt(self.MAX_RETRY_ATTEMPTS),
@@ -434,10 +490,12 @@ class MarketDataProvider(ABC):
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
-        def _inner() -> T:
+        def _inner_with_retry() -> T:
             return func(*args, **kwargs)
 
-        return _inner()
+        # Circuit breaker wraps the retry logic
+        with circuit_breaker:
+            return _inner_with_retry()
 
     # =========================================================================
     # OPTIONAL METHODS (with default implementations)
@@ -447,10 +505,13 @@ class MarketDataProvider(ABC):
         """
         Check if the provider is currently available.
 
-        Default implementation returns True. Subclasses can override
-        to implement health checks.
+        Checks circuit breaker state first, then performs health check
+        if circuit is closed.
 
         Returns:
             True if provider is available, False otherwise
         """
+        circuit_breaker = self._get_circuit_breaker()
+        if circuit_breaker.is_open:
+            return False
         return True

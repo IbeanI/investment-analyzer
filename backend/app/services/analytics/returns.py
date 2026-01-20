@@ -43,24 +43,20 @@ Precision Note (Decimal vs Float):
 
 import logging
 from datetime import date
+import decimal
 from decimal import Decimal, ROUND_HALF_UP
 
 from app.services.analytics.types import CashFlow, DailyValue, PerformanceMetrics
+from app.services.constants import (
+    TRADING_DAYS_PER_YEAR,
+    CALENDAR_DAYS_PER_YEAR,
+    IRR_MAX_ITERATIONS,
+    IRR_TOLERANCE,
+    IRR_INITIAL_GUESS,
+    ZERO,
+)
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-TRADING_DAYS_PER_YEAR = 252
-CALENDAR_DAYS_PER_YEAR = 365
-
-# IRR solver settings
-IRR_MAX_ITERATIONS = 100
-IRR_TOLERANCE = Decimal("0.0000001")  # 0.00001% precision
-IRR_INITIAL_GUESS = Decimal("0.1")  # Start at 10%
-ZERO = Decimal("0")  # Type-safe zero for Decimal comparisons
 
 
 # =============================================================================
@@ -140,6 +136,9 @@ def annualize_return(
 
     Formula: (1 + r)^(365/days) - 1
 
+    Uses Python's Decimal.__pow__() which supports non-integer exponents,
+    maintaining full precision without float conversion.
+
     Args:
         total_return: Total return as decimal (e.g., 0.15 = 15%)
         days: Number of days in the period
@@ -161,9 +160,13 @@ def annualize_return(
     # (1 + r)^(365/days) - 1
     exponent = Decimal(str(days_per_year)) / Decimal(str(days))
 
-    # Float conversion required: Decimal doesn't support fractional exponents.
-    # Precision loss is negligible (~15 significant digits in float64).
-    annualized = Decimal(str(float(base) ** float(exponent))) - Decimal("1")
+    # Use Decimal power operation for full precision.
+    # Decimal.__pow__() supports non-integer exponents.
+    try:
+        annualized = base ** exponent - Decimal("1")
+    except decimal.InvalidOperation:
+        # Fallback to float for edge cases (extremely large/small values)
+        annualized = Decimal(str(float(base) ** float(exponent))) - Decimal("1")
 
     return annualized
 
@@ -268,6 +271,9 @@ def calculate_cagr(
 
     Formula: CAGR = (End / Start)^(365/days) - 1
 
+    Uses Python's Decimal.__pow__() which supports non-integer exponents,
+    maintaining full precision without float conversion.
+
     WARNING: This function does NOT adjust for cash flows.
     For portfolios with deposits/withdrawals, use:
         cagr = annualize_return(simple_return, days)
@@ -294,9 +300,13 @@ def calculate_cagr(
     ratio = end_value / start_value
     exponent = Decimal(str(CALENDAR_DAYS_PER_YEAR)) / Decimal(str(days))
 
-    # Float conversion required: Decimal doesn't support fractional exponents.
-    # Precision loss is negligible (~15 significant digits in float64).
-    cagr = Decimal(str(float(ratio) ** float(exponent))) - Decimal("1")
+    # Use Decimal power operation for full precision.
+    # Decimal.__pow__() supports non-integer exponents.
+    try:
+        cagr = ratio ** exponent - Decimal("1")
+    except decimal.InvalidOperation:
+        # Fallback to float for edge cases (extremely large/small values)
+        cagr = Decimal(str(float(ratio) ** float(exponent))) - Decimal("1")
 
     return cagr
 

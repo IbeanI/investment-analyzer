@@ -97,8 +97,9 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models import ExchangeRate, Transaction, Asset, Portfolio
-from app.services.exceptions import FXRateNotFoundError, FXProviderError
+from app.services.exceptions import FXRateNotFoundError, FXProviderError, FXConversionError
 from app.services.market_data.base import MarketDataProvider
+from app.services.constants import FX_FALLBACK_DAYS
 
 logger = logging.getLogger(__name__)
 
@@ -170,9 +171,6 @@ class FXRateService:
         print(f"1 USD = {rate_result.rate} EUR")
     """
 
-    # Fallback configuration
-    MAX_FALLBACK_DAYS: int = 7  # Max days to look back for missing rate
-
     def __init__(
             self,
             provider: MarketDataProvider,
@@ -184,10 +182,10 @@ class FXRateService:
         Args:
             provider: Market data provider for fetching FX rates.
             max_fallback_days: Maximum days to search for fallback rate.
-                              Defaults to MAX_FALLBACK_DAYS (7).
+                              Defaults to FX_FALLBACK_DAYS (7).
         """
         self._provider = provider
-        self._max_fallback_days = max_fallback_days or self.MAX_FALLBACK_DAYS
+        self._max_fallback_days = max_fallback_days or FX_FALLBACK_DAYS
         logger.info(
             f"FXRateService initialized (provider={provider.name}, "
             f"max_fallback_days={self._max_fallback_days})"
@@ -966,7 +964,7 @@ class FXRateService:
         If rate is USD/EUR = 0.92, inverted is EUR/USD = 1.087
         """
         if rate == 0:
-            raise ValueError("Cannot invert zero rate")
+            raise FXConversionError("Cannot invert zero rate")
         return (Decimal("1") / rate).quantize(Decimal("0.00000001"))
 
     # =========================================================================
@@ -996,20 +994,23 @@ class FXRateService:
             Amount in quote currency
 
         Raises:
-            ValueError: If rate is zero, negative, or would produce invalid result
+            FXConversionError: If rate is zero, negative, or would produce invalid result
         """
         if rate_result.rate <= 0:
-            raise ValueError(
-                f"Invalid FX rate {rate_result.rate} for "
-                f"{rate_result.base_currency}/{rate_result.quote_currency}"
+            raise FXConversionError(
+                f"Invalid FX rate {rate_result.rate}",
+                base_currency=rate_result.base_currency,
+                quote_currency=rate_result.quote_currency,
             )
 
         result = (amount * rate_result.rate).quantize(Decimal("0.01"))
 
         # Guard against overflow/underflow producing invalid results
         if not result.is_finite():
-            raise ValueError(
-                f"FX conversion produced invalid result: {amount} * {rate_result.rate}"
+            raise FXConversionError(
+                f"Conversion produced invalid result: {amount} * {rate_result.rate}",
+                base_currency=rate_result.base_currency,
+                quote_currency=rate_result.quote_currency,
             )
 
         return result
@@ -1037,20 +1038,23 @@ class FXRateService:
             Amount in base currency
 
         Raises:
-            ValueError: If rate is zero, negative, or would produce invalid result
+            FXConversionError: If rate is zero, negative, or would produce invalid result
         """
         if rate_result.rate <= 0:
-            raise ValueError(
-                f"Invalid FX rate {rate_result.rate} for "
-                f"{rate_result.base_currency}/{rate_result.quote_currency}"
+            raise FXConversionError(
+                f"Invalid FX rate {rate_result.rate}",
+                base_currency=rate_result.base_currency,
+                quote_currency=rate_result.quote_currency,
             )
 
         result = (amount / rate_result.rate).quantize(Decimal("0.01"))
 
         # Guard against overflow/underflow producing invalid results
         if not result.is_finite():
-            raise ValueError(
-                f"FX conversion produced invalid result: {amount} / {rate_result.rate}"
+            raise FXConversionError(
+                f"Conversion produced invalid result: {amount} / {rate_result.rate}",
+                base_currency=rate_result.base_currency,
+                quote_currency=rate_result.quote_currency,
             )
 
         return result

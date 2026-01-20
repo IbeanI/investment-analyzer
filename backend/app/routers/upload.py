@@ -31,6 +31,7 @@ from app.services.upload import (
     get_supported_extensions,
     get_supported_content_types,
 )
+from app.services.analytics.service import AnalyticsService
 from app.schemas.upload import UploadResponse, UploadErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,11 @@ router = APIRouter(
 def get_upload_service() -> UploadService:
     """Dependency that provides the upload service."""
     return UploadService()
+
+
+def get_analytics_service() -> AnalyticsService:
+    """Dependency that provides the analytics service for cache invalidation."""
+    return AnalyticsService()
 
 
 # =============================================================================
@@ -116,6 +122,7 @@ def upload_transactions(
         ),
         db: Session = Depends(get_db),
         upload_service: UploadService = Depends(get_upload_service),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> UploadResponse | JSONResponse:
     """
     Upload transactions from a file.
@@ -267,6 +274,8 @@ def upload_transactions(
         logger.info(
             f"Upload successful: {result.created_count} transactions created"
         )
+        # Invalidate analytics cache after successful upload
+        analytics_service.invalidate_cache(portfolio_id)
     else:
         logger.warning(
             f"Upload failed: {result.error_count} errors"

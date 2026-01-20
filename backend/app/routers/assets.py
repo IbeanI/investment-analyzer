@@ -9,13 +9,22 @@ Note: An asset is uniquely identified by the combination of ticker + exchange.
 The same ticker can exist on different exchanges (e.g., VUAA on XETRA vs LSE).
 """
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import AfterValidator
 from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Asset, AssetClass
 from app.schemas.assets import AssetCreate, AssetUpdate, AssetResponse, AssetListResponse
+from app.schemas.pagination import PaginationMeta
+from app.schemas.validators import validate_currency_query, validate_exchange_query
+
+# Validated query parameter types
+CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
+ExchangeQuery = Annotated[str | None, AfterValidator(validate_exchange_query)]
 
 # =============================================================================
 # ROUTER SETUP
@@ -161,11 +170,11 @@ def list_assets(
             default=None,
             description="Filter by asset class"
         ),
-        exchange: str | None = Query(
+        exchange: ExchangeQuery = Query(
             default=None,
             description="Filter by exchange (e.g., XETRA, NYSE)"
         ),
-        currency: str | None = Query(
+        currency: CurrencyQuery = Query(
             default=None,
             description="Filter by currency (e.g., EUR, USD)"
         ),
@@ -175,6 +184,7 @@ def list_assets(
         ),
         search: str | None = Query(
             default=None,
+            max_length=100,
             description="Search in ticker and name"
         ),
         # Pagination
@@ -200,10 +210,10 @@ def list_assets(
         query = query.where(Asset.asset_class == asset_class)
 
     if exchange is not None:
-        query = query.where(Asset.exchange == exchange.upper())
+        query = query.where(Asset.exchange == exchange)  # Already normalized by validator
 
     if currency is not None:
-        query = query.where(Asset.currency == currency.upper())
+        query = query.where(Asset.currency == currency)  # Already normalized by validator
 
     if is_active is not None:
         query = query.where(Asset.is_active == is_active)
@@ -227,7 +237,10 @@ def list_assets(
     # Apply pagination
     assets = db.scalars(query.offset(skip).limit(limit)).all()
 
-    return AssetListResponse(items=list(assets), total=total, skip=skip, limit=limit)
+    return AssetListResponse(
+        items=list(assets),
+        pagination=PaginationMeta.create(total=total, skip=skip, limit=limit),
+    )
 
 
 @router.get(

@@ -245,3 +245,67 @@ def normalize_currency(value: str) -> str:
         Normalized currency (uppercase, trimmed)
     """
     return value.strip().upper() if value else ""
+
+
+# =============================================================================
+# QUERY PARAMETER VALIDATION (for FastAPI routers)
+# =============================================================================
+
+def validate_currency_query(value: str | None) -> str | None:
+    """
+    Validate and normalize a currency query parameter.
+
+    Used for filter parameters - validates format but allows None.
+
+    Args:
+        value: Raw currency input from query parameter
+
+    Returns:
+        Normalized currency (uppercase, trimmed) or None
+
+    Raises:
+        ValueError: If currency format is invalid
+    """
+    if value is None:
+        return None
+    return validate_currency(value)
+
+
+def validate_exchange_query(value: str | None) -> str | None:
+    """
+    Validate and normalize an exchange query parameter.
+
+    Used for filter parameters - validates format but allows None.
+
+    Args:
+        value: Raw exchange input from query parameter
+
+    Returns:
+        Normalized exchange (uppercase, trimmed) or None
+
+    Raises:
+        ValueError: If exchange format is invalid
+    """
+    if value is None:
+        return None
+    return validate_exchange(value)
+
+
+def validate_ticker_query(value: str | None) -> str | None:
+    """
+    Validate and normalize a ticker query parameter.
+
+    Used for filter parameters - validates format but allows None.
+
+    Args:
+        value: Raw ticker input from query parameter
+
+    Returns:
+        Normalized ticker (uppercase, trimmed) or None
+
+    Raises:
+        ValueError: If ticker format is invalid
+    """
+    if value is None:
+        return None
+    return validate_ticker(value)

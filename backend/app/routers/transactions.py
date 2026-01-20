@@ -13,26 +13,30 @@ Key concepts:
 """
 
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import AfterValidator
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload, contains_eager
 
 from app.database import get_db
 from app.models import Transaction, Portfolio, Asset, TransactionType
+from app.schemas.pagination import PaginationMeta
 from app.schemas.transactions import (
     TransactionCreate,
     TransactionUpdate,
     TransactionResponse,
     TransactionListResponse,
 )
+from app.schemas.validators import validate_currency_query, validate_ticker_query
 from app.services.asset_resolution import AssetResolutionService
-from app.services.exceptions import (
-    AssetNotFoundError,
-    AssetDeactivatedError,
-    MarketDataError,
-)
+from app.services.analytics.service import AnalyticsService
+
+# Validated query parameter types
+CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
+TickerQuery = Annotated[str | None, AfterValidator(validate_ticker_query)]
 
 # =============================================================================
 # ROUTER SETUP
@@ -51,6 +55,11 @@ router = APIRouter(
 def get_asset_resolution_service() -> AssetResolutionService:
     """Dependency that provides the asset resolution service."""
     return AssetResolutionService()
+
+
+def get_analytics_service() -> AnalyticsService:
+    """Dependency that provides the analytics service for cache invalidation."""
+    return AnalyticsService()
 
 
 # =============================================================================
@@ -108,6 +117,7 @@ def create_transaction(
         transaction: TransactionCreate,
         db: Session = Depends(get_db),
         asset_service: AssetResolutionService = Depends(get_asset_resolution_service),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> Transaction:
     """
     Record a new buy or sell transaction.
@@ -136,27 +146,12 @@ def create_transaction(
     validate_portfolio_exists(db, transaction.portfolio_id)
 
     # Resolve asset (lookup in DB or create from Yahoo Finance)
-    try:
-        asset = asset_service.resolve_asset(
-            db=db,
-            ticker=transaction.ticker,
-            exchange=transaction.exchange,
-        )
-    except AssetNotFoundError as e:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e)
-        )
-    except AssetDeactivatedError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
-    except MarketDataError as e:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Market data provider error: {e}"
-        )
+    # Domain exceptions propagate to global handlers in main.py
+    asset = asset_service.resolve_asset(
+        db=db,
+        ticker=transaction.ticker,
+        exchange=transaction.exchange,
+    )
 
     # Determine fee_currency (default to transaction currency)
     fee_currency = transaction.fee_currency if transaction.fee_currency is not None else transaction.currency
@@ -179,6 +174,9 @@ def create_transaction(
     db.commit()
     db.refresh(db_transaction)
 
+    # Invalidate analytics cache for this portfolio
+    analytics_service.invalidate_cache(transaction.portfolio_id)
+
     # Return with eager-loaded asset for response
     return get_transaction_or_404(db, db_transaction.id)
 
@@ -200,7 +198,7 @@ def list_transactions(
             default=None,
             description="Filter by asset ID"
         ),
-        ticker: str | None = Query(
+        ticker: TickerQuery = Query(
             default=None,
             description="Filter by ticker symbol"
         ),
@@ -208,9 +206,9 @@ def list_transactions(
             default=None,
             description="Filter by transaction type (BUY/SELL)"
         ),
-        currency: str | None = Query(
+        currency: CurrencyQuery = Query(
             default=None,
-            description="Filter by trade currency"
+            description="Filter by trade currency (ISO 4217, e.g., EUR, USD)"
         ),
         # Date range filters
         date_from: datetime | None = Query(
@@ -253,7 +251,7 @@ def list_transactions(
             query
             .join(Transaction.asset)
             .options(contains_eager(Transaction.asset))
-            .where(Asset.ticker == ticker.upper())
+            .where(Asset.ticker == ticker)  # Already normalized by validator
         )
     else:
         # Use joinedload when not filtering by asset
@@ -270,7 +268,7 @@ def list_transactions(
         query = query.where(Transaction.transaction_type == transaction_type)
 
     if currency is not None:
-        query = query.where(Transaction.currency == currency.upper())
+        query = query.where(Transaction.currency == currency)  # Already normalized by validator
 
     if date_from is not None:
         query = query.where(Transaction.date >= date_from)
@@ -290,9 +288,7 @@ def list_transactions(
 
     return TransactionListResponse(
         items=list(transactions),
-        total=total,
-        skip=skip,
-        limit=limit
+        pagination=PaginationMeta.create(total=total, skip=skip, limit=limit),
     )
 
 
@@ -323,7 +319,8 @@ def get_transaction(
 def update_transaction(
         transaction_id: int,
         transaction_update: TransactionUpdate,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> Transaction:
     """
     Update an existing transaction (partial update).
@@ -351,6 +348,9 @@ def update_transaction(
     db.commit()
     db.refresh(db_transaction)
 
+    # Invalidate analytics cache for this portfolio
+    analytics_service.invalidate_cache(db_transaction.portfolio_id)
+
     # FIX: Return with eager-loaded asset
     return get_transaction_or_404(db, transaction_id)
 
@@ -362,7 +362,8 @@ def update_transaction(
 )
 def delete_transaction(
         transaction_id: int,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> None:
     """
     Delete a transaction permanently.
@@ -374,8 +375,14 @@ def delete_transaction(
     """
     db_transaction = get_transaction_or_404(db, transaction_id)
 
+    # Capture portfolio_id before deletion
+    portfolio_id = db_transaction.portfolio_id
+
     db.delete(db_transaction)
     db.commit()
+
+    # Invalidate analytics cache for this portfolio
+    analytics_service.invalidate_cache(portfolio_id)
 
     return None
 
@@ -395,7 +402,7 @@ def get_portfolio_transactions(
         db: Session = Depends(get_db),
         # Optional filters
         asset_id: int | None = Query(default=None, description="Filter by asset"),
-        ticker: str | None = Query(default=None, description="Filter by ticker"),
+        ticker: TickerQuery = Query(default=None, description="Filter by ticker"),
         transaction_type: TransactionType | None = Query(default=None, description="Filter by type"),
         date_from: datetime | None = Query(default=None, description="From date"),
         date_to: datetime | None = Query(default=None, description="To date"),
@@ -423,7 +430,7 @@ def get_portfolio_transactions(
             query
             .join(Transaction.asset)
             .options(contains_eager(Transaction.asset))
-            .where(Asset.ticker == ticker.upper())
+            .where(Asset.ticker == ticker)  # Already normalized by validator
         )
     else:
         # Use joinedload when not filtering by asset
@@ -452,9 +459,7 @@ def get_portfolio_transactions(
 
     return TransactionListResponse(
         items=list(transactions),
-        total=total,
-        skip=skip,
-        limit=limit
+        pagination=PaginationMeta.create(total=total, skip=skip, limit=limit),
     )
 
 
@@ -469,6 +474,7 @@ def create_transactions_batch(
         transactions: list[TransactionCreate],
         db: Session = Depends(get_db),
         asset_service: AssetResolutionService = Depends(get_asset_resolution_service),
+        analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> list[Transaction]:
     """
     Create multiple transactions in a single request.
@@ -486,10 +492,10 @@ def create_transactions_batch(
     ).all()
 
     if len(existing_portfolios) != len(portfolio_ids):
-        missing = portfolio_ids - set(existing_portfolios)
+        missing = sorted(portfolio_ids - set(existing_portfolios))
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolios not found: {missing}"
+            detail=f"Portfolios not found: {', '.join(str(p) for p in missing)}"
         )
 
     # 2. Batch Resolve Assets
@@ -503,14 +509,15 @@ def create_transactions_batch(
     if not resolution_result.all_resolved:
         errors = []
         for key in resolution_result.deactivated:
-            errors.append(f"Asset '{key[0]}' on '{key[1]}' is deactivated")
+            errors.append(f"{key[0]} on {key[1]}: deactivated")
         for key in resolution_result.not_found:
-            errors.append(f"Asset '{key[0]}' on '{key[1]}' not found")
+            errors.append(f"{key[0]} on {key[1]}: not found")
         for key, exc in resolution_result.errors.items():
-            errors.append(f"Asset '{key[0]}' on '{key[1]}': {exc}")
+            errors.append(f"{key[0]} on {key[1]}: {exc}")
+        error_list = "; ".join(errors)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Some assets could not be resolved", "errors": errors}
+            detail=f"Asset resolution failed: {error_list}"
         )
 
     # 4. Create Transaction Objects
@@ -549,7 +556,11 @@ def create_transactions_batch(
             detail=f"Database commit failed: {str(e)}"
         )
 
-    # 6. Reload with eager-loaded assets for response
+    # 6. Invalidate analytics cache for all affected portfolios
+    for portfolio_id in portfolio_ids:
+        analytics_service.invalidate_cache(portfolio_id)
+
+    # 7. Reload with eager-loaded assets for response
     result_ids = [txn.id for txn in new_transactions]
     query = (
         select(Transaction)

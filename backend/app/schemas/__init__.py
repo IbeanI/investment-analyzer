@@ -8,6 +8,7 @@ This package contains all Pydantic schemas organized by domain:
 - portfolios: Portfolio CRUD operations
 - transactions: Transaction CRUD operations
 - assets: Asset CRUD operations
+- pagination: Standardized pagination for list endpoints
 - errors: Error response formats
 
 Usage:
@@ -18,6 +19,7 @@ Usage:
     from app.schemas import SyncResult, SyncStatusResponse
     from app.schemas import PortfolioValuationResponse
     from app.schemas import ExchangeRateResponse
+    from app.schemas import PaginationMeta, PaginatedResponse
 """
 
 from app.schemas.analytics import (
@@ -52,6 +54,12 @@ from app.schemas.exchange_rates import (
     ExchangeRateResponse,
     ExchangeRateRangeResponse,
     ExchangeRateLookup,
+)
+from app.schemas.pagination import (
+    PaginationMeta,
+    PaginatedResponse,
+    create_pagination_meta,
+    paginate_dict,
 )
 from app.schemas.market_data import (
     MarketDataSyncRequest,
@@ -190,4 +198,10 @@ __all__ = [
     "BenchmarkResponse",
     "AnalyticsResponse",
     "AnalyticsQueryParams",
+
+    # Pagination
+    "PaginationMeta",
+    "PaginatedResponse",
+    "create_pagination_meta",
+    "paginate_dict",
 ]

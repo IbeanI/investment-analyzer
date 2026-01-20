@@ -21,6 +21,9 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.pagination import PaginationMeta
+from app.schemas.validators import validate_currency
+
 
 # =============================================================================
 # BASE SCHEMA
@@ -43,13 +46,12 @@ class PortfolioBase(BaseModel):
         default="EUR",
         min_length=3,
         max_length=3,
-        pattern=r"^[A-Z]{3}$",
         examples=["EUR", "USD", "GBP"],
         description="Base currency for portfolio valuation (ISO 4217)"
     )
 
     # =========================================================================
-    # FIELD VALIDATORS (Normalization)
+    # FIELD VALIDATORS (Normalization & Validation)
     # =========================================================================
 
     @field_validator('name')
@@ -60,9 +62,9 @@ class PortfolioBase(BaseModel):
 
     @field_validator('currency')
     @classmethod
-    def normalize_currency(cls, v: str) -> str:
-        """Normalize currency: trim whitespace and uppercase."""
-        return v.strip().upper()
+    def validate_and_normalize_currency(cls, v: str) -> str:
+        """Validate and normalize currency code."""
+        return validate_currency(v)
 
 
 # =============================================================================
@@ -108,12 +110,11 @@ class PortfolioUpdate(BaseModel):
         default=None,
         min_length=3,
         max_length=3,
-        pattern=r"^[A-Z]{3}$",
         description="New base currency (changing this affects all valuations)"
     )
 
     # =========================================================================
-    # FIELD VALIDATORS (Normalization)
+    # FIELD VALIDATORS (Normalization & Validation)
     # =========================================================================
 
     @field_validator('name')
@@ -125,10 +126,10 @@ class PortfolioUpdate(BaseModel):
 
     @field_validator('currency')
     @classmethod
-    def normalize_currency(cls, v: str | None) -> str | None:
+    def validate_and_normalize_currency(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        return v.strip().upper()
+        return validate_currency(v)
 
 
 # =============================================================================
@@ -152,10 +153,12 @@ class PortfolioResponse(PortfolioBase):
 
 class PortfolioListResponse(BaseModel):
     """
-    Response schemas for paginated portfolio list.
+    Response schema for paginated portfolio list.
+
+    Attributes:
+        items: List of portfolios for current page
+        pagination: Pagination metadata with computed fields
     """
 
-    items: list[PortfolioResponse]
-    total: int = Field(..., description="Total number of portfolios matching the filters")
-    skip: int = Field(..., description="Number of records skipped")
-    limit: int = Field(..., description="Maximum number of records returned")
+    items: list[PortfolioResponse] = Field(..., description="List of portfolios for current page")
+    pagination: PaginationMeta = Field(..., description="Pagination metadata")

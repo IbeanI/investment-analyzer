@@ -10,18 +10,26 @@ When auth is implemented (Phase 5), endpoints will automatically use
 the authenticated user's ID from the JWT token.
 """
 
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import AfterValidator
+from sqlalchemy import select, func
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import Portfolio, User
+from app.schemas.pagination import PaginationMeta
 from app.schemas.portfolios import (
     PortfolioCreate,
     PortfolioUpdate,
     PortfolioResponse,
     PortfolioListResponse,
 )
-from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select, func
-from sqlalchemy.orm import Session
+from app.schemas.validators import validate_currency_query
 
-from app.database import get_db
-from app.models import Portfolio, User
+# Validated query parameter type
+CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
 
 # =============================================================================
 # ROUTER SETUP
@@ -119,12 +127,13 @@ def list_portfolios(
             default=None,
             description="Filter by user ID (required until auth is implemented)"
         ),
-        currency: str | None = Query(
+        currency: CurrencyQuery = Query(
             default=None,
-            description="Filter by base currency"
+            description="Filter by base currency (ISO 4217, e.g., EUR, USD)"
         ),
         search: str | None = Query(
             default=None,
+            max_length=100,
             description="Search in portfolio name"
         ),
         # Pagination
@@ -151,7 +160,7 @@ def list_portfolios(
         query = query.where(Portfolio.user_id == user_id)
 
     if currency is not None:
-        query = query.where(Portfolio.currency == currency.upper())
+        query = query.where(Portfolio.currency == currency)  # Already normalized by validator
 
     if search is not None:
         search_pattern = f"%{search}%"
@@ -169,9 +178,7 @@ def list_portfolios(
 
     return PortfolioListResponse(
         items=list(portfolios),
-        total=total,
-        skip=skip,
-        limit=limit
+        pagination=PaginationMeta.create(total=total, skip=skip, limit=limit),
     )
 
 

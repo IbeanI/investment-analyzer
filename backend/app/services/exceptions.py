@@ -7,6 +7,10 @@ The router layer is responsible for mapping these to appropriate HTTP responses.
 
 Exception Hierarchy:
     ServiceError (base)
+    ├── ValidationError
+    │   └── InvalidIntervalError
+    ├── NotFoundError
+    │   └── PortfolioNotFoundError
     ├── AssetResolutionError
     │   ├── AssetNotFoundError
     │   └── AssetDeactivatedError
@@ -14,9 +18,15 @@ Exception Hierarchy:
     │   ├── ProviderUnavailableError
     │   ├── TickerNotFoundError
     │   └── RateLimitError
-    └── FXRateError (NEW - Phase 3)
-        ├── FXRateNotFoundError
-        └── FXProviderError
+    ├── FXRateError
+    │   ├── FXRateNotFoundError
+    │   ├── FXProviderError
+    │   └── FXConversionError
+    └── AnalyticsError
+        └── BenchmarkNotSyncedError
+
+    CircuitBreakerOpen (from circuit_breaker module)
+        - Raised when circuit breaker is open and blocking requests
 """
 
 from datetime import date
@@ -36,6 +46,85 @@ class ServiceError(Exception):
 
     def __str__(self) -> str:
         return self.message
+
+
+# =============================================================================
+# VALIDATION ERRORS
+# =============================================================================
+
+
+class ValidationError(ServiceError):
+    """
+    Raised when input validation fails.
+
+    This is for programmatic validation errors (invalid parameters, missing
+    required fields, etc.), NOT for user input validation which is handled
+    by Pydantic.
+
+    Attributes:
+        field: The field that failed validation (optional)
+    """
+
+    def __init__(self, message: str, field: str | None = None) -> None:
+        self.field = field
+        super().__init__(message)
+
+
+class InvalidIntervalError(ValidationError):
+    """
+    Raised when an invalid interval is specified for time series.
+
+    Valid intervals are: daily, weekly, monthly
+    """
+
+    def __init__(self, interval: str) -> None:
+        self.interval = interval
+        super().__init__(
+            f"Invalid interval: '{interval}'. Valid options: daily, weekly, monthly",
+            field="interval"
+        )
+
+
+# =============================================================================
+# NOT FOUND ERRORS
+# =============================================================================
+
+
+class NotFoundError(ServiceError):
+    """
+    Base exception for resource not found errors.
+
+    Attributes:
+        resource_type: Type of resource (e.g., "Portfolio", "Asset")
+        resource_id: Identifier of the resource
+    """
+
+    def __init__(
+            self,
+            message: str,
+            resource_type: str | None = None,
+            resource_id: int | str | None = None,
+    ) -> None:
+        self.resource_type = resource_type
+        self.resource_id = resource_id
+        super().__init__(message)
+
+
+class PortfolioNotFoundError(NotFoundError):
+    """
+    Raised when a portfolio cannot be found.
+
+    Attributes:
+        portfolio_id: ID of the portfolio that was not found
+    """
+
+    def __init__(self, portfolio_id: int) -> None:
+        self.portfolio_id = portfolio_id
+        super().__init__(
+            f"Portfolio {portfolio_id} not found",
+            resource_type="Portfolio",
+            resource_id=portfolio_id,
+        )
 
 
 # =============================================================================
@@ -229,3 +318,98 @@ class FXProviderError(FXRateError):
         self.provider = provider
         self.reason = reason
         super().__init__(f"FX provider '{provider}' error: {reason}")
+
+
+class FXConversionError(FXRateError):
+    """
+    Raised when FX rate conversion fails due to invalid parameters.
+
+    Examples:
+    - Attempting to invert a zero rate
+    - Invalid rate value (negative, None)
+
+    Attributes:
+        reason: Specific reason for conversion failure
+    """
+
+    def __init__(
+            self,
+            reason: str,
+            base_currency: str | None = None,
+            quote_currency: str | None = None,
+    ) -> None:
+        self.reason = reason
+        super().__init__(
+            f"FX conversion error: {reason}",
+            base_currency=base_currency,
+            quote_currency=quote_currency,
+        )
+
+
+# =============================================================================
+# ANALYTICS ERRORS
+# =============================================================================
+
+
+class AnalyticsError(ServiceError):
+    """
+    Base exception for analytics calculation errors.
+    """
+    pass
+
+
+class BenchmarkNotSyncedError(AnalyticsError):
+    """
+    Raised when benchmark data is required but not available.
+
+    This typically means:
+    - Benchmark asset not in database
+    - Benchmark has no price data for requested period
+    - User needs to sync benchmark data first
+
+    Attributes:
+        symbol: The benchmark symbol that's not synced
+    """
+
+    def __init__(self, symbol: str, message: str | None = None) -> None:
+        self.symbol = symbol
+        msg = message or f"Benchmark '{symbol}' is not synced. Please sync benchmark data first."
+        super().__init__(msg)
+
+
+# =============================================================================
+# CIRCUIT BREAKER (re-exported for convenience)
+# =============================================================================
+
+# Re-export CircuitBreakerOpen for easier importing alongside other exceptions
+from app.services.circuit_breaker import CircuitBreakerOpen
+
+__all__ = [
+    # Base
+    "ServiceError",
+    # Validation
+    "ValidationError",
+    "InvalidIntervalError",
+    # Not Found
+    "NotFoundError",
+    "PortfolioNotFoundError",
+    # Asset Resolution
+    "AssetResolutionError",
+    "AssetNotFoundError",
+    "AssetDeactivatedError",
+    # Market Data
+    "MarketDataError",
+    "ProviderUnavailableError",
+    "TickerNotFoundError",
+    "RateLimitError",
+    # FX Rate
+    "FXRateError",
+    "FXRateNotFoundError",
+    "FXProviderError",
+    "FXConversionError",
+    # Analytics
+    "AnalyticsError",
+    "BenchmarkNotSyncedError",
+    # Circuit Breaker
+    "CircuitBreakerOpen",
+]

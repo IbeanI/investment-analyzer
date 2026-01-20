@@ -121,29 +121,16 @@ def get_portfolio_settings(
 
     logger.info(f"Getting settings for portfolio {portfolio_id}")
 
-    try:
-        settings = service.get_or_create_default(db, portfolio_id)
+    # Domain exceptions (PortfolioNotFoundError) propagate to global handlers
+    settings = service.get_or_create_default(db, portfolio_id)
 
-        return PortfolioSettingsResponse(
-            id=settings.id,
-            portfolio_id=settings.portfolio_id,
-            enable_proxy_backcasting=settings.enable_proxy_backcasting,
-            created_at=settings.created_at,
-            updated_at=settings.updated_at,
-        )
-
-    except ValueError as e:
-        # Portfolio not found (shouldn't happen due to get_portfolio_or_404)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except Exception as e:
-        logger.error(f"Error getting settings for portfolio {portfolio_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get portfolio settings: {str(e)}",
-        )
+    return PortfolioSettingsResponse(
+        id=settings.id,
+        portfolio_id=settings.portfolio_id,
+        enable_proxy_backcasting=settings.enable_proxy_backcasting,
+        created_at=settings.created_at,
+        updated_at=settings.updated_at,
+    )
 
 
 @router.patch(
@@ -201,31 +188,18 @@ def update_portfolio_settings(
         f"{settings_update.model_dump(exclude_unset=True)}"
     )
 
-    try:
-        result = service.update_settings(
-            db=db,
-            portfolio_id=portfolio_id,
-            enable_proxy_backcasting=settings_update.enable_proxy_backcasting,
-        )
+    # Domain exceptions (PortfolioNotFoundError) propagate to global handlers
+    result = service.update_settings(
+        db=db,
+        portfolio_id=portfolio_id,
+        enable_proxy_backcasting=settings_update.enable_proxy_backcasting,
+    )
 
-        return PortfolioSettingsUpdateResponse(
-            id=result.settings.id,
-            portfolio_id=result.settings.portfolio_id,
-            enable_proxy_backcasting=result.settings.enable_proxy_backcasting,
-            created_at=result.settings.created_at,
-            updated_at=result.settings.updated_at,
-            warning=result.warning,
-        )
-
-    except ValueError as e:
-        # Portfolio not found (shouldn't happen due to get_portfolio_or_404)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=str(e),
-        )
-    except Exception as e:
-        logger.error(f"Error updating settings for portfolio {portfolio_id}: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update portfolio settings: {str(e)}",
-        )
+    return PortfolioSettingsUpdateResponse(
+        id=result.settings.id,
+        portfolio_id=result.settings.portfolio_id,
+        enable_proxy_backcasting=result.settings.enable_proxy_backcasting,
+        created_at=result.settings.created_at,
+        updated_at=result.settings.updated_at,
+        warning=result.warning,
+    )

@@ -46,6 +46,7 @@ Usage:
 import logging
 import threading
 from datetime import date, datetime, timedelta
+import decimal
 from decimal import Decimal
 from typing import Any
 
@@ -79,27 +80,14 @@ logger = logging.getLogger(__name__)
 # Do not change this - weekly/monthly data will produce inaccurate results.
 _INTERNAL_INTERVAL = "daily"
 
-# Default risk-free rate (2% annual)
-DEFAULT_RISK_FREE_RATE = Decimal("0.02")
-
-# Synthetic data reliability thresholds
-# These trigger warnings about data quality in analytics results
-SYNTHETIC_WARNING_THRESHOLD = Decimal("20")  # Warn if >20% synthetic data
-SYNTHETIC_CRITICAL_THRESHOLD = Decimal("50")  # Critical warning if >50% synthetic
-
-# Default benchmarks by portfolio currency
-# ^SPX = S&P 500 Index
-# IWDA.AS = iShares MSCI World ETF (Amsterdam)
-DEFAULT_BENCHMARKS: dict[str, str] = {
-    "USD": "^SPX",
-    "EUR": "IWDA.AS",
-    "GBP": "^SPX",  # Fallback to S&P 500
-    "CHF": "^SPX",  # Fallback to S&P 500
-    "DEFAULT": "^SPX",  # Default fallback
-}
-
-# Cache TTL in seconds (1 hour)
-CACHE_TTL_SECONDS = 3600
+# Import centralized constants
+from app.services.constants import (
+    DEFAULT_RISK_FREE_RATE,
+    SYNTHETIC_WARNING_THRESHOLD,
+    SYNTHETIC_CRITICAL_THRESHOLD,
+    DEFAULT_BENCHMARKS,
+    CACHE_TTL_SECONDS,
+)
 
 
 # =============================================================================
@@ -212,25 +200,8 @@ class AnalyticsCache:
         logger.debug(f"Cleared {count} cache entries")
 
 
-# =============================================================================
-# EXCEPTIONS
-# =============================================================================
-
-class BenchmarkNotSyncedError(Exception):
-    """
-    Raised when benchmark data is not available in the database.
-
-    The benchmark must be added as an Asset and its market data
-    must be synced before analytics can run.
-    """
-
-    def __init__(self, symbol: str, message: str | None = None):
-        self.symbol = symbol
-        self.message = message or (
-            f"Benchmark '{symbol}' not found in database. "
-            f"Add it as an asset and run market data sync first."
-        )
-        super().__init__(self.message)
+# Import BenchmarkNotSyncedError from centralized exceptions
+from app.services.exceptions import BenchmarkNotSyncedError
 
 
 # =============================================================================
@@ -933,16 +904,38 @@ class AnalyticsService:
         return {md.date: md.close_price for md in market_data if md.close_price}
 
     def _annualize_return(self, total_return: Decimal, days: int) -> Decimal:
-        """Annualize a return."""
+        """
+        Annualize a return using Decimal arithmetic for precision.
+
+        Formula: (1 + r)^(365/days) - 1
+
+        Uses Python's Decimal.__pow__() which supports non-integer exponents,
+        maintaining full precision without float conversion.
+
+        Args:
+            total_return: Total return as decimal (e.g., 0.15 = 15%)
+            days: Number of calendar days in the period
+
+        Returns:
+            Annualized return as Decimal
+        """
         if days <= 0:
             return total_return
 
         base = Decimal("1") + total_return
         if base <= 0:
-            return Decimal("-1")
+            return Decimal("-1")  # Total loss
 
         exponent = Decimal("365") / Decimal(str(days))
-        return Decimal(str(float(base) ** float(exponent))) - Decimal("1")
+
+        # Use Decimal power operation for full precision.
+        # Decimal.__pow__() supports non-integer exponents.
+        try:
+            return base ** exponent - Decimal("1")
+        except decimal.InvalidOperation:
+            # Fallback to float for edge cases (extremely large/small values)
+            # This should rarely if ever occur in normal financial calculations
+            return Decimal(str(float(base) ** float(exponent))) - Decimal("1")
 
     def _build_not_found_result(
             self,

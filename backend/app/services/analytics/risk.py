@@ -39,16 +39,13 @@ from app.services.analytics.types import (
     InvestmentPeriod,
     MeasurementPeriodInfo
 )
+from app.services.constants import (
+    TRADING_DAYS_PER_YEAR,
+    DEFAULT_RISK_FREE_RATE,
+    ZERO,
+)
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-TRADING_DAYS_PER_YEAR = 252
-DEFAULT_RISK_FREE_RATE = Decimal("0.02")  # 2% annual
-ZERO = Decimal("0")  # Type-safe zero for Decimal comparisons
 
 
 # =============================================================================

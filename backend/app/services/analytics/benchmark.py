@@ -34,15 +34,12 @@ from decimal import Decimal
 from statistics import mean, stdev
 
 from app.services.analytics.types import BenchmarkMetrics
+from app.services.constants import (
+    TRADING_DAYS_PER_YEAR,
+    DEFAULT_RISK_FREE_RATE,
+)
 
 logger = logging.getLogger(__name__)
-
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-
-TRADING_DAYS_PER_YEAR = 252
-DEFAULT_RISK_FREE_RATE = Decimal("0.02")  # 2% annual
 
 
 # =============================================================================

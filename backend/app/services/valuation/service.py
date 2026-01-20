@@ -66,6 +66,8 @@ from app.services.valuation.types import (
     CashBalance,
     PortfolioHistory,
 )
+from app.services.constants import PRICE_FALLBACK_DAYS
+from app.services.exceptions import PortfolioNotFoundError
 
 if TYPE_CHECKING:
     from app.services.protocols import FXRateServiceProtocol
@@ -91,9 +93,6 @@ class ValuationService:
         _realized_pnl_calc: Calculator for realized P&L
         _history_calc: Calculator for time series
     """
-
-    # Price fallback configuration
-    PRICE_FALLBACK_DAYS: int = 5
 
     def __init__(self, fx_service: FXRateServiceProtocol | None = None) -> None:
         """
@@ -167,7 +166,7 @@ class ValuationService:
         # Step 1: Get portfolio
         portfolio = db.get(Portfolio, portfolio_id)
         if portfolio is None:
-            raise ValueError(f"Portfolio {portfolio_id} not found")
+            raise PortfolioNotFoundError(portfolio_id)
 
         portfolio_currency = portfolio.currency
 
@@ -408,7 +407,7 @@ class ValuationService:
         # Verify portfolio exists
         portfolio = db.get(Portfolio, portfolio_id)
         if portfolio is None:
-            raise ValueError(f"Portfolio {portfolio_id} not found")
+            raise PortfolioNotFoundError(portfolio_id)
 
         # Fetch data
         transactions_by_asset, assets = self._fetch_transactions_and_assets(
@@ -565,7 +564,7 @@ class ValuationService:
             return {}
 
         # Calculate extended date range for fallback
-        start_date = target_date - timedelta(days=self.PRICE_FALLBACK_DAYS)
+        start_date = target_date - timedelta(days=PRICE_FALLBACK_DAYS)
 
         query = (
             select(MarketData)
@@ -612,7 +611,7 @@ class ValuationService:
             Tuple of (price, price_date, is_synthetic, proxy_source_id)
             All None if not found within fallback window.
         """
-        for days_back in range(self.PRICE_FALLBACK_DAYS + 1):
+        for days_back in range(PRICE_FALLBACK_DAYS + 1):
             check_date = target_date - timedelta(days=days_back)
             price_data = price_map.get((asset_id, check_date))
             if price_data is not None:

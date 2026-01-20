@@ -29,11 +29,13 @@ from app.models import (
 )
 from app.services.exceptions import (
     FXRateNotFoundError,
+    FXConversionError,
 )
 from app.services.fx_rate_service import (
     FXRateService,
     FXRateResult,
 )
+from app.services.constants import FX_FALLBACK_DAYS
 from app.services.market_data.base import (
     MarketDataProvider,
     HistoricalPricesResult,
@@ -138,7 +140,7 @@ class TestFXRateServiceInit:
     def test_init_with_defaults(self, mock_provider):
         """Service should initialize with default settings."""
         service = FXRateService(provider=mock_provider)
-        assert service._max_fallback_days == FXRateService.MAX_FALLBACK_DAYS
+        assert service._max_fallback_days == FX_FALLBACK_DAYS
         assert service._provider == mock_provider
 
     def test_init_with_custom_fallback_days(self, mock_provider):
@@ -701,7 +703,7 @@ class TestUtilityMethods:
 
     def test_invert_rate_zero_raises(self):
         """Should raise error for zero rate."""
-        with pytest.raises(ValueError):
+        with pytest.raises(FXConversionError):
             FXRateService.invert_rate(Decimal("0"))
 
     def test_get_business_days(self):
@@ -795,7 +797,7 @@ class TestConversionHelpers:
             rate=Decimal("0"),
         )
 
-        with pytest.raises(ValueError, match="Invalid FX rate"):
+        with pytest.raises(FXConversionError, match="Invalid FX rate"):
             fx_service.convert_to_quote_currency(Decimal("100"), rate_result)
 
     def test_convert_to_quote_currency_negative_rate_raises(self, fx_service):
@@ -807,7 +809,7 @@ class TestConversionHelpers:
             rate=Decimal("-0.92"),
         )
 
-        with pytest.raises(ValueError, match="Invalid FX rate"):
+        with pytest.raises(FXConversionError, match="Invalid FX rate"):
             fx_service.convert_to_quote_currency(Decimal("100"), rate_result)
 
     def test_convert_to_base_currency_zero_rate_raises(self, fx_service):
@@ -819,7 +821,7 @@ class TestConversionHelpers:
             rate=Decimal("0"),
         )
 
-        with pytest.raises(ValueError, match="Invalid FX rate"):
+        with pytest.raises(FXConversionError, match="Invalid FX rate"):
             fx_service.convert_to_base_currency(Decimal("100"), rate_result)
 
     def test_convert_to_base_currency_negative_rate_raises(self, fx_service):
@@ -831,5 +833,5 @@ class TestConversionHelpers:
             rate=Decimal("-0.92"),
         )
 
-        with pytest.raises(ValueError, match="Invalid FX rate"):
+        with pytest.raises(FXConversionError, match="Invalid FX rate"):
             fx_service.convert_to_base_currency(Decimal("100"), rate_result)

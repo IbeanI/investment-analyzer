@@ -44,6 +44,7 @@ Usage:
 """
 
 import logging
+import threading
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -107,15 +108,16 @@ CACHE_TTL_SECONDS = 3600
 
 class AnalyticsCache:
     """
-    Simple in-memory TTL cache for analytics results.
+    Thread-safe in-memory TTL cache for analytics results.
 
     Analytics calculations are CPU-intensive, so we cache results
     for 1 hour to avoid redundant recalculation.
 
     Cache key format: "analytics:{portfolio_id}:{start}:{end}:{benchmark}"
 
-    Note: This is a simple in-memory cache. For production with multiple
-    workers, consider using Redis instead.
+    Thread Safety:
+        Uses threading.Lock for safe concurrent access in single-worker mode.
+        For production with multiple workers, consider using Redis instead.
     """
 
     def __init__(self, ttl_seconds: int = CACHE_TTL_SECONDS):
@@ -127,6 +129,7 @@ class AnalyticsCache:
         """
         self._cache: dict[str, tuple[datetime, Any]] = {}
         self._ttl = timedelta(seconds=ttl_seconds)
+        self._lock = threading.Lock()
 
     def _make_key(
             self,
@@ -153,15 +156,16 @@ class AnalyticsCache:
         """
         key = self._make_key(portfolio_id, start_date, end_date, benchmark)
 
-        if key in self._cache:
-            timestamp, result = self._cache[key]
-            if datetime.now() - timestamp < self._ttl:
-                logger.debug(f"Cache hit for {key}")
-                return result
-            else:
-                # Expired - remove from cache
-                del self._cache[key]
-                logger.debug(f"Cache expired for {key}")
+        with self._lock:
+            if key in self._cache:
+                timestamp, result = self._cache[key]
+                if datetime.now() - timestamp < self._ttl:
+                    logger.debug(f"Cache hit for {key}")
+                    return result
+                else:
+                    # Expired - remove from cache
+                    del self._cache[key]
+                    logger.debug(f"Cache expired for {key}")
 
         return None
 
@@ -175,7 +179,8 @@ class AnalyticsCache:
     ) -> None:
         """Store result in cache."""
         key = self._make_key(portfolio_id, start_date, end_date, benchmark)
-        self._cache[key] = (datetime.now(), result)
+        with self._lock:
+            self._cache[key] = (datetime.now(), result)
         logger.debug(f"Cached result for {key}")
 
     def invalidate(self, portfolio_id: int) -> int:
@@ -189,10 +194,10 @@ class AnalyticsCache:
             Number of entries invalidated
         """
         prefix = f"analytics:{portfolio_id}:"
-        keys_to_delete = [k for k in self._cache.keys() if k.startswith(prefix)]
-
-        for key in keys_to_delete:
-            del self._cache[key]
+        with self._lock:
+            keys_to_delete = [k for k in self._cache.keys() if k.startswith(prefix)]
+            for key in keys_to_delete:
+                del self._cache[key]
 
         if keys_to_delete:
             logger.debug(f"Invalidated {len(keys_to_delete)} cache entries for portfolio {portfolio_id}")
@@ -201,8 +206,9 @@ class AnalyticsCache:
 
     def clear(self) -> None:
         """Clear all cached entries."""
-        count = len(self._cache)
-        self._cache.clear()
+        with self._lock:
+            count = len(self._cache)
+            self._cache.clear()
         logger.debug(f"Cleared {count} cache entries")
 
 

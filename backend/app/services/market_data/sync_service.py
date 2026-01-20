@@ -39,6 +39,7 @@ from datetime import date, datetime, timezone, timedelta
 from typing import Any
 
 from sqlalchemy import select, func, and_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -807,10 +808,11 @@ class MarketDataSyncService:
             prices: list[OHLCVData],
     ) -> int:
         """
-        Store OHLCV prices in the database using upsert.
+        Store OHLCV prices in the database using bulk upsert.
 
-        Backward-compatible: Works with both old schema (close_price only)
-        and new schema (open_price, high_price, low_price, close_price).
+        Uses PostgreSQL's INSERT ... ON CONFLICT DO UPDATE for efficient
+        bulk operations. This is significantly faster than individual
+        SELECT + INSERT/UPDATE per record.
 
         Args:
             db: Database session
@@ -823,8 +825,6 @@ class MarketDataSyncService:
         if not prices:
             return 0
 
-        stored_count = 0
-
         # Check if OHLC columns exist by inspecting the model
         has_ohlc = hasattr(MarketData, 'open_price')
 
@@ -833,60 +833,60 @@ class MarketDataSyncService:
         if not isinstance(provider_name, str):
             provider_name = str(provider_name) if provider_name else 'unknown'
 
+        # Build list of records for bulk upsert
+        records = []
         for p in prices:
-            try:
-                # Check if record exists
-                existing = db.scalar(
-                    select(MarketData).where(
-                        and_(
-                            MarketData.asset_id == asset_id,
-                            MarketData.date == p.date,
-                        )
-                    )
-                )
+            record = {
+                "asset_id": asset_id,
+                "date": p.date,
+                "close_price": p.close,
+                "adjusted_close": p.adjusted_close,
+                "volume": p.volume,
+                "provider": provider_name,
+                "is_synthetic": False,
+                "proxy_source_id": None,
+            }
 
-                if existing:
-                    # Update existing record
-                    existing.close_price = p.close
-                    existing.adjusted_close = p.adjusted_close
-                    existing.volume = p.volume
-                    existing.provider = provider_name
+            # Add OHLC if columns exist
+            if has_ohlc:
+                record["open_price"] = p.open
+                record["high_price"] = p.high
+                record["low_price"] = p.low
 
-                    # Only set OHLC if columns exist
-                    if has_ohlc:
-                        existing.open_price = p.open
-                        existing.high_price = p.high
-                        existing.low_price = p.low
-                else:
-                    # Build record dict with required fields
-                    record_data = {
-                        "asset_id": asset_id,
-                        "date": p.date,
-                        "close_price": p.close,
-                        "adjusted_close": p.adjusted_close,
-                        "volume": p.volume,
-                        "provider": provider_name,
-                        "is_synthetic": False,
-                        "proxy_source_id": None,
-                    }
+            records.append(record)
 
-                    # Add OHLC if columns exist
-                    if has_ohlc:
-                        record_data["open_price"] = p.open
-                        record_data["high_price"] = p.high
-                        record_data["low_price"] = p.low
+        try:
+            # PostgreSQL bulk upsert using ON CONFLICT DO UPDATE
+            stmt = pg_insert(MarketData).values(records)
 
-                    new_record = MarketData(**record_data)
-                    db.add(new_record)
+            # Define columns to update on conflict
+            update_columns = {
+                "close_price": stmt.excluded.close_price,
+                "adjusted_close": stmt.excluded.adjusted_close,
+                "volume": stmt.excluded.volume,
+                "provider": stmt.excluded.provider,
+            }
 
-                stored_count += 1
+            # Add OHLC columns if they exist
+            if has_ohlc:
+                update_columns["open_price"] = stmt.excluded.open_price
+                update_columns["high_price"] = stmt.excluded.high_price
+                update_columns["low_price"] = stmt.excluded.low_price
 
-            except Exception as e:
-                logger.error(f"Error storing price for asset {asset_id} date {p.date}: {e}")
-                raise  # Re-raise to be caught by caller
+            # Conflict on unique constraint (asset_id, date)
+            upsert_stmt = stmt.on_conflict_do_update(
+                index_elements=["asset_id", "date"],
+                set_=update_columns,
+            )
 
-        db.commit()
-        return stored_count
+            db.execute(upsert_stmt)
+            db.commit()
+
+            return len(records)
+
+        except Exception as e:
+            logger.error(f"Error storing prices for asset {asset_id}: {e}")
+            raise
 
     @staticmethod
     def _get_business_days(start_date: date, end_date: date) -> list[date]:

@@ -42,7 +42,7 @@ from app.services.valuation.types import (
 )
 
 if TYPE_CHECKING:
-    from app.services.fx_rate_service import FXRateService
+    from app.services.protocols import FXRateServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -353,14 +353,14 @@ class ValueCalculator:
         the inverse convention!
     """
 
-    def __init__(self, fx_service: FXRateService) -> None:
+    def __init__(self, fx_service: FXRateServiceProtocol) -> None:
         """
         Initialize with FX service dependency.
 
         Args:
             fx_service: Service for FX rate lookups
         """
-        self._fx_service = fx_service
+        self._fx_service: FXRateServiceProtocol = fx_service
 
     def calculate(
             self,

@@ -53,6 +53,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Transaction, TransactionType, Portfolio, Asset, MarketData
 from app.services.analytics.benchmark import BenchmarkCalculator
+from app.services.protocols import ValuationServiceProtocol
 from app.services.analytics.returns import ReturnsCalculator
 from app.services.analytics.risk import RiskCalculator
 from app.services.analytics.types import (
@@ -253,7 +254,7 @@ class AnalyticsService:
 
     def __init__(
             self,
-            valuation_service=None,
+            valuation_service: ValuationServiceProtocol | None = None,
             cache: AnalyticsCache | None = None,
     ):
         """
@@ -269,7 +270,7 @@ class AnalyticsService:
             from app.services.valuation import ValuationService
             valuation_service = ValuationService()
 
-        self._valuation_service = valuation_service
+        self._valuation_service: ValuationServiceProtocol = valuation_service
 
         # Use shared cache or create one
         if cache is not None:

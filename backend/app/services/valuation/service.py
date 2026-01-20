@@ -68,7 +68,7 @@ from app.services.valuation.types import (
 )
 
 if TYPE_CHECKING:
-    from app.services.fx_rate_service import FXRateService
+    from app.services.protocols import FXRateServiceProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class ValuationService:
     # Price fallback configuration
     PRICE_FALLBACK_DAYS: int = 5
 
-    def __init__(self, fx_service: FXRateService | None = None) -> None:
+    def __init__(self, fx_service: FXRateServiceProtocol | None = None) -> None:
         """
         Initialize the valuation service.
 
@@ -109,7 +109,7 @@ class ValuationService:
             from app.services.market_data import YahooFinanceProvider
             fx_service = FXRateService(provider=YahooFinanceProvider())
 
-        self._fx_service = fx_service
+        self._fx_service: FXRateServiceProtocol = fx_service
 
         # Initialize point-in-time calculators
         self._holdings_calc = HoldingsCalculator()

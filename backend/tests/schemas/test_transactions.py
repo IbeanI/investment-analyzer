@@ -313,7 +313,7 @@ class TestNumericValidation:
         data = TransactionCreate(
             portfolio_id=1,
             ticker="BTC",
-            exchange="",
+            exchange="CRYPTO",
             transaction_type=TransactionType.BUY,
             date=datetime(2024, 1, 15, tzinfo=timezone.utc),
             quantity=Decimal("0.00001234"),

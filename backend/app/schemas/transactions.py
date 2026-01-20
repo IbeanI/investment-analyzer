@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import TransactionType
 from app.schemas.assets import AssetResponse
+from app.schemas.validators import validate_ticker, validate_exchange
 
 
 # =============================================================================
@@ -172,15 +173,15 @@ class TransactionCreate(TransactionBase):
 
     @field_validator('ticker')
     @classmethod
-    def normalize_ticker(cls, v: str) -> str:
-        """Normalize ticker: trim whitespace and uppercase."""
-        return v.strip().upper()
+    def validate_and_normalize_ticker(cls, v: str) -> str:
+        """Validate and normalize ticker symbol."""
+        return validate_ticker(v)
 
     @field_validator('exchange')
     @classmethod
-    def normalize_exchange(cls, v: str) -> str:
-        """Normalize exchange: trim whitespace and uppercase."""
-        return v.strip().upper()
+    def validate_and_normalize_exchange(cls, v: str) -> str:
+        """Validate and normalize exchange code."""
+        return validate_exchange(v)
 
 
 # =============================================================================

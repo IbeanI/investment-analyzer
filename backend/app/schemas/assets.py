@@ -18,6 +18,11 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models import AssetClass
+from app.schemas.validators import (
+    validate_ticker,
+    validate_exchange,
+    validate_currency,
+)
 
 
 # =============================================================================
@@ -91,20 +96,20 @@ class AssetBase(BaseModel):
     )
 
     # =========================================================================
-    # FIELD VALIDATORS (Normalization)
+    # FIELD VALIDATORS (Validation + Normalization)
     # =========================================================================
 
     @field_validator('ticker')
     @classmethod
-    def normalize_ticker(cls, v: str) -> str:
-        """Normalize ticker: trim whitespace and uppercase."""
-        return v.strip().upper()
+    def validate_and_normalize_ticker(cls, v: str) -> str:
+        """Validate and normalize ticker symbol."""
+        return validate_ticker(v)
 
     @field_validator('exchange')
     @classmethod
-    def normalize_exchange(cls, v: str) -> str:
-        """Normalize exchange: trim whitespace and uppercase."""
-        return v.strip().upper()
+    def validate_and_normalize_exchange(cls, v: str) -> str:
+        """Validate and normalize exchange code."""
+        return validate_exchange(v)
 
     @field_validator('isin')
     @classmethod
@@ -116,9 +121,9 @@ class AssetBase(BaseModel):
 
     @field_validator('currency')
     @classmethod
-    def normalize_currency(cls, v: str) -> str:
-        """Normalize currency: trim whitespace and uppercase."""
-        return v.strip().upper()
+    def validate_and_normalize_currency(cls, v: str) -> str:
+        """Validate and normalize currency code."""
+        return validate_currency(v)
 
     @field_validator('name')
     @classmethod
@@ -198,22 +203,22 @@ class AssetUpdate(BaseModel):
     )
 
     # =========================================================================
-    # FIELD VALIDATORS (Normalization)
+    # FIELD VALIDATORS (Validation + Normalization)
     # =========================================================================
 
     @field_validator('ticker')
     @classmethod
-    def normalize_ticker(cls, v: str | None) -> str | None:
+    def validate_and_normalize_ticker(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        return v.strip().upper()
+        return validate_ticker(v)
 
     @field_validator('exchange')
     @classmethod
-    def normalize_exchange(cls, v: str | None) -> str | None:
+    def validate_and_normalize_exchange(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        return v.strip().upper()
+        return validate_exchange(v)
 
     @field_validator('isin')
     @classmethod
@@ -224,10 +229,10 @@ class AssetUpdate(BaseModel):
 
     @field_validator('currency')
     @classmethod
-    def normalize_currency(cls, v: str | None) -> str | None:
+    def validate_and_normalize_currency(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        return v.strip().upper()
+        return validate_currency(v)
 
     @field_validator('name', 'sector', 'region')
     @classmethod

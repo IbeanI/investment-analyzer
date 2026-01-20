@@ -32,6 +32,7 @@ from app.services.exceptions import (
 )
 from app.services.fx_rate_service import (
     FXRateService,
+    FXRateResult,
 )
 from app.services.market_data.base import (
     MarketDataProvider,
@@ -784,3 +785,51 @@ class TestConversionHelpers:
             fx_service.convert_amount(
                 db, Decimal("100"), "CHF", "JPY", date(2024, 1, 15)
             )
+
+    def test_convert_to_quote_currency_zero_rate_raises(self, fx_service):
+        """Should raise error when rate is zero."""
+        rate_result = FXRateResult(
+            base_currency="USD",
+            quote_currency="EUR",
+            date=date(2024, 1, 15),
+            rate=Decimal("0"),
+        )
+
+        with pytest.raises(ValueError, match="Invalid FX rate"):
+            fx_service.convert_to_quote_currency(Decimal("100"), rate_result)
+
+    def test_convert_to_quote_currency_negative_rate_raises(self, fx_service):
+        """Should raise error when rate is negative."""
+        rate_result = FXRateResult(
+            base_currency="USD",
+            quote_currency="EUR",
+            date=date(2024, 1, 15),
+            rate=Decimal("-0.92"),
+        )
+
+        with pytest.raises(ValueError, match="Invalid FX rate"):
+            fx_service.convert_to_quote_currency(Decimal("100"), rate_result)
+
+    def test_convert_to_base_currency_zero_rate_raises(self, fx_service):
+        """Should raise error when rate is zero."""
+        rate_result = FXRateResult(
+            base_currency="USD",
+            quote_currency="EUR",
+            date=date(2024, 1, 15),
+            rate=Decimal("0"),
+        )
+
+        with pytest.raises(ValueError, match="Invalid FX rate"):
+            fx_service.convert_to_base_currency(Decimal("100"), rate_result)
+
+    def test_convert_to_base_currency_negative_rate_raises(self, fx_service):
+        """Should raise error when rate is negative."""
+        rate_result = FXRateResult(
+            base_currency="USD",
+            quote_currency="EUR",
+            date=date(2024, 1, 15),
+            rate=Decimal("-0.92"),
+        )
+
+        with pytest.raises(ValueError, match="Invalid FX rate"):
+            fx_service.convert_to_base_currency(Decimal("100"), rate_result)

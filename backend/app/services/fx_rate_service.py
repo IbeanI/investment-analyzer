@@ -994,8 +994,25 @@ class FXRateService:
 
         Returns:
             Amount in quote currency
+
+        Raises:
+            ValueError: If rate is zero, negative, or would produce invalid result
         """
-        return (amount * rate_result.rate).quantize(Decimal("0.01"))
+        if rate_result.rate <= 0:
+            raise ValueError(
+                f"Invalid FX rate {rate_result.rate} for "
+                f"{rate_result.base_currency}/{rate_result.quote_currency}"
+            )
+
+        result = (amount * rate_result.rate).quantize(Decimal("0.01"))
+
+        # Guard against overflow/underflow producing invalid results
+        if not result.is_finite():
+            raise ValueError(
+                f"FX conversion produced invalid result: {amount} * {rate_result.rate}"
+            )
+
+        return result
 
     def convert_to_base_currency(
             self,
@@ -1018,10 +1035,25 @@ class FXRateService:
 
         Returns:
             Amount in base currency
+
+        Raises:
+            ValueError: If rate is zero, negative, or would produce invalid result
         """
-        if rate_result.rate == 0:
-            raise ValueError("Cannot convert with zero rate")
-        return (amount / rate_result.rate).quantize(Decimal("0.01"))
+        if rate_result.rate <= 0:
+            raise ValueError(
+                f"Invalid FX rate {rate_result.rate} for "
+                f"{rate_result.base_currency}/{rate_result.quote_currency}"
+            )
+
+        result = (amount / rate_result.rate).quantize(Decimal("0.01"))
+
+        # Guard against overflow/underflow producing invalid results
+        if not result.is_finite():
+            raise ValueError(
+                f"FX conversion produced invalid result: {amount} / {rate_result.rate}"
+            )
+
+        return result
 
     def convert_amount(
             self,

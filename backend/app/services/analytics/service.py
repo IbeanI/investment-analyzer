@@ -762,6 +762,45 @@ class AnalyticsService:
             logger.error(f"Error getting daily values: {e}")
             return []
 
+    def _calculate_cash_flow_amount(
+            self,
+            txn: Transaction,
+            has_cash_tracking: bool,
+    ) -> Decimal | None:
+        """
+        Calculate cash flow amount for a transaction in portfolio currency.
+
+        Returns signed amount (positive = money in, negative = money out),
+        or None if transaction type is not a cash flow in this mode.
+
+        Args:
+            txn: Transaction to process
+            has_cash_tracking: True if portfolio uses DEPOSIT/WITHDRAWAL
+
+        Returns:
+            Cash flow amount in portfolio currency, or None if not applicable
+        """
+        exchange_rate = txn.exchange_rate or Decimal("1")
+
+        if has_cash_tracking:
+            # Cash tracking mode: only DEPOSIT/WITHDRAWAL are external cash flows
+            if txn.transaction_type == TransactionType.DEPOSIT:
+                return txn.quantity / exchange_rate
+            elif txn.transaction_type == TransactionType.WITHDRAWAL:
+                return -txn.quantity / exchange_rate
+        else:
+            # Non-cash tracking mode: BUY/SELL are external cash flows
+            if txn.transaction_type == TransactionType.BUY:
+                # Cost includes fee: qty × price + fee
+                txn_value_local = (txn.quantity * txn.price_per_share) + txn.fee
+                return txn_value_local / exchange_rate
+            elif txn.transaction_type == TransactionType.SELL:
+                # Proceeds excludes fee: qty × price - fee
+                txn_value_local = (txn.quantity * txn.price_per_share) - txn.fee
+                return -txn_value_local / exchange_rate
+
+        return None
+
     def _get_cash_flows(
             self,
             db: Session,
@@ -786,7 +825,7 @@ class AnalyticsService:
         Returns:
             List of CashFlow objects with date and amount
         """
-        # First, check if portfolio has DEPOSIT/WITHDRAWAL transactions
+        # Check if portfolio has DEPOSIT/WITHDRAWAL transactions
         deposit_withdrawal_stmt = select(Transaction).where(
             Transaction.portfolio_id == portfolio_id,
             Transaction.transaction_type.in_([
@@ -797,68 +836,26 @@ class AnalyticsService:
 
         has_cash_tracking = db.execute(deposit_withdrawal_stmt).scalar() is not None
 
+        # Select transaction types based on cash tracking mode
         if has_cash_tracking:
-            # Portfolio tracks cash - use DEPOSIT/WITHDRAWAL only
-            stmt = select(Transaction).where(
-                Transaction.portfolio_id == portfolio_id,
-                Transaction.date >= start_date,
-                Transaction.date <= end_date,
-                Transaction.transaction_type.in_([
-                    TransactionType.DEPOSIT,
-                    TransactionType.WITHDRAWAL,
-                ])
-            ).order_by(Transaction.date)
-
-            transactions = db.execute(stmt).scalars().all()
-
-            cash_flows = []
-            for txn in transactions:
-                # exchange_rate convention: "1 portfolio_currency = X transaction_currency"
-                # To convert TO portfolio currency, DIVIDE by exchange_rate
-                exchange_rate = txn.exchange_rate or Decimal("1")
-
-                if txn.transaction_type == TransactionType.DEPOSIT:
-                    # Money into portfolio (positive cash flow)
-                    amount = txn.quantity / exchange_rate
-                    cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
-                elif txn.transaction_type == TransactionType.WITHDRAWAL:
-                    # Money out of portfolio (negative cash flow)
-                    amount = -txn.quantity / exchange_rate
-                    cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
-
+            txn_types = [TransactionType.DEPOSIT, TransactionType.WITHDRAWAL]
         else:
-            # Portfolio does NOT track cash - use BUY/SELL as cash flows
-            # BUY = investor adds money, SELL = investor removes money
-            stmt = select(Transaction).where(
-                Transaction.portfolio_id == portfolio_id,
-                Transaction.date >= start_date,
-                Transaction.date <= end_date,
-                Transaction.transaction_type.in_([
-                    TransactionType.BUY,
-                    TransactionType.SELL,
-                ])
-            ).order_by(Transaction.date)
+            txn_types = [TransactionType.BUY, TransactionType.SELL]
 
-            transactions = db.execute(stmt).scalars().all()
+        stmt = select(Transaction).where(
+            Transaction.portfolio_id == portfolio_id,
+            Transaction.date >= start_date,
+            Transaction.date <= end_date,
+            Transaction.transaction_type.in_(txn_types)
+        ).order_by(Transaction.date)
 
-            cash_flows = []
-            for txn in transactions:
-                # exchange_rate convention: "1 portfolio_currency = X transaction_currency"
-                # To convert TO portfolio currency, DIVIDE by exchange_rate
-                exchange_rate = txn.exchange_rate or Decimal("1")
+        transactions = db.execute(stmt).scalars().all()
 
-                if txn.transaction_type == TransactionType.BUY:
-                    # Money INTO portfolio (investor adds money to buy assets)
-                    # Cost includes fee: cost = qty × price + fee
-                    txn_value_local = (txn.quantity * txn.price_per_share) + txn.fee
-                    txn_value = txn_value_local / exchange_rate
-                    cash_flows.append(CashFlow(date=txn.date.date(), amount=txn_value))
-                elif txn.transaction_type == TransactionType.SELL:
-                    # Money OUT of portfolio (investor removes money from selling)
-                    # Proceeds excludes fee: proceeds = qty × price - fee
-                    txn_value_local = (txn.quantity * txn.price_per_share) - txn.fee
-                    txn_value = txn_value_local / exchange_rate
-                    cash_flows.append(CashFlow(date=txn.date.date(), amount=-txn_value))
+        cash_flows = []
+        for txn in transactions:
+            amount = self._calculate_cash_flow_amount(txn, has_cash_tracking)
+            if amount is not None:
+                cash_flows.append(CashFlow(date=txn.date.date(), amount=amount))
 
         return cash_flows
 

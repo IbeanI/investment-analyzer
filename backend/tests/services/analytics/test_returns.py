@@ -376,10 +376,146 @@ class TestXIRR:
             CashFlow(date=date(2024, 1, 1), amount=Decimal("10000")),
             CashFlow(date=date(2024, 12, 31), amount=Decimal("5000")),  # Both positive
         ]
-        
+
         result = calculate_xirr(cash_flows)
-        
+
         assert result is None
+
+    def test_no_positive_cash_flow(self):
+        """Test XIRR returns None without positive cash flow (no investment)."""
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("-5000")),
+            CashFlow(date=date(2024, 12, 31), amount=Decimal("-10000")),  # Both negative
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is None
+
+    def test_extreme_negative_rate_near_total_loss(self):
+        """
+        Test XIRR with near-total loss (extreme negative rate).
+
+        Invest €10,000, ends at €100 = -99% return
+        """
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("10000")),
+            CashFlow(date=date(2024, 12, 31), amount=Decimal("-100")),
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        assert result < Decimal("-0.90")  # Should be worse than -90%
+        assert result > Decimal("-1.0")   # But not worse than -100%
+
+    def test_extreme_positive_rate_high_return(self):
+        """
+        Test XIRR with very high return (extreme positive rate).
+
+        Invest €1,000, ends at €10,000 = 900% return in one year
+        """
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("1000")),
+            CashFlow(date=date(2024, 12, 31), amount=Decimal("-10000")),
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        assert result > Decimal("8.0")  # Should be > 800%
+        assert result < Decimal("10.0")  # Bounded by solver max
+
+    def test_near_break_even(self):
+        """
+        Test XIRR with near break-even return.
+
+        Invest €10,000, ends at €10,001 = ~0.01% return
+        """
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("10000")),
+            CashFlow(date=date(2024, 12, 31), amount=Decimal("-10001")),
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        assert abs(result) < Decimal("0.01")  # Should be very close to 0
+
+    def test_very_short_period(self):
+        """
+        Test XIRR with very short investment period (1 week).
+
+        Invest €10,000, worth €10,100 after 7 days = 1% weekly
+        Annualized should be very high.
+        """
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("10000")),
+            CashFlow(date=date(2024, 1, 8), amount=Decimal("-10100")),
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        # 1% per week annualized is extremely high (but bounded by solver)
+        assert result > Decimal("0.5")  # At least 50% annualized
+
+    def test_multi_year_investment(self):
+        """
+        Test XIRR with multi-year investment period.
+
+        Invest €10,000, worth €14,641 after 4 years = 10% annual compound
+        """
+        cash_flows = [
+            CashFlow(date=date(2020, 1, 1), amount=Decimal("10000")),
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("-14641")),  # 1.1^4 * 10000
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        assert abs(result - Decimal("0.10")) < Decimal("0.01")  # ~10% annual
+
+    def test_complex_cash_flow_pattern(self):
+        """
+        Test XIRR with complex pattern of deposits and withdrawals.
+
+        Multiple deposits and withdrawals throughout the year.
+        """
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("5000")),    # Initial
+            CashFlow(date=date(2024, 3, 1), amount=Decimal("2000")),    # Add more
+            CashFlow(date=date(2024, 6, 1), amount=Decimal("-1000")),   # Withdraw
+            CashFlow(date=date(2024, 9, 1), amount=Decimal("3000")),    # Add more
+            CashFlow(date=date(2024, 12, 31), amount=Decimal("-10500")),  # Final value
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        # Total invested: 5000 + 2000 + 3000 = 10000
+        # Withdrawn: 1000
+        # Final: 10500
+        # Net gain: 10500 + 1000 - 10000 = 1500
+        assert result > Decimal("0")  # Should be positive
+
+    def test_same_day_cash_flows(self):
+        """
+        Test XIRR with multiple cash flows on the same day.
+
+        This is an edge case that can occur in practice.
+        """
+        cash_flows = [
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("5000")),
+            CashFlow(date=date(2024, 1, 1), amount=Decimal("5000")),   # Same day
+            CashFlow(date=date(2024, 12, 31), amount=Decimal("-11000")),
+        ]
+
+        result = calculate_xirr(cash_flows)
+
+        assert result is not None
+        # 10000 invested, 11000 out = 10% return
+        assert abs(result - Decimal("0.10")) < Decimal("0.01")
 
 
 # =============================================================================

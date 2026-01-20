@@ -216,6 +216,21 @@ class ValuationService:
             portfolio_currency=portfolio_currency,
         )
 
+        # Step 5b: Batch fetch prices for all open positions (avoids N+1 queries)
+        open_asset_ids = {p.asset_id for p in positions if p.quantity > Decimal("0")}
+        price_map = self._fetch_prices_batch(db, open_asset_ids, valuation_date)
+
+        # Step 5c: Fetch any proxy assets referenced in synthetic prices
+        proxy_asset_ids = {
+            proxy_id
+            for (_, is_synthetic, proxy_id) in price_map.values()
+            if is_synthetic and proxy_id is not None and proxy_id not in assets
+        }
+        if proxy_asset_ids:
+            proxy_query = select(Asset).where(Asset.id.in_(proxy_asset_ids))
+            for proxy_asset in db.scalars(proxy_query).all():
+                assets[proxy_asset.id] = proxy_asset
+
         # Step 6: Value each holding
         holdings: list[HoldingValuation] = []
         total_cost_basis = Decimal("0")
@@ -240,6 +255,8 @@ class ValuationService:
                 position=position,
                 valuation_date=valuation_date,
                 portfolio_currency=portfolio_currency,
+                price_map=price_map,
+                assets=assets,
             )
             holdings.append(holding)
 
@@ -524,33 +541,122 @@ class ValuationService:
 
         return transactions_by_asset, assets
 
+    def _fetch_prices_batch(
+            self,
+            db: Session,
+            asset_ids: set[int],
+            target_date: date,
+    ) -> dict[tuple[int, date], tuple[Decimal, bool, int | None]]:
+        """
+        Batch fetch prices for multiple assets with fallback date range.
+
+        Fetches all prices from (target_date - PRICE_FALLBACK_DAYS) to target_date
+        for all given asset_ids in a single query.
+
+        Args:
+            db: Database session
+            asset_ids: Set of asset IDs to fetch prices for
+            target_date: The target valuation date
+
+        Returns:
+            Dict mapping (asset_id, date) -> (close_price, is_synthetic, proxy_source_id)
+        """
+        if not asset_ids:
+            return {}
+
+        # Calculate extended date range for fallback
+        start_date = target_date - timedelta(days=self.PRICE_FALLBACK_DAYS)
+
+        query = (
+            select(MarketData)
+            .where(
+                and_(
+                    MarketData.asset_id.in_(asset_ids),
+                    MarketData.date >= start_date,
+                    MarketData.date <= target_date,
+                )
+            )
+        )
+
+        price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]] = {}
+        for record in db.scalars(query).all():
+            # Handle both date and datetime
+            record_date = (
+                record.date.date()
+                if hasattr(record.date, 'date')
+                else record.date
+            )
+            price_map[(record.asset_id, record_date)] = (
+                record.close_price,
+                record.is_synthetic,
+                record.proxy_source_id,
+            )
+
+        return price_map
+
+    def _lookup_price_with_fallback(
+            self,
+            price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]],
+            asset_id: int,
+            target_date: date,
+    ) -> tuple[Decimal | None, date | None, bool, int | None]:
+        """
+        Look up price from pre-fetched map with fallback for weekends/holidays.
+
+        Args:
+            price_map: Pre-fetched prices from _fetch_prices_batch
+            asset_id: Asset to look up
+            target_date: Target date
+
+        Returns:
+            Tuple of (price, price_date, is_synthetic, proxy_source_id)
+            All None if not found within fallback window.
+        """
+        for days_back in range(self.PRICE_FALLBACK_DAYS + 1):
+            check_date = target_date - timedelta(days=days_back)
+            price_data = price_map.get((asset_id, check_date))
+            if price_data is not None:
+                return price_data[0], check_date, price_data[1], price_data[2]
+
+        return None, None, False, None
+
     def _value_holding(
             self,
             db: Session,
             position: HoldingPosition,
             valuation_date: date,
             portfolio_currency: str,
+            price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]],
+            assets: dict[int, Asset],
     ) -> HoldingValuation:
         """
         Calculate complete valuation for a single holding.
 
         Combines all calculators to produce full HoldingValuation.
+
+        Args:
+            db: Database session (for FX lookups only)
+            position: The holding position to value
+            valuation_date: Date for valuation
+            portfolio_currency: Portfolio's base currency
+            price_map: Pre-fetched prices from _fetch_prices_batch
+            assets: Pre-fetched assets dict (includes proxy assets)
         """
         warnings: list[str] = []
 
         # Cost basis
         cost_basis = self._cost_calc.calculate(position, portfolio_currency)
 
-        # Get price (with fallback for weekends/holidays)
-        price, price_date, is_synthetic, proxy_source_id = self._get_price_with_fallback(
-            db, position.asset_id, valuation_date
+        # Get price (with fallback for weekends/holidays) - uses pre-fetched data
+        price, price_date, is_synthetic, proxy_source_id = self._lookup_price_with_fallback(
+            price_map, position.asset_id, valuation_date
         )
 
-        # Get proxy ticker if synthetic
+        # Get proxy ticker if synthetic - uses pre-fetched assets
         proxy_ticker: str | None = None
         proxy_exchange: str | None = None
         if is_synthetic and proxy_source_id:
-            proxy_asset = db.get(Asset, proxy_source_id)
+            proxy_asset = assets.get(proxy_source_id)
             if proxy_asset:
                 proxy_ticker = proxy_asset.ticker
                 proxy_exchange = proxy_asset.exchange
@@ -624,46 +730,3 @@ class ValuationService:
             proxy_exchange=proxy_exchange,
         )
 
-    def _get_price_with_fallback(
-            self,
-            db: Session,
-            asset_id: int,
-            target_date: date,
-    ) -> tuple[Decimal | None, date | None, bool, int | None]:
-        """
-        Get market price with fallback for weekends/holidays.
-
-        Looks back up to PRICE_FALLBACK_DAYS for the most recent price.
-
-        Returns:
-            Tuple of (price, price_date, is_synthetic, proxy_source_id)
-            All None if not found within fallback window.
-        """
-        # Try each date from target back to fallback limit
-        for days_back in range(self.PRICE_FALLBACK_DAYS + 1):
-            check_date = target_date - timedelta(days=days_back)
-
-            price_record = db.scalar(
-                select(MarketData).where(
-                    and_(
-                        MarketData.asset_id == asset_id,
-                        func.date(MarketData.date) == check_date,
-                    )
-                )
-            )
-
-            if price_record is not None:
-                # Handle both date and datetime
-                record_date = (
-                    price_record.date.date()
-                    if hasattr(price_record.date, 'date')
-                    else price_record.date
-                )
-                return (
-                    price_record.close_price,
-                    record_date,
-                    price_record.is_synthetic,
-                    price_record.proxy_source_id,
-                )
-
-        return None, None, False, None

@@ -285,6 +285,60 @@ class HistoryCalculator:
             synthetic_details=synthetic_details,
         )
 
+    def _apply_transactions_until_date(
+            self,
+            transactions: list[Transaction],
+            txn_index: int,
+            target_date: date,
+            holdings_state: dict[int, dict],
+            cash_state: dict[str, Decimal],
+            assets: dict[int, Asset],
+            cash_calc,
+            tracks_cash: bool,
+    ) -> int:
+        """
+        Apply all transactions up to and including target_date.
+
+        Mutates holdings_state and cash_state in place.
+
+        Args:
+            transactions: ALL transactions, sorted by date
+            txn_index: Current position in transactions list
+            target_date: Apply transactions up to this date (inclusive)
+            holdings_state: Current holdings (mutated)
+            cash_state: Current cash balances (mutated)
+            assets: Asset lookup dict
+            cash_calc: CashCalculator instance (or None if not tracking cash)
+            tracks_cash: True if portfolio tracks cash
+
+        Returns:
+            Updated txn_index pointing to next unprocessed transaction
+        """
+        num_txns = len(transactions)
+
+        while txn_index < num_txns:
+            txn = transactions[txn_index]
+            txn_date = self._transaction_date(txn)
+
+            if txn_date > target_date:
+                break  # This transaction is in the future
+
+            # Apply transaction to holdings state
+            if txn.asset_id is not None:
+                asset = assets.get(txn.asset_id)
+                if asset:
+                    self._holdings_calc.apply_transaction(
+                        holdings_state, txn, asset
+                    )
+
+            # Apply transaction to cash state (only if tracking)
+            if tracks_cash and cash_calc is not None:
+                cash_calc.calculate_with_state(cash_state, txn)
+
+            txn_index += 1
+
+        return txn_index
+
     def _calculate_history_rolling(
             self,
             transactions: list[Transaction],
@@ -317,43 +371,26 @@ class HistoryCalculator:
         data_points: list[HistoryPoint] = []
 
         # Rolling state - mutated as we process transactions
-        holdings_state: dict[int, dict] = {}  # asset_id -> position aggregates
-        cash_state: dict[str, Decimal] = {}  # currency -> balance (only used if tracks_cash)
+        holdings_state: dict[int, dict] = {}
+        cash_state: dict[str, Decimal] = {}
 
         # Transaction iterator
         txn_index = 0
-        num_txns = len(transactions)
 
-        # Import calculator methods for state updates (only if tracking cash)
+        # Initialize cash calculator if tracking cash
         cash_calc = None
         if tracks_cash:
             from app.services.valuation.calculators import CashCalculator
             cash_calc = CashCalculator()
 
         for target_date in target_dates:
-            # === PHASE 1: Apply all transactions up to and including target_date ===
-            while txn_index < num_txns:
-                txn = transactions[txn_index]
-                txn_date = self._transaction_date(txn)
+            # Apply all transactions up to this date
+            txn_index = self._apply_transactions_until_date(
+                transactions, txn_index, target_date,
+                holdings_state, cash_state, assets, cash_calc, tracks_cash,
+            )
 
-                if txn_date > target_date:
-                    break  # This transaction is in the future
-
-                # Apply transaction to holdings state
-                if txn.asset_id is not None:
-                    asset = assets.get(txn.asset_id)
-                    if asset:
-                        self._holdings_calc.apply_transaction(
-                            holdings_state, txn, asset
-                        )
-
-                # Apply transaction to cash state (only if tracking)
-                if tracks_cash and cash_calc is not None:
-                    cash_calc.calculate_with_state(cash_state, txn)
-
-                txn_index += 1
-
-            # === PHASE 2: Snapshot - Calculate values at this date ===
+            # Snapshot current state
             point = self._snapshot_state(
                 holdings_state=holdings_state,
                 cash_state=cash_state if tracks_cash else {},

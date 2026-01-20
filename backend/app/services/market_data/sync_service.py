@@ -281,9 +281,14 @@ class MarketDataSyncService:
             # 2c. Apply proxy mappings if backcasting enabled
             if backcasting_enabled:
                 logger.info(f"Applying proxy mappings for portfolio {portfolio_id}")
+                # Batch fetch all assets (avoid N+1 queries)
+                asset_ids = [a.asset_id for a in analysis.assets]
+                assets_for_proxy = db.scalars(
+                    select(Asset).where(Asset.id.in_(asset_ids))
+                ).all()
                 proxy_result = self._proxy_mapping_service.apply_mappings(
                     db,
-                    [db.get(Asset, a.asset_id) for a in analysis.assets]
+                    list(assets_for_proxy)
                 )
                 result.proxy_mapping_result = proxy_result
                 result.proxies_applied = proxy_result.total_applied
@@ -339,9 +344,16 @@ class MarketDataSyncService:
                 total_synthetic = 0
                 assets_backcast_count = 0
 
+                # Batch fetch all assets (avoid N+1 queries)
+                # Reload to get proxy_asset_id (may have been set by mapping)
+                asset_ids = [a.asset_id for a in analysis.assets]
+                refreshed_assets = db.scalars(
+                    select(Asset).where(Asset.id.in_(asset_ids))
+                ).all()
+                asset_lookup = {a.id: a for a in refreshed_assets}
+
                 for asset_info in analysis.assets:
-                    # Reload asset to get proxy_asset_id (may have been set by mapping)
-                    asset = db.get(Asset, asset_info.asset_id)
+                    asset = asset_lookup.get(asset_info.asset_id)
                     if asset and asset.proxy_asset_id:
                         # Detect gap in real price data
                         gap_start, gap_end = self._detect_price_gap(

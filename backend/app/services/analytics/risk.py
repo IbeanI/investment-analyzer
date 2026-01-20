@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 
 TRADING_DAYS_PER_YEAR = 252
 DEFAULT_RISK_FREE_RATE = Decimal("0.02")  # 2% annual
+ZERO = Decimal("0")  # Type-safe zero for Decimal comparisons
 
 
 # =============================================================================
@@ -244,7 +245,7 @@ def calculate_daily_returns(daily_values: list[DailyValue]) -> list[Decimal]:
         curr_value = sorted_values[i].value  # V_end
         cash_flow = sorted_values[i].cash_flow  # CF
 
-        if prev_value <= 0:
+        if prev_value <= ZERO:
             continue
 
         # Daily Linking Method: r = (V_end - CF) / V_start - 1
@@ -375,7 +376,7 @@ def calculate_sharpe_ratio(
     Returns:
         Sharpe ratio, or None if volatility is zero
     """
-    if volatility is None or volatility == 0:
+    if volatility is None or volatility == ZERO:
         return None
 
     excess_return = total_return - risk_free_rate
@@ -404,7 +405,7 @@ def calculate_sortino_ratio(
     Returns:
         Sortino ratio, or None if downside deviation is zero
     """
-    if downside_deviation is None or downside_deviation == 0:
+    if downside_deviation is None or downside_deviation == ZERO:
         return None
 
     excess_return = total_return - risk_free_rate
@@ -429,7 +430,7 @@ def calculate_calmar_ratio(
     Returns:
         Calmar ratio, or None if max_drawdown is zero
     """
-    if max_drawdown is None or max_drawdown == 0:
+    if max_drawdown is None or max_drawdown == ZERO:
         return None
 
     # Max drawdown is negative, so we use absolute value
@@ -546,7 +547,7 @@ def calculate_drawdowns(
     max_dd_period = top_drawdowns[0] if top_drawdowns else None
 
     return (
-        max_drawdown.quantize(Decimal("0.0001")) if max_drawdown < 0 else None,
+        max_drawdown.quantize(Decimal("0.0001")) if max_drawdown < ZERO else None,
         max_dd_period,
         top_drawdowns,
     )
@@ -572,7 +573,7 @@ def calculate_current_drawdown(
     peak_value = max(dv.value for dv in sorted_values)
     current_value = sorted_values[-1].value
 
-    if peak_value <= 0:
+    if peak_value <= ZERO:
         return None
 
     return (current_value - peak_value) / peak_value
@@ -659,8 +660,8 @@ def calculate_win_statistics(
     if not daily_returns:
         return 0, 0, None, None, None, None, None
 
-    positive = [r for r in daily_returns if r > 0]
-    negative = [r for r in daily_returns if r < 0]
+    positive = [r for r in daily_returns if r > ZERO]
+    negative = [r for r in daily_returns if r < ZERO]
 
     positive_days = len(positive)
     negative_days = len(negative)
@@ -785,10 +786,10 @@ class RiskCalculator:
             curr_val = sorted_values[i].value
             cash_flow = sorted_values[i].cash_flow
 
-            if prev_val > 0:
+            if prev_val > ZERO:
                 # Adjust for cash flows
                 adjusted_prev = prev_val + cash_flow
-                if adjusted_prev > 0:
+                if adjusted_prev > ZERO:
                     ret = (curr_val - adjusted_prev) / adjusted_prev
                     daily_returns.append(ret)
 
@@ -835,7 +836,7 @@ class RiskCalculator:
         result.current_drawdown = calculate_current_drawdown(sorted_values)
 
         # Calmar Ratio
-        if annualized_return is not None and max_dd is not None and max_dd < 0:
+        if annualized_return is not None and max_dd is not None and max_dd < ZERO:
             result.calmar_ratio = calculate_calmar_ratio(annualized_return, max_dd)
 
         # VaR and CVaR
@@ -843,8 +844,8 @@ class RiskCalculator:
         result.cvar_95 = calculate_cvar(daily_returns, confidence_level=Decimal("0.95"))
 
         # Win/Loss stats
-        positive = [r for r in daily_returns if r > 0]
-        negative = [r for r in daily_returns if r < 0]
+        positive = [r for r in daily_returns if r > ZERO]
+        negative = [r for r in daily_returns if r < ZERO]
         result.positive_days = len(positive)
         result.negative_days = len(negative)
 

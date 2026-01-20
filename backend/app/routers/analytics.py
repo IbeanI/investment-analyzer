@@ -144,8 +144,9 @@ def _decimal_to_str(value: Decimal | None) -> str | None:
     # Convert int to Decimal if needed (safety net)
     if isinstance(value, int):
         value = Decimal(str(value))
-    # Format to reasonable precision (8 decimal places)
-    return f"{float(value):.8f}".rstrip('0').rstrip('.')
+    # Use str() directly to preserve exact Decimal precision
+    # Normalize removes trailing zeros while keeping precision
+    return str(value.normalize())
 
 
 def _validate_date_range(from_date: date, to_date: date) -> None:

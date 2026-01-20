@@ -483,10 +483,8 @@ class AnalyticsService:
         portfolio_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
 
         if not portfolio_values:
-            return BenchmarkMetrics(
-                benchmark_symbol=benchmark_symbol,
-                has_sufficient_data=False,
-                warnings=["No portfolio valuation data available"],
+            return self._build_insufficient_benchmark_result(
+                benchmark_symbol, "No portfolio valuation data available"
             )
 
         # Get benchmark prices (raises BenchmarkNotSyncedError if not found)
@@ -495,30 +493,19 @@ class AnalyticsService:
         )
 
         if not benchmark_prices:
-            return BenchmarkMetrics(
-                benchmark_symbol=benchmark_symbol,
-                has_sufficient_data=False,
-                warnings=[f"No price data available for benchmark {benchmark_symbol}"],
+            return self._build_insufficient_benchmark_result(
+                benchmark_symbol, f"No price data available for benchmark {benchmark_symbol}"
             )
 
         # Align dates - only use dates where both have data
-        portfolio_by_date = {dv.date: dv.value for dv in portfolio_values}
-        benchmark_by_date = benchmark_prices
+        aligned_data = self._align_portfolio_and_benchmark(portfolio_values, benchmark_prices)
 
-        common_dates = sorted(
-            set(portfolio_by_date.keys()) & set(benchmark_by_date.keys())
-        )
-
-        if len(common_dates) < 10:
-            return BenchmarkMetrics(
-                benchmark_symbol=benchmark_symbol,
-                has_sufficient_data=False,
-                warnings=["Insufficient overlapping data between portfolio and benchmark"],
+        if aligned_data is None:
+            return self._build_insufficient_benchmark_result(
+                benchmark_symbol, "Insufficient overlapping data between portfolio and benchmark"
             )
 
-        # Build aligned series
-        aligned_portfolio = [portfolio_by_date[d] for d in common_dates]
-        aligned_benchmark = [benchmark_by_date[d] for d in common_dates]
+        common_dates, aligned_portfolio, aligned_benchmark = aligned_data
 
         # Calculate returns
         portfolio_returns = self._calculate_returns(aligned_portfolio)
@@ -1239,3 +1226,45 @@ class AnalyticsService:
             )
 
         return notes
+
+    def _build_insufficient_benchmark_result(
+            self,
+            benchmark_symbol: str,
+            warning: str,
+    ) -> BenchmarkMetrics:
+        """Build a BenchmarkMetrics result for insufficient data cases."""
+        return BenchmarkMetrics(
+            benchmark_symbol=benchmark_symbol,
+            has_sufficient_data=False,
+            warnings=[warning],
+        )
+
+    def _align_portfolio_and_benchmark(
+            self,
+            portfolio_values: list[DailyValue],
+            benchmark_prices: dict[date, Decimal],
+    ) -> tuple[list[date], list[Decimal], list[Decimal]] | None:
+        """
+        Align portfolio and benchmark data by common dates.
+
+        Args:
+            portfolio_values: Portfolio daily values
+            benchmark_prices: Benchmark prices by date
+
+        Returns:
+            Tuple of (common_dates, aligned_portfolio, aligned_benchmark),
+            or None if insufficient overlapping data (< 10 days)
+        """
+        portfolio_by_date = {dv.date: dv.value for dv in portfolio_values}
+
+        common_dates = sorted(
+            set(portfolio_by_date.keys()) & set(benchmark_prices.keys())
+        )
+
+        if len(common_dates) < 10:
+            return None
+
+        aligned_portfolio = [portfolio_by_date[d] for d in common_dates]
+        aligned_benchmark = [benchmark_prices[d] for d in common_dates]
+
+        return common_dates, aligned_portfolio, aligned_benchmark

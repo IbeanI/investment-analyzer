@@ -3,148 +3,334 @@
 #
 # Investment Portfolio Analyzer - Complete Setup Script
 #
-# Usage:
-#   1. Open your Terminal.
-#   2. Make the script executable by running:
-#      chmod +x setup_project.sh
-#   3. Run the script:
-#      ./setup_project.sh
+# This script takes you from a cold start to a fully running system.
+# After running, you can create portfolios via the Swagger UI at:
+#   http://localhost:8000/docs
 #
-# This script will:
-#   - Create .env file if missing
-#   - Reset Docker containers
-#   - Initialize database schema
-#   - Seed sample data
-#   - Sync market data
-#   - Verify all services are working
+# USAGE:
+#   chmod +x setup_project.sh
+#   ./setup_project.sh [OPTIONS]
+#
+# OPTIONS:
+#   --fresh     Remove all data and start fresh (destructive!)
+#   --no-wait   Skip waiting for services to be ready
+#   --help      Show this help message
+#
+# PREREQUISITES:
+#   - Docker and Docker Compose installed
+#   - Ports 8000 (API) and 5432 (PostgreSQL) available
 
-# Exit immediately if a command exits with a non-zero status
-set -e
+set -e  # Exit on error
 
-echo "=================================================="
-echo "🚀 INVESTMENT PORTFOLIO ANALYZER - SETUP SCRIPT"
-echo "   Phase 1-5 Complete (Foundation → Analytics)"
-echo "=================================================="
+# =============================================================================
+# CONFIGURATION
+# =============================================================================
 
-# 1. Check for .env file
-if [ ! -f backend/.env ]; then
-    echo "⚠️  backend/.env not found. Creating from .env.example..."
-    cp backend/.env.example backend/.env
-    echo "✅ backend/.env created."
+PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
+BACKEND_DIR="$PROJECT_ROOT/backend"
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Default options
+FRESH_START=false
+WAIT_FOR_SERVICES=true
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+print_header() {
+    echo ""
+    echo -e "${BLUE}==================================================${NC}"
+    echo -e "${BLUE}$1${NC}"
+    echo -e "${BLUE}==================================================${NC}"
+}
+
+print_step() {
+    echo -e "${GREEN}[STEP]${NC} $1"
+}
+
+print_info() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[OK]${NC} $1"
+}
+
+show_help() {
+    head -30 "$0" | grep -E "^#" | sed 's/^# //' | sed 's/^#//'
+    exit 0
+}
+
+# =============================================================================
+# PARSE ARGUMENTS
+# =============================================================================
+
+for arg in "$@"; do
+    case $arg in
+        --fresh)
+            FRESH_START=true
+            shift
+            ;;
+        --no-wait)
+            WAIT_FOR_SERVICES=false
+            shift
+            ;;
+        --help|-h)
+            show_help
+            ;;
+        *)
+            print_error "Unknown option: $arg"
+            echo "Use --help for usage information."
+            exit 1
+            ;;
+    esac
+done
+
+# =============================================================================
+# MAIN SETUP
+# =============================================================================
+
+print_header "INVESTMENT PORTFOLIO ANALYZER - SETUP"
+
+# -----------------------------------------------------------------------------
+# Step 1: Check Prerequisites
+# -----------------------------------------------------------------------------
+print_step "Checking prerequisites..."
+
+# Check Docker
+if ! command -v docker &> /dev/null; then
+    print_error "Docker is not installed. Please install Docker first."
+    echo "  macOS: brew install --cask docker"
+    echo "  Or download from: https://www.docker.com/products/docker-desktop"
+    exit 1
+fi
+print_success "Docker installed"
+
+# Check Docker Compose
+if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+    print_error "Docker Compose is not installed."
+    exit 1
+fi
+print_success "Docker Compose installed"
+
+# Check if Docker daemon is running
+if ! docker info &> /dev/null; then
+    print_error "Docker daemon is not running. Please start Docker Desktop."
+    exit 1
+fi
+print_success "Docker daemon running"
+
+# -----------------------------------------------------------------------------
+# Step 2: Setup Environment Files
+# -----------------------------------------------------------------------------
+print_step "Setting up environment files..."
+
+# Root .env (for Docker Compose)
+if [ ! -f "$PROJECT_ROOT/.env" ]; then
+    print_info "Creating root .env file for Docker (local development defaults)..."
+    cat > "$PROJECT_ROOT/.env" << 'EOF'
+# Docker Compose Environment Variables (LOCAL DEVELOPMENT ONLY)
+# This file is git-ignored. For production, use secure credentials.
+
+POSTGRES_USER=admin
+POSTGRES_PASSWORD=localdevpassword
+POSTGRES_DB=investment_portfolio
+
+# Optional: For local scripts connecting directly
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+EOF
+    print_success "Created $PROJECT_ROOT/.env with local dev defaults"
 else
-    echo "✅ backend/.env found."
+    print_info "Root .env already exists (keeping existing credentials)"
 fi
 
-# 2. Docker Reset
-echo ""
-echo "🛑 Stopping and removing existing containers..."
-docker-compose down -v
+# Backend .env (for application)
+if [ ! -f "$BACKEND_DIR/.env" ]; then
+    print_info "Creating backend/.env file (local development defaults)..."
+    cat > "$BACKEND_DIR/.env" << 'EOF'
+# Backend Environment Variables (LOCAL DEVELOPMENT ONLY)
+# This file is git-ignored. For production, use secure credentials.
 
-# 3. Build and Start
-echo ""
-echo "🏗️  Building and Starting Containers..."
-docker-compose up -d --build
+DEBUG=true
+LOG_LEVEL=INFO
 
-# 4. Wait for Database
-echo ""
-echo "⏳ Waiting for Database to be ready..."
-until docker-compose exec -T investment_db pg_isready -U user -d investment_db > /dev/null 2>&1; do
-    printf "."
-    sleep 1
-done
-echo ""
-echo "✅ Database is up and running!"
+# Database connection for local development
+DATABASE_URL=postgresql://admin:localdevpassword@localhost:5432/investment_portfolio
+EOF
+    print_success "Created $BACKEND_DIR/.env with local dev defaults"
+else
+    print_info "Backend .env already exists (keeping existing credentials)"
+fi
 
-# 5. Initialize Database Schema
-echo ""
-echo "🔄 Initializing Database Schema..."
+# -----------------------------------------------------------------------------
+# Step 3: Handle Fresh Start (if requested)
+# -----------------------------------------------------------------------------
+if [ "$FRESH_START" = true ]; then
+    print_step "Fresh start requested - removing existing data..."
+    print_warn "This will DELETE all database data!"
+
+    # Stop and remove containers
+    cd "$PROJECT_ROOT"
+    docker-compose down -v 2>/dev/null || true
+
+    # Remove any orphan volumes
+    docker volume rm investment-analyzer_postgres_data 2>/dev/null || true
+
+    print_success "Cleaned up existing containers and volumes"
+fi
+
+# -----------------------------------------------------------------------------
+# Step 4: Build and Start Containers
+# -----------------------------------------------------------------------------
+print_step "Building and starting Docker containers..."
+
+cd "$PROJECT_ROOT"
+
+# Check if containers are already running
+if docker-compose ps --services --filter "status=running" 2>/dev/null | grep -q "backend"; then
+    print_info "Containers already running. Restarting..."
+    docker-compose restart
+else
+    print_info "Starting containers (this may take a moment on first run)..."
+    docker-compose up -d --build
+fi
+
+print_success "Containers started"
+
+# -----------------------------------------------------------------------------
+# Step 5: Wait for Database
+# -----------------------------------------------------------------------------
+if [ "$WAIT_FOR_SERVICES" = true ]; then
+    print_step "Waiting for PostgreSQL to be ready..."
+
+    MAX_RETRIES=30
+    RETRY_COUNT=0
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if docker-compose exec -T investment_db pg_isready -U admin -d investment_portfolio > /dev/null 2>&1; then
+            print_success "PostgreSQL is ready"
+            break
+        fi
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        printf "."
+        sleep 1
+    done
+    echo ""
+
+    if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        print_error "PostgreSQL failed to start. Check logs with: docker-compose logs investment_db"
+        exit 1
+    fi
+fi
+
+# -----------------------------------------------------------------------------
+# Step 6: Initialize Database Schema
+# -----------------------------------------------------------------------------
+print_step "Initializing database schema..."
+
+# Run init_db.py to create tables
 docker-compose exec -T backend python /app/init_db.py
 
-echo "🏷️  Stamping Alembic Version..."
-docker-compose exec -T backend alembic stamp head
-echo "✅ Schema initialized and stamped."
+# Stamp Alembic to mark current state as migrated
+docker-compose exec -T backend alembic stamp head 2>/dev/null || true
 
-# 6. Run Seed Scripts
-echo ""
-echo "🌱 Seeding Sample Data..."
-docker-compose exec -T backend python /app/scripts/seed_sample_data.py
+print_success "Database schema initialized"
 
-# 7. Run Proxy Mappings and Setup
-echo ""
-echo "🗺️  Setting up Proxy Backcasting..."
-if [ -f backend/scripts/migrate_proxy_mappings.py ]; then
-    docker-compose exec -T backend python -m scripts.migrate_proxy_mappings || true
+# -----------------------------------------------------------------------------
+# Step 7: Wait for API to be Ready
+# -----------------------------------------------------------------------------
+if [ "$WAIT_FOR_SERVICES" = true ]; then
+    print_step "Waiting for API to be ready..."
+
+    MAX_RETRIES=30
+    RETRY_COUNT=0
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/docs" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
+            print_success "API is ready"
+            break
+        fi
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        printf "."
+        sleep 1
+    done
+    echo ""
+
+    if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        print_warn "API may not be ready yet. Check logs with: docker-compose logs backend"
+    fi
 fi
 
-# 8. Sync Market Data for Sample Portfolio
-echo ""
-echo "📈 Syncing Market Data (this may take 30-60 seconds)..."
+# -----------------------------------------------------------------------------
+# Step 8: Verify Services
+# -----------------------------------------------------------------------------
+print_step "Verifying services..."
 
-# Wait for backend to be fully ready
-sleep 5
-
-# Sync portfolio 1 (the demo portfolio)
-curl -s -X POST "http://localhost:8000/portfolios/1/sync" \
-    -H "Content-Type: application/json" \
-    -d '{"force_refresh": false}' | python3 -c "
-import sys, json
-try:
-    data = json.load(sys.stdin)
-    if data.get('success'):
-        print(f\"✅ Market data synced: {data.get('prices_fetched', 0)} prices, {data.get('fx_rates_fetched', 0)} FX rates\")
-    else:
-        print(f\"⚠️  Sync completed with warnings: {data.get('warnings', [])}\")
-except:
-    print('⚠️  Could not parse sync response (API may still be starting)')
-"
-
-# 9. Verify Services (Quick Health Check)
-echo ""
-echo "🔍 Verifying Services..."
-
-# Test valuation endpoint
-VALUATION_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/portfolios/1/valuation")
-if [ "$VALUATION_STATUS" = "200" ]; then
-    echo "✅ Valuation Service: Working"
+# Test API health
+API_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/docs" 2>/dev/null || echo "000")
+if [ "$API_STATUS" = "200" ]; then
+    print_success "API: Running (http://localhost:8000)"
 else
-    echo "⚠️  Valuation Service: HTTP $VALUATION_STATUS"
+    print_warn "API: May still be starting (HTTP $API_STATUS)"
 fi
 
-# Test analytics endpoint (new in Phase 5)
-ANALYTICS_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/portfolios/1/analytics?from_date=2024-01-01&to_date=2024-12-31")
-if [ "$ANALYTICS_STATUS" = "200" ]; then
-    echo "✅ Analytics Service: Working"
+# Test Database connection via API
+DB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/portfolios" 2>/dev/null || echo "000")
+if [ "$DB_STATUS" = "200" ]; then
+    print_success "Database: Connected"
 else
-    echo "⚠️  Analytics Service: HTTP $ANALYTICS_STATUS"
+    print_warn "Database: Connection may still be initializing"
 fi
 
-# 10. Final Status
+# =============================================================================
+# FINAL OUTPUT
+# =============================================================================
+
+print_header "SETUP COMPLETE!"
+
 echo ""
-echo "=================================================="
-echo "🎉 SETUP COMPLETE!"
-echo "=================================================="
+echo -e "${GREEN}Your Investment Portfolio Analyzer is ready!${NC}"
 echo ""
-echo "📍 Access Points:"
-echo "   API Documentation: http://localhost:8000/docs"
-echo "   Database:          localhost:5432"
-echo "   Demo User:         demo@example.com"
+echo "ACCESS POINTS:"
+echo "  Swagger UI:  http://localhost:8000/docs"
+echo "  ReDoc:       http://localhost:8000/redoc"
+echo "  PostgreSQL:  localhost:5432 (admin/password123)"
 echo ""
-echo "📊 VALUATION ENDPOINTS (Phase 4):"
-echo "   GET /portfolios/1/valuation"
-echo "   GET /portfolios/1/valuation/history?from_date=2024-01-01&to_date=2024-12-31&interval=monthly"
+echo "GETTING STARTED:"
+echo "  1. Open Swagger UI: http://localhost:8000/docs"
+echo "  2. Create a portfolio: POST /portfolios"
+echo "  3. Add transactions: POST /portfolios/{id}/transactions"
+echo "  4. Sync market data: POST /portfolios/{id}/sync"
+echo "  5. View valuation: GET /portfolios/{id}/valuation"
 echo ""
-echo "📈 ANALYTICS ENDPOINTS (Phase 5):"
-echo "   GET /portfolios/1/analytics?from_date=2024-01-01&to_date=2024-12-31"
-echo "   GET /portfolios/1/analytics?from_date=2024-01-01&to_date=2024-12-31&benchmark=^SPX"
-echo "   GET /portfolios/1/analytics/performance?from_date=2024-01-01&to_date=2024-12-31"
-echo "   GET /portfolios/1/analytics/risk?from_date=2024-01-01&to_date=2024-12-31"
-echo "   GET /portfolios/1/analytics/benchmark?from_date=2024-01-01&to_date=2024-12-31&benchmark=^SPX"
+echo "COMMON COMMANDS:"
+echo "  View logs:        docker-compose logs -f backend"
+echo "  Run tests:        docker-compose exec backend pytest"
+echo "  Stop services:    docker-compose down"
+echo "  Fresh restart:    ./setup_project.sh --fresh"
 echo ""
-echo "🧪 RUN TESTS:"
-echo "   docker-compose exec backend pytest"
-echo "   docker-compose exec backend pytest tests/services/analytics/ -v"
+echo "API ENDPOINTS:"
+echo "  Portfolios:       /portfolios"
+echo "  Transactions:     /portfolios/{id}/transactions"
+echo "  Sync Data:        /portfolios/{id}/sync"
+echo "  Valuation:        /portfolios/{id}/valuation"
+echo "  History:          /portfolios/{id}/valuation/history"
+echo "  Analytics:        /portfolios/{id}/analytics"
 echo ""
-echo "📋 VIEW LOGS:"
-echo "   docker-compose logs -f backend"
-echo ""
-echo "=================================================="

@@ -49,20 +49,6 @@ DEFAULT_RISK_FREE_RATE = Decimal("0.02")  # 2% annual
 # HELPER FUNCTIONS
 # =============================================================================
 
-def _calculate_returns(values: list[Decimal]) -> list[Decimal]:
-    """Calculate returns from a series of values."""
-    if len(values) < 2:
-        return []
-
-    returns = []
-    for i in range(1, len(values)):
-        if values[i - 1] != 0:
-            ret = (values[i] - values[i - 1]) / values[i - 1]
-            returns.append(ret)
-
-    return returns
-
-
 def _covariance(x: list[float], y: list[float]) -> float:
     """Calculate covariance between two series."""
     if len(x) != len(y) or len(x) < 2:

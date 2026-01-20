@@ -60,6 +60,7 @@ CALENDAR_DAYS_PER_YEAR = 365
 IRR_MAX_ITERATIONS = 100
 IRR_TOLERANCE = Decimal("0.0000001")  # 0.00001% precision
 IRR_INITIAL_GUESS = Decimal("0.1")  # Start at 10%
+ZERO = Decimal("0")  # Type-safe zero for Decimal comparisons
 
 
 # =============================================================================
@@ -90,10 +91,43 @@ def calculate_simple_return(
     Returns:
         Return as decimal (e.g., 0.15 = 15%), or None if start_value is 0
     """
-    if start_value == 0:
+    if start_value == ZERO:
         return None
 
     return (end_value - start_value) / start_value
+
+
+def calculate_series_returns(values: list[Decimal]) -> list[Decimal]:
+    """
+    Calculate period-over-period returns from a series of values.
+
+    This is a utility function for computing simple returns between consecutive
+    values in a time series. Used for benchmark comparisons and correlation
+    calculations.
+
+    Formula: r_i = (V_i - V_{i-1}) / V_{i-1}
+
+    Args:
+        values: List of values (e.g., daily prices or portfolio values)
+
+    Returns:
+        List of returns (one fewer than input values)
+
+    Example:
+        >>> values = [Decimal("100"), Decimal("105"), Decimal("103")]
+        >>> calculate_series_returns(values)
+        [Decimal("0.05"), Decimal("-0.019047619047619")]
+    """
+    if len(values) < 2:
+        return []
+
+    returns = []
+    for i in range(1, len(values)):
+        if values[i - 1] != ZERO:
+            ret = (values[i] - values[i - 1]) / values[i - 1]
+            returns.append(ret)
+
+    return returns
 
 
 def annualize_return(

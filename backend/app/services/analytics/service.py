@@ -56,7 +56,7 @@ from app.models import Transaction, TransactionType, Portfolio, Asset, MarketDat
 from app.services.analytics.benchmark import BenchmarkCalculator
 from app.services.protocols import ValuationServiceProtocol
 from app.services.valuation.types import PortfolioHistory
-from app.services.analytics.returns import ReturnsCalculator
+from app.services.analytics.returns import ReturnsCalculator, calculate_series_returns
 from app.services.analytics.risk import RiskCalculator
 from app.services.analytics.types import (
     CashFlow,
@@ -508,8 +508,8 @@ class AnalyticsService:
         common_dates, aligned_portfolio, aligned_benchmark = aligned_data
 
         # Calculate returns
-        portfolio_returns = self._calculate_returns(aligned_portfolio)
-        benchmark_returns = self._calculate_returns(aligned_benchmark)
+        portfolio_returns = calculate_series_returns(aligned_portfolio)
+        benchmark_returns = calculate_series_returns(aligned_benchmark)
 
         # Calculate total returns
         portfolio_total = (aligned_portfolio[-1] - aligned_portfolio[0]) / aligned_portfolio[0]
@@ -931,19 +931,6 @@ class AnalyticsService:
             )
 
         return {md.date: md.close_price for md in market_data if md.close_price}
-
-    def _calculate_returns(self, values: list[Decimal]) -> list[Decimal]:
-        """Calculate period-over-period returns."""
-        if len(values) < 2:
-            return []
-
-        returns = []
-        for i in range(1, len(values)):
-            if values[i - 1] != 0:
-                ret = (values[i] - values[i - 1]) / values[i - 1]
-                returns.append(ret)
-
-        return returns
 
     def _annualize_return(self, total_return: Decimal, days: int) -> Decimal:
         """Annualize a return."""

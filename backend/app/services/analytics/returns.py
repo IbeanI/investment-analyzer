@@ -9,8 +9,7 @@ This module contains pure functions for calculating various return metrics:
 - Internal Rate of Return (IRR): Money-weighted return
 - Extended IRR (XIRR): IRR with exact dates (Newton-Raphson solver)
 
-All functions are stateless and operate on Decimal values for precision.
-No external dependencies (scipy, numpy) - pure Python only.
+All functions are stateless. No external dependencies (scipy, numpy) - pure Python only.
 
 Formulas:
     Simple Return = (End - Start) / Start
@@ -22,6 +21,24 @@ Formulas:
     CAGR = (End / Start)^(365/days) - 1
 
     XIRR solves: Σ CF_i / (1 + r)^((d_i - d_0) / 365) = 0
+
+Precision Note (Decimal vs Float):
+    This module uses Decimal for most arithmetic to maintain precision in financial
+    calculations. However, certain operations require float conversion:
+
+    1. Exponentiation (CAGR, annualization): Python's Decimal doesn't support
+       non-integer exponents. We convert to float for x^y operations.
+       Precision impact: ~15 significant digits retained, negligible for returns.
+
+    2. XIRR Newton-Raphson solver: The iterative solver operates entirely in float
+       for performance (100+ iterations with exponentials). Final result is
+       converted back to Decimal with 8 decimal places.
+       Precision impact: XIRR accurate to 0.00000001 (0.000001%), sufficient for
+       any practical investment return calculation.
+
+    This trade-off is industry-standard. Financial libraries (numpy-financial,
+    scipy) use float64 for IRR calculations. Our approach provides equivalent
+    precision while avoiding external dependencies.
 """
 
 import logging
@@ -110,7 +127,8 @@ def annualize_return(
     # (1 + r)^(365/days) - 1
     exponent = Decimal(str(days_per_year)) / Decimal(str(days))
 
-    # Use float for exponentiation, then convert back
+    # Float conversion required: Decimal doesn't support fractional exponents.
+    # Precision loss is negligible (~15 significant digits in float64).
     annualized = Decimal(str(float(base) ** float(exponent))) - Decimal("1")
 
     return annualized
@@ -242,7 +260,8 @@ def calculate_cagr(
     ratio = end_value / start_value
     exponent = Decimal(str(CALENDAR_DAYS_PER_YEAR)) / Decimal(str(days))
 
-    # Use float for exponentiation
+    # Float conversion required: Decimal doesn't support fractional exponents.
+    # Precision loss is negligible (~15 significant digits in float64).
     cagr = Decimal(str(float(ratio) ** float(exponent))) - Decimal("1")
 
     return cagr
@@ -279,6 +298,11 @@ def calculate_xirr(
     Returns:
         XIRR as decimal (e.g., 0.15 = 15%), or None if no solution found
 
+    Note:
+        The Newton-Raphson solver operates in float for performance (exponentials
+        in each iteration). Final result is converted to Decimal with 8 decimal
+        places (0.00000001 precision). This matches industry-standard IRR solvers.
+
     Example:
         cash_flows = [
             CashFlow(date(2024, 1, 1), Decimal("10000")),   # Initial investment
@@ -311,7 +335,9 @@ def calculate_xirr(
         logger.warning("XIRR requires both positive and negative cash flows")
         return None
 
-    # Newton-Raphson method
+    # Newton-Raphson iterative solver (operates in float for performance).
+    # Float64 provides ~15 significant digits, more than sufficient for IRR.
+    # Result is converted back to Decimal at convergence.
     rate = float(IRR_INITIAL_GUESS)
 
     for iteration in range(max_iterations):

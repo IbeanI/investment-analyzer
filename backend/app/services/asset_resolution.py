@@ -43,6 +43,23 @@ from app.services.market_data.yahoo import YahooFinanceProvider
 logger = logging.getLogger(__name__)
 
 
+def _is_unique_constraint_violation(integrity_error: IntegrityError) -> bool:
+    """
+    Check if an IntegrityError is caused by a unique constraint violation.
+
+    Args:
+        integrity_error: The SQLAlchemy IntegrityError to check
+
+    Returns:
+        True if this is a unique constraint violation, False otherwise
+    """
+    # PostgreSQL error code 23505 = unique_violation
+    if hasattr(integrity_error.orig, 'pgcode'):
+        return integrity_error.orig.pgcode == '23505'
+    # Fallback for other database backends (SQLite, etc.)
+    return 'unique constraint' in str(integrity_error.orig).lower()
+
+
 @dataclass
 class BatchResolutionResult:
     """Result of batch asset resolution."""
@@ -366,9 +383,18 @@ class AssetResolutionService:
             db.commit()
             db.refresh(asset)
             return asset
-        except IntegrityError:
-            # Another request created this asset concurrently
+        except IntegrityError as e:
             db.rollback()
+
+            if not _is_unique_constraint_violation(e):
+                # Not a unique constraint violation - re-raise the error
+                logger.error(
+                    f"Asset creation failed for {asset_info.ticker} on "
+                    f"{asset_info.exchange} with unexpected error: {e}"
+                )
+                raise
+
+            # Another request created this asset concurrently
             logger.info(
                 f"Asset {asset_info.ticker} on {asset_info.exchange} created by "
                 "concurrent request, fetching existing"
@@ -422,9 +448,16 @@ class AssetResolutionService:
             for asset in assets:
                 db.refresh(asset)
             return assets
-        except IntegrityError:
-            # One or more assets were created by concurrent requests
+        except IntegrityError as e:
             db.rollback()
+
+            if not _is_unique_constraint_violation(e):
+                # Not a unique constraint violation - re-raise the error
+                # This could be FK violation, check constraint, etc.
+                logger.error(f"Batch asset creation failed with unexpected error: {e}")
+                raise
+
+            # One or more assets were created by concurrent requests
             logger.warning(
                 "Batch asset creation failed due to concurrent request, "
                 "resolving individually"

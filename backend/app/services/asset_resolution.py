@@ -24,6 +24,8 @@ Usage:
 """
 
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 
 from sqlalchemy import select, and_, or_
@@ -60,6 +62,60 @@ def _is_unique_constraint_violation(integrity_error: IntegrityError) -> bool:
     return 'unique constraint' in str(integrity_error.orig).lower()
 
 
+class BoundedLRUCache:
+    """
+    Thread-safe bounded LRU cache.
+
+    Evicts least-recently-used entries when capacity is reached.
+    Uses OrderedDict for O(1) access and eviction.
+    """
+
+    def __init__(self, maxsize: int = 10000) -> None:
+        """
+        Initialize the cache.
+
+        Args:
+            maxsize: Maximum number of entries to store
+        """
+        self._maxsize = maxsize
+        self._cache: OrderedDict = OrderedDict()
+        self._lock = threading.Lock()
+
+    def get(self, key):
+        """Get item from cache, moving it to end (most recently used)."""
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                return self._cache[key]
+            return None
+
+    def set(self, key, value) -> None:
+        """Set item in cache, evicting oldest if at capacity."""
+        with self._lock:
+            if key in self._cache:
+                self._cache.move_to_end(key)
+                self._cache[key] = value
+            else:
+                if len(self._cache) >= self._maxsize:
+                    self._cache.popitem(last=False)  # Remove oldest
+                self._cache[key] = value
+
+    def clear(self) -> None:
+        """Clear all entries from the cache."""
+        with self._lock:
+            self._cache.clear()
+
+    def __len__(self) -> int:
+        """Return number of entries in cache."""
+        with self._lock:
+            return len(self._cache)
+
+    def __contains__(self, key) -> bool:
+        """Check if key exists in cache."""
+        with self._lock:
+            return key in self._cache
+
+
 @dataclass
 class BatchResolutionResult:
     """Result of batch asset resolution."""
@@ -82,12 +138,14 @@ class AssetResolutionService:
     2. Fetching metadata from market data providers for unknown assets
     3. Creating new asset records automatically
 
-    The service maintains an in-memory cache for provider responses to avoid
-    redundant API calls within the same application lifecycle.
+    The service maintains a bounded LRU cache for provider responses to avoid
+    redundant API calls. Cache is limited to CACHE_MAX_SIZE entries to prevent
+    memory leaks on long-running server processes.
 
     Attributes:
         _provider: Market data provider for fetching asset metadata
-        _cache: In-memory cache for provider responses
+        _cache: Bounded LRU cache for provider responses
+        CACHE_MAX_SIZE: Maximum entries in the cache (default 10,000)
 
     Example:
         # Using default provider (Yahoo Finance)
@@ -99,6 +157,8 @@ class AssetResolutionService:
         service = AssetResolutionService(provider=mock_provider)
     """
 
+    CACHE_MAX_SIZE: int = 10000
+
     def __init__(self, provider: MarketDataProvider | None = None) -> None:
         """
         Initialize the asset resolution service.
@@ -109,7 +169,7 @@ class AssetResolutionService:
                       Pass a custom provider for testing or alternative data sources.
         """
         self._provider = provider or YahooFinanceProvider()
-        self._cache: dict[tuple[str, str], AssetInfo] = {}
+        self._cache: BoundedLRUCache = BoundedLRUCache(maxsize=self.CACHE_MAX_SIZE)
 
         logger.info(f"AssetResolutionService initialized with provider: {self._provider.name}")
 
@@ -248,8 +308,9 @@ class AssetResolutionService:
         cached_infos = []
 
         for req in missing:
-            if req in self._cache:
-                cached_infos.append(self._cache[req])
+            cached = self._cache.get(req)
+            if cached is not None:
+                cached_infos.append(cached)
             else:
                 really_missing.append(req)
 
@@ -276,7 +337,7 @@ class AssetResolutionService:
 
             # Update cache
             for key, info in batch_result.successful.items():
-                self._cache[key] = info
+                self._cache.set(key, info)
 
             try:
                 new_assets = self._create_assets_batch(db, infos_to_create)
@@ -336,16 +397,17 @@ class AssetResolutionService:
         cache_key = (ticker, exchange)
 
         # Check cache first
-        if cache_key in self._cache:
+        cached = self._cache.get(cache_key)
+        if cached is not None:
             logger.debug(f"Cache hit for {ticker} on {exchange}")
-            return self._cache[cache_key]
+            return cached
 
         # Fetch from provider
         logger.debug(f"Cache miss for {ticker} on {exchange}, calling provider")
         asset_info = self._provider.get_asset_info(ticker, exchange)
 
         # Cache the result
-        self._cache[cache_key] = asset_info
+        self._cache.set(cache_key, asset_info)
         logger.debug(f"Cached asset info for {ticker} on {exchange}")
 
         return asset_info

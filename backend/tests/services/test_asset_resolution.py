@@ -197,6 +197,38 @@ class TestCaching:
         service.clear_cache()
         assert service.cache_size == 0
 
+    def test_cache_evicts_oldest_when_full(self, db, mock_provider):
+        """LRU cache should evict oldest entries when at capacity."""
+        # Create a service with a tiny cache for testing
+        service = AssetResolutionService(provider=mock_provider)
+        # Override the cache with a small one for testing
+        from app.services.asset_resolution import BoundedLRUCache
+        service._cache = BoundedLRUCache(maxsize=3)
+
+        # Add responses for 4 different assets
+        for i in range(4):
+            ticker = f"TEST{i}"
+            info = create_asset_info(ticker=ticker, exchange="NYSE", name=f"Test {i}")
+            mock_provider.add_response(ticker, "NYSE", info)
+
+        # Resolve first 3 assets - cache should be full
+        service.resolve_asset(db, "TEST0", "NYSE")
+        service.resolve_asset(db, "TEST1", "NYSE")
+        service.resolve_asset(db, "TEST2", "NYSE")
+        assert service.cache_size == 3
+
+        # Resolve 4th asset - should evict TEST0 (oldest)
+        service.resolve_asset(db, "TEST3", "NYSE")
+        assert service.cache_size == 3  # Still 3 (at capacity)
+
+        # TEST0 should be evicted, others should still be cached
+        # Access TEST1 to verify it's still in cache (moves to end)
+        assert service._cache.get(("TEST1", "NYSE")) is not None
+        assert service._cache.get(("TEST2", "NYSE")) is not None
+        assert service._cache.get(("TEST3", "NYSE")) is not None
+        # TEST0 was evicted
+        assert service._cache.get(("TEST0", "NYSE")) is None
+
 
 # =============================================================================
 # BATCH RESOLUTION TESTS

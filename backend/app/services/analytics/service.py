@@ -54,6 +54,7 @@ from sqlalchemy.orm import Session
 from app.models import Transaction, TransactionType, Portfolio, Asset, MarketData
 from app.services.analytics.benchmark import BenchmarkCalculator
 from app.services.protocols import ValuationServiceProtocol
+from app.services.valuation.types import PortfolioHistory
 from app.services.analytics.returns import ReturnsCalculator
 from app.services.analytics.risk import RiskCalculator
 from app.services.analytics.types import (
@@ -582,88 +583,36 @@ class AnalyticsService:
             f"from {start_date} to {end_date}"
         )
 
-        # Check cache first
+        # Check cache
         cached = self._cache.get(portfolio_id, start_date, end_date, benchmark_symbol)
         if cached is not None:
             logger.debug(f"Cache hit for portfolio {portfolio_id}")
             return cached
 
-        # Verify portfolio exists
+        # Validate portfolio
         portfolio = db.get(Portfolio, portfolio_id)
         if portfolio is None:
-            return AnalyticsResult(
-                portfolio_id=portfolio_id,
-                portfolio_currency="EUR",
-                period=AnalyticsPeriod(
-                    from_date=start_date,
-                    to_date=end_date,
-                    trading_days=0,
-                    calendar_days=0,
-                ),
-                performance=PerformanceMetrics(has_sufficient_data=False),
-                risk=RiskMetrics(has_sufficient_data=False),
-                has_complete_data=False,
-                warnings=["Portfolio not found"],
-            )
+            return self._build_not_found_result(portfolio_id, start_date, end_date)
 
-        # Get portfolio history (includes daily values AND synthetic data metadata)
-        # This is used for synthetic data tracking
+        # Fetch data
         history = self._valuation_service.get_history(
-            db=db,
-            portfolio_id=portfolio_id,
-            start_date=start_date,
-            end_date=end_date,
-            interval="daily",
+            db=db, portfolio_id=portfolio_id,
+            start_date=start_date, end_date=end_date, interval="daily",
         )
-
-        # Get daily values WITH cash flows properly assigned
-        # CRITICAL: Must use _get_daily_values() to include cash flows for TWR calculation
-        # Without cash flows, TWR treats deposits as returns (inflating the result)
         daily_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
-
-        # Get cost_basis and realized_pnl for accurate simple_return/CAGR calculation
         cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
 
-        # Performance metrics
-        cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)
-        if daily_values:
-            cash_flows.append(CashFlow(
-                date=daily_values[-1].date,
-                amount=-daily_values[-1].value,
-            ))
-        # Filter daily values based on scope for TWR calculation
-        # This excludes zero-equity periods (full liquidation gaps) to prevent
-        # TWR from being poisoned by -100% days (GIPS-compliant)
-        filtered_daily_values = self._filter_to_active_periods(daily_values, scope)
-
-        performance = ReturnsCalculator.calculate_all(
-            filtered_daily_values,
-            cash_flows,
-            cost_basis=cost_basis,
-            realized_pnl=realized_pnl,
+        # Calculate metrics
+        performance = self._calculate_performance_metrics(
+            db, portfolio_id, start_date, end_date,
+            daily_values, cost_basis, realized_pnl, scope,
         )
-
-        # Add warning if multiple periods detected and using current_period scope
-        if scope == "current_period" and len(daily_values) != len(filtered_daily_values):
-            # Check if there were actually multiple periods (not just edge filtering)
-            zero_value_days = sum(1 for dv in daily_values if dv.value <= 0)
-            if zero_value_days > 0:
-                performance.warnings.append(
-                    f"TWR calculated for current investment period only. "
-                    f"Portfolio had {zero_value_days} zero-equity days (full liquidation). "
-                    f"Use scope=full_history to chain all active periods."
-                )
-
-        # Risk metrics
         risk = RiskCalculator.calculate_all(
             daily_values=daily_values,
             risk_free_rate=risk_free_rate,
             annualized_return=performance.twr_annualized,
             scope=scope,
         )
-
-        # Benchmark (optional) - let BenchmarkNotSyncedError propagate to router
-        # The router will catch it and return HTTP 400
         benchmark = None
         if benchmark_symbol:
             benchmark = self.get_benchmark(
@@ -671,65 +620,14 @@ class AnalyticsService:
                 benchmark_symbol, risk_free_rate
             )
 
-        # Build period info
-        period = AnalyticsPeriod(
-            from_date=start_date,
-            to_date=end_date,
-            trading_days=len(daily_values),
-            calendar_days=(end_date - start_date).days,
+        # Build result
+        result = self._build_analytics_result(
+            portfolio, portfolio_id, start_date, end_date,
+            daily_values, history, performance, risk, benchmark,
         )
 
-        # Aggregate warnings
-        all_warnings = []
-        all_warnings.extend(performance.warnings)
-        all_warnings.extend(risk.warnings)
-        if benchmark:
-            all_warnings.extend(benchmark.warnings)
-
-        has_complete = (
-                performance.has_sufficient_data and
-                risk.has_sufficient_data and
-                (benchmark is None or benchmark.has_sufficient_data)
-        )
-
-        # Convert SyntheticAssetDetail objects to dicts for JSON serialization
-        synthetic_details_dict: dict[str, dict] = {}
-        if history.has_synthetic_data and hasattr(history, 'synthetic_details') and history.synthetic_details:
-            for ticker, detail in history.synthetic_details.items():
-                synthetic_details_dict[ticker] = {
-                    "ticker": detail.ticker,
-                    "proxy_ticker": detail.proxy_ticker,
-                    "first_synthetic_date": detail.first_synthetic_date,
-                    "last_synthetic_date": detail.last_synthetic_date,
-                    "synthetic_days": detail.synthetic_days,
-                    "total_days_held": detail.total_days_held,
-                    "percentage": detail.percentage,
-                }
-
-        # Build result with data quality info from history
-        result = AnalyticsResult(
-            portfolio_id=portfolio_id,
-            portfolio_currency=portfolio.currency,
-            period=period,
-            performance=performance,
-            risk=risk,
-            benchmark=benchmark,
-            has_complete_data=has_complete,
-            warnings=all_warnings,
-            # Data quality fields (from history metadata)
-            has_synthetic_data=history.has_synthetic_data,
-            synthetic_data_percentage=history.synthetic_percentage if history.has_synthetic_data else None,
-            synthetic_holdings=history.synthetic_holdings if history.has_synthetic_data else {},
-            synthetic_date_range=history.synthetic_date_range,
-            synthetic_details=synthetic_details_dict,
-            reliability_notes=self._generate_reliability_notes(
-                history.synthetic_percentage
-            ) if history.has_synthetic_data else [],
-        )
-
-        # Cache the result
+        # Cache and return
         self._cache.set(portfolio_id, start_date, end_date, benchmark_symbol, result)
-
         return result
 
     def invalidate_cache(self, portfolio_id: int) -> int:
@@ -1069,6 +967,81 @@ class AnalyticsService:
         exponent = Decimal("365") / Decimal(str(days))
         return Decimal(str(float(base) ** float(exponent))) - Decimal("1")
 
+    def _build_not_found_result(
+            self,
+            portfolio_id: int,
+            start_date: date,
+            end_date: date,
+    ) -> AnalyticsResult:
+        """Build result for non-existent portfolio."""
+        return AnalyticsResult(
+            portfolio_id=portfolio_id,
+            portfolio_currency="EUR",
+            period=AnalyticsPeriod(
+                from_date=start_date,
+                to_date=end_date,
+                trading_days=0,
+                calendar_days=0,
+            ),
+            performance=PerformanceMetrics(has_sufficient_data=False),
+            risk=RiskMetrics(has_sufficient_data=False),
+            has_complete_data=False,
+            warnings=["Portfolio not found"],
+        )
+
+    def _add_scope_warning_if_needed(
+            self,
+            performance: PerformanceMetrics,
+            daily_values: list[DailyValue],
+            filtered_daily_values: list[DailyValue],
+            scope: str,
+    ) -> None:
+        """Add warning if multiple investment periods detected."""
+        if scope == "current_period" and len(daily_values) != len(filtered_daily_values):
+            zero_value_days = sum(1 for dv in daily_values if dv.value <= 0)
+            if zero_value_days > 0:
+                performance.warnings.append(
+                    f"TWR calculated for current investment period only. "
+                    f"Portfolio had {zero_value_days} zero-equity days (full liquidation). "
+                    f"Use scope=full_history to chain all active periods."
+                )
+
+    def _calculate_performance_metrics(
+            self,
+            db: Session,
+            portfolio_id: int,
+            start_date: date,
+            end_date: date,
+            daily_values: list[DailyValue],
+            cost_basis: Decimal | None,
+            realized_pnl: Decimal | None,
+            scope: str,
+    ) -> PerformanceMetrics:
+        """Calculate performance metrics with cash flow adjustments."""
+        # Get cash flows
+        cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)
+        if daily_values:
+            cash_flows.append(CashFlow(
+                date=daily_values[-1].date,
+                amount=-daily_values[-1].value,
+            ))
+
+        # Filter to active periods (GIPS-compliant)
+        filtered_daily_values = self._filter_to_active_periods(daily_values, scope)
+
+        # Calculate
+        performance = ReturnsCalculator.calculate_all(
+            filtered_daily_values,
+            cash_flows,
+            cost_basis=cost_basis,
+            realized_pnl=realized_pnl,
+        )
+
+        # Add scope warning if needed
+        self._add_scope_warning_if_needed(performance, daily_values, filtered_daily_values, scope)
+
+        return performance
+
     def _filter_to_active_periods(
             self,
             daily_values: list[DailyValue],
@@ -1133,6 +1106,86 @@ class AnalyticsService:
                 f"Chaining {len(periods)} investment periods: {len(all_active)} total active days"
             )
             return all_active
+
+    def _build_synthetic_details_dict(
+            self,
+            history: PortfolioHistory,
+    ) -> dict[str, dict]:
+        """Convert SyntheticAssetDetail objects to dicts for JSON serialization."""
+        if not history.has_synthetic_data:
+            return {}
+        if not hasattr(history, 'synthetic_details') or not history.synthetic_details:
+            return {}
+
+        return {
+            ticker: {
+                "ticker": detail.ticker,
+                "proxy_ticker": detail.proxy_ticker,
+                "first_synthetic_date": detail.first_synthetic_date,
+                "last_synthetic_date": detail.last_synthetic_date,
+                "synthetic_days": detail.synthetic_days,
+                "total_days_held": detail.total_days_held,
+                "percentage": detail.percentage,
+            }
+            for ticker, detail in history.synthetic_details.items()
+        }
+
+    def _build_analytics_result(
+            self,
+            portfolio: Portfolio,
+            portfolio_id: int,
+            start_date: date,
+            end_date: date,
+            daily_values: list[DailyValue],
+            history: PortfolioHistory,
+            performance: PerformanceMetrics,
+            risk: RiskMetrics,
+            benchmark: BenchmarkMetrics | None,
+    ) -> AnalyticsResult:
+        """Build the final AnalyticsResult with all components."""
+        # Build period info
+        period = AnalyticsPeriod(
+            from_date=start_date,
+            to_date=end_date,
+            trading_days=len(daily_values),
+            calendar_days=(end_date - start_date).days,
+        )
+
+        # Aggregate warnings
+        all_warnings = []
+        all_warnings.extend(performance.warnings)
+        all_warnings.extend(risk.warnings)
+        if benchmark:
+            all_warnings.extend(benchmark.warnings)
+
+        # Check completeness
+        has_complete = (
+            performance.has_sufficient_data and
+            risk.has_sufficient_data and
+            (benchmark is None or benchmark.has_sufficient_data)
+        )
+
+        # Build synthetic details
+        synthetic_details_dict = self._build_synthetic_details_dict(history)
+
+        return AnalyticsResult(
+            portfolio_id=portfolio_id,
+            portfolio_currency=portfolio.currency,
+            period=period,
+            performance=performance,
+            risk=risk,
+            benchmark=benchmark,
+            has_complete_data=has_complete,
+            warnings=all_warnings,
+            has_synthetic_data=history.has_synthetic_data,
+            synthetic_data_percentage=history.synthetic_percentage if history.has_synthetic_data else None,
+            synthetic_holdings=history.synthetic_holdings if history.has_synthetic_data else {},
+            synthetic_date_range=history.synthetic_date_range,
+            synthetic_details=synthetic_details_dict,
+            reliability_notes=self._generate_reliability_notes(
+                history.synthetic_percentage
+            ) if history.has_synthetic_data else [],
+        )
 
     def _generate_reliability_notes(
             self,

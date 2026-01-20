@@ -30,7 +30,6 @@ import logging
 import math
 from datetime import date, timedelta
 from decimal import Decimal
-from statistics import mean, stdev
 
 from app.services.analytics.types import (
     DailyValue,
@@ -43,6 +42,8 @@ from app.services.constants import (
     TRADING_DAYS_PER_YEAR,
     DEFAULT_RISK_FREE_RATE,
     ZERO,
+    DRAWDOWN_RECORDING_THRESHOLD,
+    MIN_EQUITY_THRESHOLD,
 )
 
 logger = logging.getLogger(__name__)
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 def split_into_investment_periods(
         daily_values: list[DailyValue],
-        min_equity_threshold: Decimal = Decimal("1.0"),
+        min_equity_threshold: Decimal = MIN_EQUITY_THRESHOLD,
 ) -> list[InvestmentPeriod]:
     """
     Split daily values into distinct investment periods.
@@ -166,7 +167,7 @@ def get_active_period_values(
     return [
         dv for dv in daily_values
         if (dv.value is not None
-            and dv.value >= Decimal("1.0")
+            and dv.value >= MIN_EQUITY_THRESHOLD
             and active_period.start_date <= dv.date <= active_period.end_date)
     ]
 
@@ -204,7 +205,7 @@ def get_all_period_values(
     return [
         dv for dv in daily_values
         if (dv.value is not None
-            and dv.value >= Decimal("1.0")
+            and dv.value >= MIN_EQUITY_THRESHOLD
             and dv.date in valid_dates)
     ]
 
@@ -253,27 +254,68 @@ def calculate_daily_returns(daily_values: list[DailyValue]) -> list[Decimal]:
 
 
 def _decimal_stdev(values: list[Decimal]) -> Decimal | None:
-    """Calculate standard deviation of Decimal values."""
+    """
+    Calculate standard deviation of Decimal values using pure Decimal arithmetic.
+
+    This avoids float conversion which can cause precision loss for very small
+    values (< 0.00001) common in daily return calculations.
+
+    Formula: σ = sqrt(Σ(x - μ)² / (n - 1))  [sample standard deviation]
+
+    Uses Decimal.sqrt() which maintains full precision for the square root
+    operation.
+
+    Args:
+        values: List of Decimal values
+
+    Returns:
+        Standard deviation as Decimal, or None if insufficient data
+    """
     if len(values) < 2:
         return None
 
-    # Convert to float for calculation
-    float_values = [float(v) for v in values]
+    n = Decimal(str(len(values)))
 
+    # Calculate mean using pure Decimal
+    total = sum(values, Decimal("0"))
+    mean_val = total / n
+
+    # Calculate sum of squared differences from mean
+    squared_diffs = [(x - mean_val) ** 2 for x in values]
+    sum_squared_diffs = sum(squared_diffs, Decimal("0"))
+
+    # Sample variance (divide by n-1)
+    variance = sum_squared_diffs / (n - Decimal("1"))
+
+    # Square root using Decimal.sqrt()
+    # This maintains precision better than float(variance) ** 0.5
     try:
-        std = stdev(float_values)
-        return Decimal(str(std))
+        std = variance.sqrt()
+        return std
     except Exception:
-        return None
+        # Fallback to float only if Decimal.sqrt() fails
+        # (shouldn't happen with valid positive variance)
+        try:
+            return Decimal(str(math.sqrt(float(variance))))
+        except Exception:
+            return None
 
 
 def _decimal_mean(values: list[Decimal]) -> Decimal | None:
-    """Calculate mean of Decimal values."""
+    """
+    Calculate mean of Decimal values using pure Decimal arithmetic.
+
+    Args:
+        values: List of Decimal values
+
+    Returns:
+        Mean as Decimal, or None if empty list
+    """
     if not values:
         return None
 
-    float_values = [float(v) for v in values]
-    return Decimal(str(mean(float_values)))
+    total = sum(values, Decimal("0"))
+    return total / Decimal(str(len(values)))
 
 
 # =============================================================================
@@ -285,7 +327,7 @@ def calculate_volatility(
         annualize: bool = True,
 ) -> Decimal | None:
     """
-    Calculate volatility (standard deviation of returns).
+    Calculate volatility (standard deviation of returns) using pure Decimal arithmetic.
 
     Args:
         daily_returns: List of daily returns
@@ -303,7 +345,9 @@ def calculate_volatility(
         return None
 
     if annualize:
-        vol = vol * Decimal(str(math.sqrt(TRADING_DAYS_PER_YEAR)))
+        # Use Decimal.sqrt() for precision in annualization factor
+        annualization_factor = Decimal(str(TRADING_DAYS_PER_YEAR)).sqrt()
+        vol = vol * annualization_factor
 
     return vol
 
@@ -314,10 +358,12 @@ def calculate_downside_deviation(
         annualize: bool = True,
 ) -> Decimal | None:
     """
-    Calculate downside deviation (semi-deviation).
+    Calculate downside deviation (semi-deviation) using pure Decimal arithmetic.
 
     Only considers returns below the target (negative returns by default).
     Used in Sortino Ratio calculation.
+
+    Formula: σ_down = sqrt(Σ(r - target)² / n) for all r < target
 
     Args:
         daily_returns: List of daily returns
@@ -332,14 +378,23 @@ def calculate_downside_deviation(
     if len(downside_returns) < 2:
         return None
 
-    # Calculate deviation from target
+    # Calculate deviation from target using pure Decimal
     deviations = [(r - target_return) ** 2 for r in downside_returns]
-    mean_sq_deviation = sum(deviations) / Decimal(str(len(deviations)))
+    sum_deviations = sum(deviations, Decimal("0"))
+    mean_sq_deviation = sum_deviations / Decimal(str(len(deviations)))
 
-    downside_dev = Decimal(str(math.sqrt(float(mean_sq_deviation))))
+    # Use Decimal.sqrt() for precision
+    try:
+        downside_dev = mean_sq_deviation.sqrt()
+    except Exception:
+        # Fallback to float only if Decimal.sqrt() fails
+        downside_dev = Decimal(str(math.sqrt(float(mean_sq_deviation))))
 
     if annualize:
-        downside_dev = downside_dev * Decimal(str(math.sqrt(TRADING_DAYS_PER_YEAR)))
+        # Annualization factor: sqrt(252)
+        # Pre-calculate as Decimal for precision
+        annualization_factor = Decimal(str(TRADING_DAYS_PER_YEAR)).sqrt()
+        downside_dev = downside_dev * annualization_factor
 
     return downside_dev
 
@@ -462,10 +517,9 @@ def calculate_drawdowns(
         - top_drawdowns: List of top N worst drawdown periods
     """
     # Filter to valid values only (exclude None and zero-equity days)
-    MIN_EQUITY = Decimal("1.0")
     valid_values = [
         dv for dv in daily_values
-        if dv.value is not None and dv.value >= MIN_EQUITY
+        if dv.value is not None and dv.value >= MIN_EQUITY_THRESHOLD
     ]
 
     if len(valid_values) < 2:
@@ -490,7 +544,7 @@ def calculate_drawdowns(
             # New peak - close any open drawdown period
             if current_drawdown_start is not None and current_trough_value is not None:
                 depth = (current_trough_value - peak_value) / peak_value
-                if depth < Decimal("-0.01"):  # Only record >1% drawdowns
+                if depth < DRAWDOWN_RECORDING_THRESHOLD:  # Only record >1% drawdowns
                     period = DrawdownPeriod(
                         start_date=current_drawdown_start,
                         trough_date=current_trough_date,
@@ -525,7 +579,7 @@ def calculate_drawdowns(
     # Handle ongoing drawdown (not yet recovered)
     if current_drawdown_start is not None and current_trough_value is not None:
         depth = (current_trough_value - peak_value) / peak_value
-        if depth < Decimal("-0.01"):
+        if depth < DRAWDOWN_RECORDING_THRESHOLD:
             period = DrawdownPeriod(
                 start_date=current_drawdown_start,
                 trough_date=current_trough_date,

@@ -59,6 +59,7 @@ from app.services.market_data.yahoo import YahooFinanceProvider
 from app.services.portfolio_settings_service import PortfolioSettingsService
 from app.services.proxy_mapping_service import ProxyMappingService, ProxyMappingResult
 from app.services.constants import DEFAULT_STALENESS_HOURS
+from app.utils.date_utils import get_business_days
 
 logger = logging.getLogger(__name__)
 
@@ -297,13 +298,18 @@ class MarketDataSyncService:
                         f"Applied {proxy_result.total_applied} proxy mappings"
                     )
 
-            # 3. Sync price data for each asset
+            # 3. Sync price data for each asset (with batched commits)
+            # Accumulate all prices first, then commit in batches for efficiency
+            # This reduces database round-trips while still allowing partial success
+            accumulated_prices: list[tuple[int, list[OHLCVData]]] = []
+
             for asset_info in analysis.assets:
-                asset_result = self._sync_asset_prices(
+                asset_result = self._sync_asset_prices_no_commit(
                     db=db,
                     asset_info=asset_info,
                     end_date=analysis.latest_date or date.today(),
                     force=force,
+                    accumulated_prices=accumulated_prices,
                 )
                 result.asset_results.append(asset_result)
 
@@ -315,6 +321,10 @@ class MarketDataSyncService:
                     result.warnings.append(
                         f"Failed to sync {asset_info.ticker}: {asset_result.error}"
                     )
+
+            # Batch commit all accumulated prices
+            if accumulated_prices:
+                self._store_prices_batch(db, accumulated_prices)
 
             # 4. Sync FX rates
             if analysis.fx_pairs_needed:
@@ -339,51 +349,16 @@ class MarketDataSyncService:
 
             # 4b. Backcast with proxies if enabled
             if backcasting_enabled:
-                total_synthetic = 0
-                assets_backcast_count = 0
+                backcast_result = self._backcast_assets_batch(
+                    db, analysis.assets
+                )
+                result.synthetic_prices_created = backcast_result["total_synthetic"]
+                result.assets_backcast = backcast_result["assets_backcast_count"]
 
-                # Batch fetch all assets (avoid N+1 queries)
-                # Reload to get proxy_asset_id (may have been set by mapping)
-                asset_ids = [a.asset_id for a in analysis.assets]
-                refreshed_assets = db.scalars(
-                    select(Asset).where(Asset.id.in_(asset_ids))
-                ).all()
-                asset_lookup = {a.id: a for a in refreshed_assets}
-
-                for asset_info in analysis.assets:
-                    asset = asset_lookup.get(asset_info.asset_id)
-                    if asset and asset.proxy_asset_id:
-                        # Detect gap in real price data
-                        gap_start, gap_end = self._detect_price_gap(
-                            db, asset.id, asset_info.first_transaction_date
-                        )
-
-                        if gap_start and gap_end:
-                            # Ensure proxy has data for the gap period
-                            if self._ensure_proxy_data(
-                                    db, asset.proxy_asset_id, gap_start, gap_end
-                            ):
-                                # Generate synthetic prices
-                                created = self._backcast_with_proxy(
-                                    db, asset.id, asset.proxy_asset_id,
-                                    gap_start, gap_end
-                                )
-                                if created > 0:
-                                    total_synthetic += created
-                                    assets_backcast_count += 1
-                                    logger.info(
-                                        f"Backcast {asset.ticker}: "
-                                        f"{created} synthetic prices "
-                                        f"({gap_start} to {gap_end})"
-                                    )
-
-                result.synthetic_prices_created = total_synthetic
-                result.assets_backcast = assets_backcast_count
-
-                if total_synthetic > 0:
+                if backcast_result["total_synthetic"] > 0:
                     result.warnings.append(
-                        f"Generated {total_synthetic} synthetic prices for "
-                        f"{assets_backcast_count} asset(s) using proxy backcasting"
+                        f"Generated {backcast_result['total_synthetic']} synthetic prices for "
+                        f"{backcast_result['assets_backcast_count']} asset(s) using proxy backcasting"
                     )
 
             # 5. Determine final status  (was step 5, now renumbered)
@@ -615,6 +590,196 @@ class MarketDataSyncService:
     # PRIVATE METHODS - Price Fetching
     # =========================================================================
 
+    def _sync_asset_prices_no_commit(
+            self,
+            db: Session,
+            asset_info: AssetSyncInfo,
+            end_date: date,
+            force: bool = False,
+            accumulated_prices: list[tuple[int, list[OHLCVData]]] | None = None,
+    ) -> AssetSyncResult:
+        """
+        Fetch prices for a single asset without committing.
+
+        Accumulates prices in the provided list for batch commit later.
+        This is more efficient than committing after each asset.
+
+        Args:
+            db: Database session
+            asset_info: Asset to sync
+            end_date: End date for sync
+            force: If True, re-fetch all data
+            accumulated_prices: List to accumulate (asset_id, prices) tuples
+
+        Returns:
+            AssetSyncResult with sync outcome
+        """
+        result = AssetSyncResult(
+            asset_id=asset_info.asset_id,
+            ticker=asset_info.ticker,
+            exchange=asset_info.exchange,
+            from_date=asset_info.first_transaction_date,
+            to_date=end_date,
+        )
+
+        try:
+            # Determine what dates need fetching
+            if force:
+                date_ranges = [(asset_info.first_transaction_date, end_date)]
+            else:
+                date_ranges = self._get_missing_date_ranges(
+                    db,
+                    asset_info.asset_id,
+                    asset_info.first_transaction_date,
+                    end_date,
+                )
+
+            if not date_ranges:
+                logger.debug(
+                    f"No missing dates for {asset_info.ticker}/{asset_info.exchange}"
+                )
+                result.success = True
+                return result
+
+            # Fetch prices for each missing range
+            total_prices = 0
+            all_prices: list[OHLCVData] = []
+
+            for start, end in date_ranges:
+                logger.debug(
+                    f"Fetching {asset_info.ticker}/{asset_info.exchange}: "
+                    f"{start} to {end}"
+                )
+
+                prices_result = self._provider.get_historical_prices(
+                    ticker=asset_info.ticker,
+                    exchange=asset_info.exchange,
+                    start_date=start,
+                    end_date=end,
+                )
+
+                if not prices_result.success:
+                    result.success = False
+                    result.error = prices_result.error
+                    return result
+
+                if prices_result.prices:
+                    all_prices.extend(prices_result.prices)
+                    total_prices += len(prices_result.prices)
+
+            # Accumulate for batch commit (if accumulator provided)
+            if all_prices:
+                if accumulated_prices is not None:
+                    accumulated_prices.append((asset_info.asset_id, all_prices))
+                else:
+                    # Fallback: commit immediately if no accumulator
+                    self._store_prices(db, asset_info.asset_id, all_prices)
+
+            result.prices_fetched = total_prices
+            result.success = True
+
+            logger.info(
+                f"Fetched {asset_info.ticker}/{asset_info.exchange}: "
+                f"{total_prices} prices"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(
+                f"Error syncing {asset_info.ticker}/{asset_info.exchange}: {e}"
+            )
+            result.success = False
+            result.error = str(e)
+            return result
+
+    def _store_prices_batch(
+            self,
+            db: Session,
+            accumulated_prices: list[tuple[int, list[OHLCVData]]],
+    ) -> int:
+        """
+        Store accumulated prices for multiple assets in a single transaction.
+
+        More efficient than individual commits per asset.
+
+        Args:
+            db: Database session
+            accumulated_prices: List of (asset_id, prices) tuples
+
+        Returns:
+            Total number of records stored
+        """
+        if not accumulated_prices:
+            return 0
+
+        total_stored = 0
+        all_records = []
+
+        # Check if OHLC columns exist
+        has_ohlc = hasattr(MarketData, 'open_price')
+        provider_name = getattr(self._provider, 'name', 'unknown')
+        if not isinstance(provider_name, str):
+            provider_name = str(provider_name) if provider_name else 'unknown'
+
+        # Build all records for bulk insert
+        for asset_id, prices in accumulated_prices:
+            for p in prices:
+                record = {
+                    "asset_id": asset_id,
+                    "date": p.date,
+                    "close_price": p.close,
+                    "adjusted_close": p.adjusted_close,
+                    "volume": p.volume,
+                    "provider": provider_name,
+                    "is_synthetic": False,
+                    "proxy_source_id": None,
+                }
+
+                if has_ohlc:
+                    record["open_price"] = p.open
+                    record["high_price"] = p.high
+                    record["low_price"] = p.low
+
+                all_records.append(record)
+
+        if not all_records:
+            return 0
+
+        try:
+            # PostgreSQL bulk upsert
+            stmt = pg_insert(MarketData).values(all_records)
+
+            update_columns = {
+                "close_price": stmt.excluded.close_price,
+                "adjusted_close": stmt.excluded.adjusted_close,
+                "volume": stmt.excluded.volume,
+                "provider": stmt.excluded.provider,
+            }
+
+            if has_ohlc:
+                update_columns["open_price"] = stmt.excluded.open_price
+                update_columns["high_price"] = stmt.excluded.high_price
+                update_columns["low_price"] = stmt.excluded.low_price
+
+            upsert_stmt = stmt.on_conflict_do_update(
+                index_elements=["asset_id", "date"],
+                set_=update_columns,
+            )
+
+            db.execute(upsert_stmt)
+            db.commit()
+
+            total_stored = len(all_records)
+            logger.info(f"Batch stored {total_stored} prices for {len(accumulated_prices)} assets")
+
+            return total_stored
+
+        except Exception as e:
+            logger.error(f"Error batch storing prices: {e}")
+            db.rollback()
+            raise
+
     def _sync_asset_prices(
             self,
             db: Session,
@@ -784,7 +949,7 @@ class MarketDataSyncService:
                 existing_dates.add(row)
 
         # Generate all business days in range
-        all_dates = self._get_business_days(start_date, end_date)
+        all_dates = get_business_days(start_date, end_date)
 
         # Find missing dates
         missing_dates = sorted([d for d in all_dates if d not in existing_dates])
@@ -898,19 +1063,6 @@ class MarketDataSyncService:
             logger.error(f"Error storing prices for asset {asset_id}: {e}")
             raise
 
-    @staticmethod
-    def _get_business_days(start_date: date, end_date: date) -> list[date]:
-        """Get list of business days (weekdays) in range."""
-        days = []
-        current = start_date
-
-        while current <= end_date:
-            if current.weekday() < 5:  # Monday = 0, Friday = 4
-                days.append(current)
-            current += timedelta(days=1)
-
-        return days
-
     # =========================================================================
     # PRIVATE METHODS - Status Management
     # =========================================================================
@@ -1022,6 +1174,168 @@ class MarketDataSyncService:
 
         return summary
 
+    def _backcast_assets_batch(
+            self,
+            db: Session,
+            assets: list[AssetSyncInfo],
+    ) -> dict:
+        """
+        Batch backcast multiple assets with proxies to eliminate N+1 queries.
+
+        Instead of detecting gaps and fetching proxy data one asset at a time,
+        this method:
+        1. Batch fetches all assets with their proxy relationships
+        2. Batch detects price gaps using a single query
+        3. Batch ensures proxy data is available
+        4. Processes backcasting for all assets
+
+        Args:
+            db: Database session
+            assets: List of asset sync info
+
+        Returns:
+            Dict with total_synthetic and assets_backcast_count
+        """
+        total_synthetic = 0
+        assets_backcast_count = 0
+
+        if not assets:
+            return {"total_synthetic": 0, "assets_backcast_count": 0}
+
+        # Step 1: Batch fetch all assets with proxy relationships
+        asset_ids = [a.asset_id for a in assets]
+        refreshed_assets = db.scalars(
+            select(Asset).where(Asset.id.in_(asset_ids))
+        ).all()
+        asset_lookup = {a.id: a for a in refreshed_assets}
+
+        # Step 2: Identify assets that have proxies
+        assets_with_proxies = [
+            (asset_info, asset_lookup.get(asset_info.asset_id))
+            for asset_info in assets
+            if asset_lookup.get(asset_info.asset_id)
+            and asset_lookup.get(asset_info.asset_id).proxy_asset_id
+        ]
+
+        if not assets_with_proxies:
+            return {"total_synthetic": 0, "assets_backcast_count": 0}
+
+        # Step 3: Batch detect price gaps using a single query
+        # Get the minimum non-synthetic price date for each asset
+        asset_ids_with_proxies = [a.asset_id for a, _ in assets_with_proxies]
+
+        # Query: Get first real (non-synthetic) price date for each asset
+        min_real_dates = db.execute(
+            select(
+                MarketData.asset_id,
+                func.min(MarketData.date).label('first_real_date')
+            )
+            .where(
+                MarketData.asset_id.in_(asset_ids_with_proxies),
+                MarketData.is_synthetic == False,
+            )
+            .group_by(MarketData.asset_id)
+        ).all()
+
+        first_real_date_map = {row.asset_id: row.first_real_date for row in min_real_dates}
+
+        # Step 4: Identify which assets need backcasting and collect proxy IDs
+        backcast_requirements = []  # List of (asset_info, asset, gap_start, gap_end)
+        proxy_ids_needed = set()
+
+        for asset_info, asset in assets_with_proxies:
+            first_real_date = first_real_date_map.get(asset.id)
+
+            if first_real_date is None:
+                # No prices at all - gap is entire history
+                gap_start = asset_info.first_transaction_date
+                gap_end = date.today()
+            elif first_real_date > asset_info.first_transaction_date:
+                # Gap exists
+                gap_start = asset_info.first_transaction_date
+                gap_end = first_real_date - timedelta(days=1)
+            else:
+                # No gap
+                continue
+
+            backcast_requirements.append((asset_info, asset, gap_start, gap_end))
+            proxy_ids_needed.add(asset.proxy_asset_id)
+
+        if not backcast_requirements:
+            return {"total_synthetic": 0, "assets_backcast_count": 0}
+
+        # Step 5: Batch ensure proxy data is available
+        # First, check existing proxy coverage
+        if proxy_ids_needed:
+            proxy_coverage = db.execute(
+                select(
+                    MarketData.asset_id,
+                    func.min(MarketData.date).label('min_date'),
+                    func.max(MarketData.date).label('max_date')
+                )
+                .where(MarketData.asset_id.in_(proxy_ids_needed))
+                .group_by(MarketData.asset_id)
+            ).all()
+            proxy_coverage_map = {
+                row.asset_id: (row.min_date, row.max_date)
+                for row in proxy_coverage
+            }
+
+            # Fetch proxy assets that need data
+            proxy_assets = {
+                a.id: a for a in db.scalars(
+                    select(Asset).where(Asset.id.in_(proxy_ids_needed))
+                ).all()
+            }
+
+            # Determine overall date range needed for proxies
+            overall_start = min(req[2] for req in backcast_requirements)
+            overall_end = max(req[3] for req in backcast_requirements)
+
+            # Fetch missing proxy data
+            for proxy_id in proxy_ids_needed:
+                coverage = proxy_coverage_map.get(proxy_id)
+                proxy_asset = proxy_assets.get(proxy_id)
+
+                if not proxy_asset:
+                    continue
+
+                needs_fetch = False
+                if coverage is None:
+                    needs_fetch = True
+                elif coverage[0] is None or coverage[0] > overall_start:
+                    needs_fetch = True
+
+                if needs_fetch:
+                    logger.info(f"Fetching proxy data for {proxy_asset.ticker}/{proxy_asset.exchange}")
+                    result = self._provider.get_historical_prices(
+                        ticker=proxy_asset.ticker,
+                        exchange=proxy_asset.exchange,
+                        start_date=overall_start,
+                        end_date=overall_end,
+                    )
+                    if result.success and result.prices:
+                        self._store_prices(db, proxy_id, result.prices)
+
+        # Step 6: Process backcasting for all assets
+        for asset_info, asset, gap_start, gap_end in backcast_requirements:
+            created = self._backcast_with_proxy(
+                db, asset.id, asset.proxy_asset_id,
+                gap_start, gap_end
+            )
+            if created > 0:
+                total_synthetic += created
+                assets_backcast_count += 1
+                logger.info(
+                    f"Backcast {asset.ticker}: {created} synthetic prices "
+                    f"({gap_start} to {gap_end})"
+                )
+
+        return {
+            "total_synthetic": total_synthetic,
+            "assets_backcast_count": assets_backcast_count
+        }
+
     def _backcast_with_proxy(
             self,
             db: Session,
@@ -1033,11 +1347,26 @@ class MarketDataSyncService:
         """
         Generate synthetic prices for an asset using proxy data.
 
-        Uses a scaling approach: find the first real price for the asset,
-        calculate a scale factor vs the proxy, then apply that factor to
-        all proxy prices in the backcast period.
+        Algorithm (Price Scaling Method):
+        =================================
+        Uses the relationship between the asset and proxy at the "anchor point"
+        (first available real price) to scale proxy prices backwards in time.
 
-        This method is designed to be:
+        Formula:
+            scale_factor = asset_price_anchor / proxy_price_anchor
+            synthetic_price[t] = proxy_price[t] × scale_factor
+
+        This assumes the asset tracks the proxy with a constant ratio, which is
+        reasonable for ETFs tracking similar indices (e.g., MSCI World variants).
+
+        Example:
+            - Asset first real price: $50 on 2024-03-01
+            - Proxy price on 2024-03-01: $100
+            - scale_factor = 50 / 100 = 0.5
+            - For 2024-01-15 where proxy = $95:
+              synthetic_price = 95 × 0.5 = $47.50
+
+        Design Properties:
         - Safe from division by zero (guards against zero proxy price)
         - Free from N+1 queries (batch fetches existing dates)
         - Race-condition safe (uses ON CONFLICT DO NOTHING for atomic upsert)

@@ -33,6 +33,10 @@ from app.schemas.transactions import (
 from app.schemas.validators import validate_currency_query, validate_ticker_query
 from app.services.asset_resolution import AssetResolutionService
 from app.services.analytics.service import AnalyticsService
+from app.dependencies import (
+    get_asset_resolution_service,
+    get_analytics_service,
+)
 
 # Validated query parameter types
 CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
@@ -46,20 +50,6 @@ router = APIRouter(
     prefix="/transactions",
     tags=["Transactions"],
 )
-
-
-# =============================================================================
-# DEPENDENCIES
-# =============================================================================
-
-def get_asset_resolution_service() -> AssetResolutionService:
-    """Dependency that provides the asset resolution service."""
-    return AssetResolutionService()
-
-
-def get_analytics_service() -> AnalyticsService:
-    """Dependency that provides the analytics service for cache invalidation."""
-    return AnalyticsService()
 
 
 # =============================================================================
@@ -546,14 +536,33 @@ def create_transactions_batch(
         new_transactions.append(new_txn)
 
     # 5. Atomic Commit (All or Nothing)
+    from sqlalchemy.exc import IntegrityError, DataError, OperationalError
     try:
         db.add_all(new_transactions)
         db.commit()
-    except Exception as e:
+    except IntegrityError as e:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Database commit failed: {str(e)}"
+            detail=f"Data integrity error: {str(e)}"
+        )
+    except DataError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid data: {str(e)}"
+        )
+    except OperationalError as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Database unavailable: {str(e)}"
+        )
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
         )
 
     # 6. Invalidate analytics cache for all affected portfolios

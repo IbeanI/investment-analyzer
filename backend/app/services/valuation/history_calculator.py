@@ -51,6 +51,9 @@ from app.services.valuation.types import (
 from app.services.constants import (
     PRICE_FALLBACK_DAYS,
     FX_FALLBACK_DAYS,
+    HISTORY_CHUNK_SIZE_DAYS,
+    HISTORY_CHUNK_THRESHOLD_DAYS,
+    MAX_PRICE_RECORDS_BEFORE_CHUNKING,
 )
 from app.services.exceptions import PortfolioNotFoundError, InvalidIntervalError
 
@@ -116,6 +119,11 @@ class HistoryCalculator:
         Complexity: O(D + T) where D = number of dates, T = number of transactions.
         NOT O(D * T) like the naive approach!
 
+        Memory Optimization:
+            For large date ranges (>2 years) or portfolios with many assets,
+            uses chunked processing to limit memory usage. Prices and FX rates
+            are fetched in chunks of ~1 year, processed, then discarded.
+
         Args:
             db: Database session
             portfolio_id: Portfolio to calculate history for
@@ -156,6 +164,34 @@ class HistoryCalculator:
 
         # Step 3: Identify all assets involved and fetch them
         asset_ids = list({txn.asset_id for txn in transactions if txn.asset_id is not None})
+
+        # Step 3b: Determine if chunked processing is needed for memory efficiency
+        date_range_days = (end_date - start_date).days
+        estimated_records = len(asset_ids) * date_range_days
+        use_chunked = (
+            date_range_days > HISTORY_CHUNK_THRESHOLD_DAYS or
+            estimated_records > MAX_PRICE_RECORDS_BEFORE_CHUNKING
+        )
+
+        if use_chunked:
+            logger.info(
+                f"Using chunked processing for portfolio {portfolio_id}: "
+                f"{date_range_days} days, {len(asset_ids)} assets, "
+                f"~{estimated_records:,} estimated records"
+            )
+            return self._calculate_chunked(
+                db=db,
+                portfolio_id=portfolio_id,
+                portfolio_currency=portfolio_currency,
+                transactions=transactions,
+                asset_ids=asset_ids,
+                start_date=start_date,
+                end_date=end_date,
+                interval=interval,
+                tracks_cash=tracks_cash,
+            )
+
+        # Standard (non-chunked) processing for smaller date ranges
 
         # Step 4: Batch fetch ALL prices in date range
         price_map = self._fetch_prices_batch(db, asset_ids, start_date, end_date)
@@ -283,6 +319,263 @@ class HistoryCalculator:
             total_lookups=total_lookups,
             synthetic_details=synthetic_details,
         )
+
+    def _calculate_chunked(
+            self,
+            db: Session,
+            portfolio_id: int,
+            portfolio_currency: str,
+            transactions: list[Transaction],
+            asset_ids: list[int],
+            start_date: date,
+            end_date: date,
+            interval: str,
+            tracks_cash: bool,
+    ) -> PortfolioHistory:
+        """
+        Calculate portfolio history using chunked processing for memory efficiency.
+
+        Instead of loading ALL prices/FX rates into memory at once, this method:
+        1. Fetches assets once (small, constant memory)
+        2. Processes dates in chunks of ~1 year
+        3. For each chunk: fetch prices/FX, process, discard
+
+        This trades slightly more DB queries for bounded memory usage.
+
+        Memory Footprint:
+            - Standard: O(assets × days × 2) for prices + FX
+            - Chunked: O(assets × chunk_days × 2) - bounded to ~4MB per chunk
+
+        Args:
+            db: Database session
+            portfolio_id: Portfolio ID
+            portfolio_currency: Portfolio's base currency
+            transactions: All transactions (already fetched)
+            asset_ids: List of asset IDs in portfolio
+            start_date: Start of date range
+            end_date: End of date range
+            interval: "daily", "weekly", or "monthly"
+            tracks_cash: Whether portfolio tracks cash
+
+        Returns:
+            PortfolioHistory with all data points
+        """
+        warnings: list[str] = []
+
+        # Step 1: Fetch all assets once (small memory footprint)
+        # We need to do an initial price fetch to get proxy asset IDs
+        # Use first chunk to discover proxy assets
+        first_chunk_end = min(start_date + timedelta(days=HISTORY_CHUNK_SIZE_DAYS), end_date)
+        initial_prices = self._fetch_prices_batch(db, asset_ids, start_date, first_chunk_end)
+
+        proxy_asset_ids = {
+            proxy_id
+            for (price, is_synthetic, proxy_id) in initial_prices.values()
+            if is_synthetic and proxy_id is not None
+        }
+        all_asset_ids = set(asset_ids) | proxy_asset_ids
+        assets = self._fetch_assets(db, list(all_asset_ids))
+
+        # Determine currencies needed for FX
+        currencies_needed = {
+            asset.currency
+            for asset in assets.values()
+            if asset.currency.upper() != portfolio_currency.upper()
+        }
+
+        # Step 2: Generate all target dates
+        target_dates = self._generate_dates(start_date, end_date, interval)
+
+        # Step 3: Split dates into chunks
+        date_chunks = self._split_dates_into_chunks(target_dates, HISTORY_CHUNK_SIZE_DAYS)
+
+        logger.debug(
+            f"Processing {len(target_dates)} dates in {len(date_chunks)} chunks "
+            f"(chunk size: {HISTORY_CHUNK_SIZE_DAYS} days)"
+        )
+
+        # Step 4: Process each chunk with rolling state preserved across chunks
+        all_data_points: list[HistoryPoint] = []
+
+        # Rolling state - maintained across chunks
+        holdings_state: dict[int, dict] = {}
+        cash_state: dict[str, Decimal] = {}
+        txn_index = 0
+
+        # Initialize cash calculator if tracking cash
+        cash_calc = None
+        if tracks_cash:
+            from app.services.valuation.calculators import CashCalculator
+            cash_calc = CashCalculator()
+
+        for chunk_idx, chunk_dates in enumerate(date_chunks):
+            if not chunk_dates:
+                continue
+
+            chunk_start = chunk_dates[0]
+            chunk_end = chunk_dates[-1]
+
+            logger.debug(
+                f"Processing chunk {chunk_idx + 1}/{len(date_chunks)}: "
+                f"{chunk_start} to {chunk_end} ({len(chunk_dates)} dates)"
+            )
+
+            # Fetch prices and FX rates for this chunk only
+            # Reuse initial_prices if this is the first chunk
+            if chunk_idx == 0 and chunk_end <= first_chunk_end:
+                chunk_prices = initial_prices
+            else:
+                chunk_prices = self._fetch_prices_batch(
+                    db, asset_ids, chunk_start, chunk_end
+                )
+
+            chunk_fx = self._fetch_fx_rates_batch(
+                db, currencies_needed, portfolio_currency, chunk_start, chunk_end
+            )
+
+            # Process dates in this chunk
+            for target_date in chunk_dates:
+                # Apply transactions up to this date (modifies holdings_state, cash_state)
+                txn_index = self._apply_transactions_until_date(
+                    transactions, txn_index, target_date,
+                    holdings_state, cash_state, assets, cash_calc, tracks_cash,
+                )
+
+                # Snapshot current state using chunk's price/FX data
+                point = self._snapshot_state(
+                    holdings_state=holdings_state,
+                    cash_state=cash_state if tracks_cash else {},
+                    portfolio_currency=portfolio_currency,
+                    target_date=target_date,
+                    price_map=chunk_prices,
+                    fx_map=chunk_fx,
+                    tracks_cash=tracks_cash,
+                    assets=assets,
+                )
+                all_data_points.append(point)
+
+            # Clear chunk data to free memory (Python GC will reclaim)
+            del chunk_prices
+            del chunk_fx
+
+        # Step 5: Aggregate statistics across all data points
+        # (Same aggregation logic as non-chunked version)
+        incomplete_count = sum(1 for p in all_data_points if not p.has_complete_data)
+        if incomplete_count > 0:
+            warnings.append(
+                f"{incomplete_count} of {len(all_data_points)} data points have "
+                f"incomplete price or FX data"
+            )
+
+        has_synthetic = any(point.has_synthetic_data for point in all_data_points)
+        all_synthetic_holdings: dict[str, str | None] = {}
+        synthetic_dates: list[date] = []
+        total_lookups = 0
+        synthetic_lookups = 0
+        asset_tracking: dict[str, dict] = {}
+
+        for point in all_data_points:
+            total_lookups += point.holdings_count
+            synthetic_lookups += len(point.synthetic_holdings)
+
+            for ticker, proxy in point.synthetic_holdings.items():
+                if ticker not in asset_tracking:
+                    asset_tracking[ticker] = {
+                        "proxy": proxy,
+                        "synthetic_dates": [],
+                        "total_dates": [],
+                    }
+                asset_tracking[ticker]["synthetic_dates"].append(point.date)
+                asset_tracking[ticker]["total_dates"].append(point.date)
+
+                if ticker not in all_synthetic_holdings:
+                    all_synthetic_holdings[ticker] = proxy
+
+            if point.has_synthetic_data:
+                synthetic_dates.append(point.date)
+
+        synthetic_date_range: tuple[date, date] | None = None
+        if synthetic_dates:
+            synthetic_date_range = (min(synthetic_dates), max(synthetic_dates))
+
+        from app.services.valuation.types import SyntheticAssetDetail
+        synthetic_details: dict[str, SyntheticAssetDetail] = {}
+
+        for ticker, tracking in asset_tracking.items():
+            if tracking["synthetic_dates"]:
+                synthetic_details[ticker] = SyntheticAssetDetail(
+                    ticker=ticker,
+                    proxy_ticker=tracking["proxy"],
+                    first_synthetic_date=min(tracking["synthetic_dates"]),
+                    last_synthetic_date=max(tracking["synthetic_dates"]),
+                    synthetic_days=len(tracking["synthetic_dates"]),
+                    total_days_held=len(tracking["synthetic_dates"]),
+                )
+
+        warnings.append(
+            f"Used chunked processing ({len(date_chunks)} chunks) for memory efficiency"
+        )
+
+        return PortfolioHistory(
+            portfolio_id=portfolio_id,
+            portfolio_currency=portfolio_currency,
+            start_date=start_date,
+            end_date=end_date,
+            interval=interval,
+            tracks_cash=tracks_cash,
+            data=all_data_points,
+            warnings=warnings,
+            has_synthetic_data=has_synthetic,
+            synthetic_holdings=all_synthetic_holdings,
+            synthetic_date_range=synthetic_date_range,
+            synthetic_lookups=synthetic_lookups,
+            total_lookups=total_lookups,
+            synthetic_details=synthetic_details,
+        )
+
+    def _split_dates_into_chunks(
+            self,
+            dates: list[date],
+            max_days_per_chunk: int,
+    ) -> list[list[date]]:
+        """
+        Split a list of dates into chunks based on time span.
+
+        Each chunk contains dates spanning at most max_days_per_chunk calendar days.
+
+        Args:
+            dates: List of dates (must be sorted)
+            max_days_per_chunk: Maximum calendar days per chunk
+
+        Returns:
+            List of date lists (chunks)
+        """
+        if not dates:
+            return []
+
+        chunks: list[list[date]] = []
+        current_chunk: list[date] = []
+        chunk_start: date | None = None
+
+        for d in dates:
+            if chunk_start is None:
+                # Start new chunk
+                chunk_start = d
+                current_chunk = [d]
+            elif (d - chunk_start).days <= max_days_per_chunk:
+                # Date fits in current chunk
+                current_chunk.append(d)
+            else:
+                # Start new chunk
+                chunks.append(current_chunk)
+                chunk_start = d
+                current_chunk = [d]
+
+        # Don't forget the last chunk
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
 
     def _apply_transactions_until_date(
             self,

@@ -30,6 +30,7 @@ from app.schemas.valuation import (
     PortfolioHistoryResponse,
 )
 from app.services.valuation import ValuationService
+from app.dependencies import get_valuation_service
 
 # =============================================================================
 # ROUTER SETUP
@@ -42,13 +43,8 @@ router = APIRouter(
 
 
 # =============================================================================
-# DEPENDENCIES
+# HELPER FUNCTIONS
 # =============================================================================
-
-def get_valuation_service() -> ValuationService:
-    """Dependency that provides the valuation service."""
-    return ValuationService()
-
 
 def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
     """Fetch a portfolio by ID or raise 404 if not found."""

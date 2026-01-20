@@ -29,10 +29,17 @@ from collections import OrderedDict
 from dataclasses import dataclass
 
 from sqlalchemy import select, and_, or_
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import Asset
+
+
+def _is_postgresql(db: Session) -> bool:
+    """Check if the database is PostgreSQL."""
+    dialect_name = db.get_bind().dialect.name
+    return dialect_name == "postgresql"
 from app.services.exceptions import (
     AssetNotFoundError,
     AssetDeactivatedError,
@@ -416,9 +423,11 @@ class AssetResolutionService:
         """
         Create a new Asset in the database from provider data.
 
-        Handles race conditions where another request may create the same asset
-        concurrently. If an IntegrityError occurs (unique constraint violation),
-        we rollback and fetch the existing asset.
+        For PostgreSQL: Uses INSERT ... ON CONFLICT DO NOTHING pattern for atomic
+        race condition handling.
+
+        For other databases (SQLite, etc.): Uses try/except IntegrityError with
+        rollback and re-query.
 
         Args:
             db: Database session
@@ -426,6 +435,71 @@ class AssetResolutionService:
 
         Returns:
             Newly created Asset, or existing Asset if created by concurrent request
+        """
+        if _is_postgresql(db):
+            return self._create_asset_postgresql(db, asset_info)
+        else:
+            return self._create_asset_generic(db, asset_info)
+
+    def _create_asset_postgresql(self, db: Session, asset_info: AssetInfo) -> Asset:
+        """
+        Create asset using PostgreSQL's atomic upsert pattern.
+
+        Uses INSERT ... ON CONFLICT DO NOTHING to handle race conditions atomically.
+        This is safer than try/except because:
+        1. No rollback needed - transaction stays valid
+        2. No race window between rollback and re-query
+        3. Atomic at the database level
+        """
+        stmt = pg_insert(Asset).values(
+            ticker=asset_info.ticker,
+            exchange=asset_info.exchange,
+            name=asset_info.name,
+            asset_class=asset_info.asset_class,
+            currency=asset_info.currency,
+            sector=asset_info.sector,
+            region=asset_info.region,
+            isin=asset_info.isin,
+            is_active=True,
+        ).on_conflict_do_nothing(
+            constraint='uq_ticker_exchange'
+        ).returning(Asset.id)
+
+        result = db.execute(stmt)
+        db.commit()
+
+        # Check if INSERT succeeded (returns the new ID) or was skipped (returns None)
+        inserted_row = result.fetchone()
+
+        if inserted_row is not None:
+            # Successfully inserted - fetch the complete asset
+            asset = db.get(Asset, inserted_row[0])
+            logger.info(f"Created new asset: {asset.id} ({asset_info.ticker} on {asset_info.exchange})")
+            return asset
+
+        # INSERT was skipped due to conflict - another request created this asset
+        logger.info(
+            f"Asset {asset_info.ticker} on {asset_info.exchange} already exists "
+            "(concurrent creation detected), fetching existing"
+        )
+        existing = self._lookup_in_db(db, asset_info.ticker, asset_info.exchange)
+
+        if existing is not None:
+            return existing
+
+        # This should never happen - if conflict occurred, the asset must exist
+        logger.error(
+            f"Asset {asset_info.ticker} on {asset_info.exchange} not found after "
+            "conflict detected - this indicates a data integrity issue"
+        )
+        raise AssetNotFoundError(ticker=asset_info.ticker, exchange=asset_info.exchange)
+
+    def _create_asset_generic(self, db: Session, asset_info: AssetInfo) -> Asset:
+        """
+        Create asset using generic try/except pattern for non-PostgreSQL databases.
+
+        Handles race conditions via IntegrityError catch and re-query.
+        Used for SQLite and other databases that don't support ON CONFLICT DO NOTHING.
         """
         asset = Asset(
             ticker=asset_info.ticker,
@@ -444,12 +518,12 @@ class AssetResolutionService:
         try:
             db.commit()
             db.refresh(asset)
+            logger.info(f"Created new asset: {asset.id} ({asset_info.ticker} on {asset_info.exchange})")
             return asset
         except IntegrityError as e:
             db.rollback()
 
             if not _is_unique_constraint_violation(e):
-                # Not a unique constraint violation - re-raise the error
                 logger.error(
                     f"Asset creation failed for {asset_info.ticker} on "
                     f"{asset_info.exchange} with unexpected error: {e}"
@@ -475,9 +549,8 @@ class AssetResolutionService:
         """
         Create multiple assets in a single transaction.
 
-        Handles race conditions where concurrent requests may create the same
-        assets. If an IntegrityError occurs, falls back to resolving each
-        asset individually.
+        For PostgreSQL: Uses bulk INSERT ... ON CONFLICT DO NOTHING for atomicity.
+        For other databases: Falls back to individual creates with error handling.
 
         Args:
             db: Database session
@@ -489,6 +562,76 @@ class AssetResolutionService:
         if not asset_infos:
             return []
 
+        if _is_postgresql(db):
+            return self._create_assets_batch_postgresql(db, asset_infos)
+        else:
+            return self._create_assets_batch_generic(db, asset_infos)
+
+    def _create_assets_batch_postgresql(
+            self,
+            db: Session,
+            asset_infos: list[AssetInfo]
+    ) -> list[Asset]:
+        """
+        Create assets using PostgreSQL's atomic bulk upsert pattern.
+        """
+        # Prepare values for bulk insert
+        values = [
+            {
+                "ticker": info.ticker,
+                "exchange": info.exchange,
+                "name": info.name,
+                "asset_class": info.asset_class,
+                "currency": info.currency,
+                "sector": info.sector,
+                "region": info.region,
+                "isin": info.isin,
+                "is_active": True,
+            }
+            for info in asset_infos
+        ]
+
+        # Use PostgreSQL bulk upsert with DO NOTHING
+        stmt = pg_insert(Asset).values(values).on_conflict_do_nothing(
+            constraint='uq_ticker_exchange'
+        )
+
+        db.execute(stmt)
+        db.commit()
+
+        # Fetch all assets (both newly created and pre-existing)
+        conditions = [
+            and_(Asset.ticker == info.ticker, Asset.exchange == info.exchange)
+            for info in asset_infos
+        ]
+        query = select(Asset).where(or_(*conditions))
+        all_assets = {(a.ticker, a.exchange): a for a in db.scalars(query).all()}
+
+        # Return assets in the same order as input
+        result = []
+        for info in asset_infos:
+            key = (info.ticker, info.exchange)
+            asset = all_assets.get(key)
+            if asset is not None:
+                result.append(asset)
+            else:
+                logger.warning(
+                    f"Asset {info.ticker} on {info.exchange} not found after batch insert"
+                )
+
+        logger.info(f"Batch created/fetched {len(result)} assets")
+        return result
+
+    def _create_assets_batch_generic(
+            self,
+            db: Session,
+            asset_infos: list[AssetInfo]
+    ) -> list[Asset]:
+        """
+        Create assets using generic try/except pattern for non-PostgreSQL databases.
+
+        Attempts bulk insert first, falls back to individual creates on conflict.
+        """
         assets = []
         for info in asset_infos:
             asset = Asset(
@@ -506,34 +649,26 @@ class AssetResolutionService:
             assets.append(asset)
 
         try:
-            db.commit()  # Single commit for all
+            db.commit()
             for asset in assets:
                 db.refresh(asset)
+            logger.info(f"Batch created {len(assets)} assets")
             return assets
-        except IntegrityError as e:
+        except IntegrityError:
             db.rollback()
 
-            if not _is_unique_constraint_violation(e):
-                # Not a unique constraint violation - re-raise the error
-                # This could be FK violation, check constraint, etc.
-                logger.error(f"Batch asset creation failed with unexpected error: {e}")
-                raise
-
-            # One or more assets were created by concurrent requests
-            logger.warning(
-                "Batch asset creation failed due to concurrent request, "
-                "resolving individually"
+            # One or more assets existed - resolve individually
+            logger.info(
+                "Batch asset creation failed due to conflict, resolving individually"
             )
-            # Fallback: resolve each asset individually
             result = []
             for info in asset_infos:
                 existing = self._lookup_in_db(db, info.ticker, info.exchange)
                 if existing is not None:
                     result.append(existing)
                 else:
-                    # Asset doesn't exist yet, create it individually
-                    # (uses the race-condition-safe _create_asset)
-                    result.append(self._create_asset(db, info))
+                    # Asset doesn't exist yet, create individually
+                    result.append(self._create_asset_generic(db, info))
             return result
 
     def clear_cache(self) -> None:

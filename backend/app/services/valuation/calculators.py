@@ -97,6 +97,16 @@ class HoldingsCalculator:
                 portfolio_currency=portfolio_currency,
             )
 
+            # Data integrity check: can't have sales without buys
+            # This would cause division by zero in cost basis calculation
+            if position.total_bought_qty == Decimal("0") and position.total_sold_qty > Decimal("0"):
+                logger.warning(
+                    f"Invalid position state for asset {asset_id} ({asset.ticker}): "
+                    f"total_sold_qty={position.total_sold_qty} but total_bought_qty=0. "
+                    "Skipping position."
+                )
+                continue
+
             # Include positions that are either:
             # 1. Open (quantity > 0) - for current holdings display
             # 2. Closed but have sales (total_sold_qty > 0) - for realized P&L
@@ -247,6 +257,10 @@ class HoldingsCalculator:
         - Open (quantity > 0)
         - Closed but have sales (for realized P&L calculation)
 
+        Validates data integrity:
+        - Skips positions with total_bought_qty == 0 but total_sold_qty > 0
+          (invalid state - can't sell what was never bought)
+
         Args:
             holdings_state: Holdings state from apply_transaction calls
 
@@ -256,8 +270,28 @@ class HoldingsCalculator:
         positions: list[HoldingPosition] = []
 
         for asset_id, state in holdings_state.items():
-            quantity = state['total_bought_qty'] - state['total_sold_qty']
+            total_bought_qty = state['total_bought_qty']
             total_sold_qty = state['total_sold_qty']
+            quantity = total_bought_qty - total_sold_qty
+
+            # Data integrity check: can't have sales without buys
+            # This would cause division by zero in cost basis calculation
+            if total_bought_qty == Decimal("0") and total_sold_qty > Decimal("0"):
+                logger.warning(
+                    f"Invalid position state for asset {asset_id}: "
+                    f"total_sold_qty={total_sold_qty} but total_bought_qty=0. "
+                    "Skipping position."
+                )
+                continue
+
+            # Additional sanity check: negative quantity shouldn't happen
+            if quantity < Decimal("0"):
+                logger.warning(
+                    f"Negative position quantity for asset {asset_id}: "
+                    f"bought={total_bought_qty}, sold={total_sold_qty}, "
+                    f"quantity={quantity}. This may indicate data issues."
+                )
+                # Still include for P&L calculation, but flag the issue
 
             # Include if open OR has sales (for realized P&L)
             if quantity > Decimal("0") or total_sold_qty > Decimal("0"):
@@ -265,7 +299,7 @@ class HoldingsCalculator:
                     asset_id=asset_id,
                     asset=state['asset'],
                     quantity=quantity,
-                    total_bought_qty=state['total_bought_qty'],
+                    total_bought_qty=total_bought_qty,
                     total_bought_cost_local=state['total_bought_cost_local'],
                     total_bought_cost_portfolio=state['total_bought_cost_portfolio'],
                     total_sold_qty=total_sold_qty,
@@ -528,9 +562,14 @@ class RealizedPnLCalculator:
         realized_pnl = sale_proceeds - cost_of_sold
         realized_pct = (realized_pnl / cost_of_sold) × 100
 
+    Return States:
+        - No sales (total_sold_qty == 0): Returns (0, None) - normal, no realized P&L
+        - Invalid state (sales without buys): Logs error, returns (0, None)
+        - Valid sales: Returns calculated (amount, percentage)
+
     Note:
-        - Always returns a concrete Decimal for amount (0 if no sales)
-        - Returns None for percentage if no sales (division undefined)
+        - Always returns a concrete Decimal for amount (0 if no sales or error)
+        - Returns None for percentage if no sales or calculation not possible
     """
 
     def calculate(
@@ -545,16 +584,25 @@ class RealizedPnLCalculator:
 
         Returns:
             Tuple of (amount, percentage) - amount is always Decimal,
-            percentage is None if no sales
+            percentage is None if no sales or invalid state
         """
-        # No sales → no realized P&L
+        # Case 1: No sales → no realized P&L (normal case)
         if position.total_sold_qty == Decimal("0"):
             return Decimal("0"), None
 
-        # Guard against division by zero (shouldn't happen with sales)
+        # Case 2: Invalid state - sales exist but no buys (data integrity issue)
+        # This should have been caught by state_to_positions, but handle defensively
         if position.total_bought_qty == Decimal("0"):
+            logger.error(
+                f"Data integrity error in RealizedPnLCalculator: "
+                f"asset_id={position.asset_id} has total_sold_qty={position.total_sold_qty} "
+                f"but total_bought_qty=0. Cannot calculate realized P&L. "
+                f"This indicates corrupted transaction data (sells without buys)."
+            )
+            # Return zero to avoid crashing, but this is an error state
             return Decimal("0"), None
 
+        # Case 3: Valid sales - calculate realized P&L
         # Calculate cost of shares that were sold using average cost
         avg_cost_portfolio = (
                 position.total_bought_cost_portfolio / position.total_bought_qty
@@ -564,8 +612,9 @@ class RealizedPnLCalculator:
         # Realized P&L = Proceeds - Cost of sold shares
         realized_pnl = position.total_sold_proceeds_portfolio - cost_of_sold
 
-        # Calculate percentage
+        # Calculate percentage (handle edge case of zero cost)
         if cost_of_sold == Decimal("0"):
+            # Free shares sold - infinite return, return None
             realized_pct = None
         else:
             realized_pct = (

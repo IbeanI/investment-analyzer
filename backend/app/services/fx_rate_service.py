@@ -100,6 +100,7 @@ from app.models import ExchangeRate, Transaction, Asset, Portfolio
 from app.services.exceptions import FXRateNotFoundError, FXProviderError, FXConversionError
 from app.services.market_data.base import MarketDataProvider
 from app.services.constants import FX_FALLBACK_DAYS
+from app.utils.date_utils import get_business_days
 
 logger = logging.getLogger(__name__)
 
@@ -240,10 +241,10 @@ class FXRateService:
 
         # Determine which dates to fetch
         if force:
-            dates_to_fetch = self._get_business_days(start_date, end_date)
+            dates_to_fetch = get_business_days(start_date, end_date)
         else:
             existing_dates = self._get_existing_dates(db, base, quote, start_date, end_date)
-            all_dates = self._get_business_days(start_date, end_date)
+            all_dates = get_business_days(start_date, end_date)
             dates_to_fetch = [d for d in all_dates if d not in existing_dates]
 
         if not dates_to_fetch:
@@ -928,24 +929,6 @@ class FXRateService:
         if isinstance(dt, datetime):
             return dt.date()
         return dt
-
-    @staticmethod
-    def _get_business_days(start_date: date, end_date: date) -> list[date]:
-        """
-        Get list of business days (weekdays) in range.
-
-        FX markets are generally closed on weekends.
-        """
-        days = []
-        current = start_date
-
-        while current <= end_date:
-            # Monday = 0, Sunday = 6
-            if current.weekday() < 5:  # Monday to Friday
-                days.append(current)
-            current += timedelta(days=1)
-
-        return days
 
     # =========================================================================
     # UTILITY METHODS

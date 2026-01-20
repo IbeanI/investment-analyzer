@@ -51,6 +51,7 @@ from app.services.analytics import (
     InvestmentPeriod,
     MeasurementPeriodInfo,
 )
+from app.dependencies import get_analytics_service
 
 # =============================================================================
 # ROUTER SETUP
@@ -70,13 +71,8 @@ MAX_DRAWDOWN_PERIODS = 5
 
 
 # =============================================================================
-# DEPENDENCIES
+# HELPER FUNCTIONS
 # =============================================================================
-
-def get_analytics_service() -> AnalyticsService:
-    """Dependency that provides the analytics service."""
-    return AnalyticsService()
-
 
 def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
     """Fetch a portfolio by ID or raise 404 if not found."""

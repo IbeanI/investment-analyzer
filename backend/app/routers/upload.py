@@ -33,6 +33,7 @@ from app.services.upload import (
 )
 from app.services.analytics.service import AnalyticsService
 from app.schemas.upload import UploadResponse, UploadErrorResponse
+from app.dependencies import get_analytics_service
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +54,6 @@ router = APIRouter(
 def get_upload_service() -> UploadService:
     """Dependency that provides the upload service."""
     return UploadService()
-
-
-def get_analytics_service() -> AnalyticsService:
-    """Dependency that provides the analytics service for cache invalidation."""
-    return AnalyticsService()
 
 
 # =============================================================================

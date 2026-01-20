@@ -22,6 +22,7 @@ from app.database import get_db
 from app.models import Portfolio, SyncStatus
 from app.services.market_data import MarketDataSyncService, SyncResult
 from app.services.analytics.service import AnalyticsService
+from app.dependencies import get_sync_service, get_analytics_service
 
 logger = logging.getLogger(__name__)
 
@@ -76,18 +77,8 @@ class SyncStatusResponse(BaseModel):
 
 
 # =============================================================================
-# DEPENDENCIES
+# HELPER FUNCTIONS
 # =============================================================================
-
-def get_sync_service() -> MarketDataSyncService:
-    """Dependency that provides the sync service."""
-    return MarketDataSyncService()
-
-
-def get_analytics_service() -> AnalyticsService:
-    """Dependency that provides the analytics service for cache invalidation."""
-    return AnalyticsService()
-
 
 def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
     """Get portfolio or raise 404."""

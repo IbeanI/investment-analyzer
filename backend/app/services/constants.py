@@ -152,6 +152,48 @@ CIRCUIT_BREAKER_FAILURE_WINDOW: float = 300.0
 
 
 # =============================================================================
+# MEMORY MANAGEMENT CONSTANTS
+# =============================================================================
+
+# Maximum number of days to process in a single chunk for history calculations
+# Prevents memory spikes when processing large date ranges
+# 365 days × 100 assets × 3 fields ≈ 4 MB per chunk (reasonable)
+HISTORY_CHUNK_SIZE_DAYS: int = 365
+
+# Threshold date range (days) above which chunked processing is enabled
+# For small ranges, batch processing is more efficient
+# For large ranges (>2 years), chunked processing prevents memory issues
+HISTORY_CHUNK_THRESHOLD_DAYS: int = 730  # 2 years
+
+# Maximum estimated price records before enabling chunked processing
+# Based on: assets × days × ~100 bytes per record
+# 100,000 records ≈ 10 MB in-memory footprint
+MAX_PRICE_RECORDS_BEFORE_CHUNKING: int = 100_000
+
+
+# =============================================================================
+# RISK CALCULATION CONSTANTS
+# =============================================================================
+
+# Minimum drawdown depth to record in drawdown analysis
+# Only record drawdowns greater than 1% to filter out noise
+# -0.01 = -1% (drawdowns are negative)
+DRAWDOWN_RECORDING_THRESHOLD: Decimal = Decimal("-0.01")
+
+# Minimum portfolio equity required for valid calculations
+# Prevents division by zero and filters out meaningless data points
+# 1.0 = $1 or €1 minimum portfolio value
+MIN_EQUITY_THRESHOLD: Decimal = Decimal("1.0")
+
+# Minimum days required for meaningful volatility calculation
+# Need at least 2 data points for standard deviation
+MIN_DAYS_FOR_VOLATILITY: int = 2
+
+# Minimum days required for meaningful drawdown analysis
+MIN_DAYS_FOR_DRAWDOWN: int = 5
+
+
+# =============================================================================
 # UTILITY CONSTANTS
 # =============================================================================
 

@@ -152,6 +152,10 @@ class Transaction(Base):
         # "Get all transactions for portfolio X up to date Y"
         # This is the most common query pattern in valuation/history_calculator.py
         Index('ix_transaction_portfolio_date', 'portfolio_id', 'date'),
+        # Composite index for filtering by portfolio + asset:
+        # "Get all transactions for asset A in portfolio X"
+        # Used by transaction listing and analytics
+        Index('ix_transaction_portfolio_asset_date', 'portfolio_id', 'asset_id', 'date'),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -192,6 +196,10 @@ class MarketData(Base):
     __tablename__ = "market_data"
     __table_args__ = (
         UniqueConstraint('asset_id', 'date', name='uq_asset_date'),
+        # Composite index for queries filtering by synthetic status:
+        # "Get all non-synthetic prices for asset X in date range"
+        # Used by proxy backcasting to detect price gaps
+        Index('ix_market_data_asset_synthetic_date', 'asset_id', 'is_synthetic', 'date'),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)

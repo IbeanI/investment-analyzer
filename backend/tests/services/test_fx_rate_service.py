@@ -708,8 +708,10 @@ class TestUtilityMethods:
 
     def test_get_business_days(self):
         """Should return only weekdays."""
+        from app.utils.date_utils import get_business_days
+
         # Jan 15, 2024 is Monday, Jan 21 is Sunday
-        days = FXRateService._get_business_days(date(2024, 1, 15), date(2024, 1, 21))
+        days = get_business_days(date(2024, 1, 15), date(2024, 1, 21))
 
         # Should have Mon-Fri = 5 days
         assert len(days) == 5

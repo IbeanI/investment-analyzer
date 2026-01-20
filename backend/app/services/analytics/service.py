@@ -94,12 +94,23 @@ from app.services.constants import (
 # CACHE
 # =============================================================================
 
+# Maximum number of entries in the analytics cache
+# Prevents unbounded memory growth from attackers generating many unique date ranges
+# 1000 entries × ~10KB avg result size ≈ 10MB max cache footprint
+ANALYTICS_CACHE_MAX_SIZE = 1000
+
+
 class AnalyticsCache:
     """
-    Thread-safe in-memory TTL cache for analytics results.
+    Thread-safe bounded LRU cache with TTL for analytics results.
 
     Analytics calculations are CPU-intensive, so we cache results
     for 1 hour to avoid redundant recalculation.
+
+    Memory Safety:
+        Uses a bounded LRU cache with a maximum of 1000 entries to prevent
+        unbounded memory growth. When the cache is full, the least recently
+        used entry is evicted to make room for new entries.
 
     Cache key format: "analytics:{portfolio_id}:{start}:{end}:{benchmark}"
 
@@ -108,15 +119,22 @@ class AnalyticsCache:
         For production with multiple workers, consider using Redis instead.
     """
 
-    def __init__(self, ttl_seconds: int = CACHE_TTL_SECONDS):
+    def __init__(
+            self,
+            ttl_seconds: int = CACHE_TTL_SECONDS,
+            max_size: int = ANALYTICS_CACHE_MAX_SIZE,
+    ):
         """
-        Initialize cache with TTL.
+        Initialize cache with TTL and max size.
 
         Args:
             ttl_seconds: Time-to-live in seconds (default 1 hour)
+            max_size: Maximum number of entries (default 1000)
         """
-        self._cache: dict[str, tuple[datetime, Any]] = {}
+        from collections import OrderedDict
+        self._cache: OrderedDict[str, tuple[datetime, Any]] = OrderedDict()
         self._ttl = timedelta(seconds=ttl_seconds)
+        self._max_size = max_size
         self._lock = threading.Lock()
 
     def _make_key(
@@ -139,6 +157,8 @@ class AnalyticsCache:
         """
         Get cached result if exists and not expired.
 
+        Implements LRU by moving accessed entries to the end.
+
         Returns:
             Cached AnalyticsResult or None if not found/expired
         """
@@ -148,6 +168,8 @@ class AnalyticsCache:
             if key in self._cache:
                 timestamp, result = self._cache[key]
                 if datetime.now() - timestamp < self._ttl:
+                    # Move to end (most recently used)
+                    self._cache.move_to_end(key)
                     logger.debug(f"Cache hit for {key}")
                     return result
                 else:
@@ -165,9 +187,23 @@ class AnalyticsCache:
             benchmark: str | None,
             result: AnalyticsResult,
     ) -> None:
-        """Store result in cache."""
+        """
+        Store result in cache with LRU eviction.
+
+        If cache is at max capacity, evicts the least recently used entry.
+        """
         key = self._make_key(portfolio_id, start_date, end_date, benchmark)
         with self._lock:
+            # If key exists, remove it first (will re-add at end)
+            if key in self._cache:
+                del self._cache[key]
+            # Evict oldest entries if at capacity
+            while len(self._cache) >= self._max_size:
+                # Remove oldest (first) entry
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
+                logger.debug(f"Cache evicted {oldest_key} (LRU)")
+            # Add new entry at end (most recently used)
             self._cache[key] = (datetime.now(), result)
         logger.debug(f"Cached result for {key}")
 
@@ -198,6 +234,11 @@ class AnalyticsCache:
             count = len(self._cache)
             self._cache.clear()
         logger.debug(f"Cleared {count} cache entries")
+
+    def size(self) -> int:
+        """Return current number of cached entries."""
+        with self._lock:
+            return len(self._cache)
 
 
 # Import BenchmarkNotSyncedError from centralized exceptions
@@ -558,12 +599,15 @@ class AnalyticsService:
         if portfolio is None:
             return self._build_not_found_result(portfolio_id, start_date, end_date)
 
-        # Fetch data
+        # Fetch data (single history call, reused by _get_daily_values)
         history = self._valuation_service.get_history(
             db=db, portfolio_id=portfolio_id,
             start_date=start_date, end_date=end_date, interval="daily",
         )
-        daily_values = self._get_daily_values(db, portfolio_id, start_date, end_date)
+        # Pass history to avoid duplicate get_history call
+        daily_values = self._get_daily_values(
+            db, portfolio_id, start_date, end_date, history=history
+        )
         cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Calculate metrics
@@ -640,6 +684,7 @@ class AnalyticsService:
             portfolio_id: int,
             start_date: date,
             end_date: date,
+            history: PortfolioHistory | None = None,
     ) -> list[DailyValue]:
         """
         Get daily portfolio values for analytics calculations.
@@ -652,16 +697,27 @@ class AnalyticsService:
         CRITICAL FIX: Cash flows from transaction dates without equity data
         are assigned to the NEXT date with valid equity. This ensures all
         cash flows are counted for TWR/deposit/withdrawal calculations.
+
+        Args:
+            db: Database session
+            portfolio_id: Portfolio ID
+            start_date: Start date for analysis
+            end_date: End date for analysis
+            history: Optional pre-fetched history to avoid duplicate DB calls.
+                     If not provided, will fetch from ValuationService.
         """
         try:
-            # CRITICAL: Always use daily interval for risk metrics
-            history = self._valuation_service.get_history(
-                db=db,
-                portfolio_id=portfolio_id,
-                start_date=start_date,
-                end_date=end_date,
-                interval=_INTERNAL_INTERVAL,  # Always "daily"
-            )
+            # Use provided history or fetch if not provided
+            # This optimization avoids duplicate get_history calls
+            if history is None:
+                # CRITICAL: Always use daily interval for risk metrics
+                history = self._valuation_service.get_history(
+                    db=db,
+                    portfolio_id=portfolio_id,
+                    start_date=start_date,
+                    end_date=end_date,
+                    interval=_INTERNAL_INTERVAL,  # Always "daily"
+                )
 
             # Step 1: Build list of DailyValue for dates with valid equity
             daily_values = []

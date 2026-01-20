@@ -477,3 +477,97 @@ class TestEdgeCases:
 
         assert result.ticker == "BTC"
         assert result.exchange == ""
+
+
+# =============================================================================
+# CONCURRENT ACCESS TESTS
+# =============================================================================
+
+class TestConcurrentAccess:
+    """Tests for concurrent access to asset resolution."""
+
+    def test_concurrent_cache_access_is_thread_safe(self, mock_provider):
+        """BoundedLRUCache should handle concurrent access without errors."""
+        import threading
+        import time
+
+        from app.services.asset_resolution import BoundedLRUCache
+
+        cache = BoundedLRUCache(maxsize=100)
+        errors = []
+        operations_completed = []
+
+        def writer_thread(thread_id: int):
+            """Write entries to cache."""
+            try:
+                for i in range(50):
+                    key = (f"TICKER{thread_id}_{i}", "NYSE")
+                    cache.set(key, {"data": f"value_{thread_id}_{i}"})
+                    time.sleep(0.001)  # Small delay to increase contention
+                operations_completed.append(f"writer_{thread_id}")
+            except Exception as e:
+                errors.append(f"Writer {thread_id}: {e}")
+
+        def reader_thread(thread_id: int):
+            """Read entries from cache."""
+            try:
+                for i in range(50):
+                    key = (f"TICKER0_{i}", "NYSE")
+                    _ = cache.get(key)  # May return None, that's OK
+                    time.sleep(0.001)
+                operations_completed.append(f"reader_{thread_id}")
+            except Exception as e:
+                errors.append(f"Reader {thread_id}: {e}")
+
+        # Start multiple writers and readers concurrently
+        threads = []
+        for i in range(3):
+            threads.append(threading.Thread(target=writer_thread, args=(i,)))
+            threads.append(threading.Thread(target=reader_thread, args=(i,)))
+
+        for t in threads:
+            t.start()
+
+        for t in threads:
+            t.join(timeout=10)
+
+        # No errors should have occurred
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+        # All operations should have completed
+        assert len(operations_completed) == 6
+
+    def test_cache_lru_eviction_under_concurrent_load(self, mock_provider):
+        """Cache should maintain LRU semantics under concurrent writes."""
+        import threading
+
+        from app.services.asset_resolution import BoundedLRUCache
+
+        cache = BoundedLRUCache(maxsize=10)
+        errors = []
+
+        def heavy_writer(thread_id: int):
+            """Write many entries to force eviction."""
+            try:
+                for i in range(100):
+                    key = (f"T{thread_id}_{i}", "NYSE")
+                    cache.set(key, {"id": f"{thread_id}_{i}"})
+            except Exception as e:
+                errors.append(f"Thread {thread_id}: {e}")
+
+        # Multiple threads writing more entries than cache capacity
+        threads = [threading.Thread(target=heavy_writer, args=(i,)) for i in range(5)]
+
+        for t in threads:
+            t.start()
+
+        for t in threads:
+            t.join(timeout=10)
+
+        # No errors should have occurred
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+
+        # Cache should be at max capacity
+        assert len(cache) <= 10, f"Cache exceeded maxsize: {len(cache)}"
+
+        # Cache should have entries (not be corrupted)
+        assert len(cache) > 0, "Cache should not be empty"

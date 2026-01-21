@@ -50,4 +50,4 @@ Thumbs.db
 /backend/alembic/
 
 # Data
-/_data/
+/backend/_data/

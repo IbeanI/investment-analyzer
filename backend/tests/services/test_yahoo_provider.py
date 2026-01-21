@@ -39,14 +39,22 @@ class TestYahooProviderInit:
         assert provider.name == "yahoo"
 
     def test_default_timeout(self):
-        """Default timeout should be 10 seconds."""
+        """Default timeout should use constant from settings."""
+        from app.services.constants import EXTERNAL_API_TIMEOUT_SECONDS
         provider = YahooFinanceProvider()
-        assert provider._timeout == 10
+        assert provider._timeout == EXTERNAL_API_TIMEOUT_SECONDS
+
+    def test_default_history_timeout(self):
+        """Default history timeout should use constant from settings."""
+        from app.services.constants import EXTERNAL_API_HISTORY_TIMEOUT_SECONDS
+        provider = YahooFinanceProvider()
+        assert provider._history_timeout == EXTERNAL_API_HISTORY_TIMEOUT_SECONDS
 
     def test_custom_timeout(self):
         """Should accept custom timeout."""
-        provider = YahooFinanceProvider(timeout=30)
+        provider = YahooFinanceProvider(timeout=30, history_timeout=60)
         assert provider._timeout == 30
+        assert provider._history_timeout == 60
 
 
 # =============================================================================

@@ -45,3 +45,6 @@ Thumbs.db
 
 # Type checking
 .mypy_cache/
+
+# Alembic
+/backend/alembic/

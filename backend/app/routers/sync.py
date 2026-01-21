@@ -13,7 +13,7 @@ Key features:
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -23,6 +23,7 @@ from app.models import Portfolio, SyncStatus
 from app.services.market_data import MarketDataSyncService, SyncResult
 from app.services.analytics.service import AnalyticsService
 from app.dependencies import get_sync_service, get_analytics_service
+from app.middleware.rate_limit import limiter, RATE_LIMIT_SYNC, RATE_LIMIT_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -101,9 +102,11 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
     summary="Sync portfolio market data",
     response_description="Sync result with statistics"
 )
+@limiter.limit(RATE_LIMIT_SYNC)
 def sync_portfolio(
+        request: Request,  # Required for rate limiting
         portfolio_id: int,
-        request: SyncRequest = SyncRequest(),
+        sync_request: SyncRequest = SyncRequest(),
         db: Session = Depends(get_db),
         service: MarketDataSyncService = Depends(get_sync_service),
         analytics_service: AnalyticsService = Depends(get_analytics_service),
@@ -125,13 +128,13 @@ def sync_portfolio(
     # Verify portfolio exists
     get_portfolio_or_404(db, portfolio_id)
 
-    logger.info(f"Starting sync for portfolio {portfolio_id} (force={request.force_refresh})")
+    logger.info(f"Starting sync for portfolio {portfolio_id} (force={sync_request.force_refresh})")
 
     try:
         result: SyncResult = service.sync_portfolio(
             db=db,
             portfolio_id=portfolio_id,
-            force=request.force_refresh,
+            force=sync_request.force_refresh,
         )
 
         # Invalidate analytics cache after sync (prices/FX rates changed)
@@ -165,7 +168,9 @@ def sync_portfolio(
     summary="Get sync status",
     response_description="Current sync status for portfolio"
 )
+@limiter.limit(RATE_LIMIT_DEFAULT)
 def get_sync_status(
+        request: Request,  # Required for rate limiting
         portfolio_id: int,
         db: Session = Depends(get_db),
         service: MarketDataSyncService = Depends(get_sync_service),

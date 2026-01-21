@@ -383,17 +383,50 @@ class TestErrorResponseStructure:
 # =============================================================================
 
 class TestHealthCheck:
-    """Tests for health check endpoint."""
+    """Tests for health check endpoints."""
 
     def test_health_check_success(self, client: TestClient):
-        """Health check should return 200 with status."""
+        """Health check should return 200 with detailed status."""
         response = client.get("/health")
 
         assert response.status_code == 200
         data = response.json()
 
         assert "status" in data
-        assert "database" in data
+        assert data["status"] in ["healthy", "degraded"]
+        assert "checks" in data
+        assert "database" in data["checks"]
+        assert data["checks"]["database"]["status"] == "healthy"
+        assert data["checks"]["database"]["critical"] is True
+
+    def test_health_check_includes_yahoo_finance_status(self, client: TestClient):
+        """Health check should include Yahoo Finance circuit breaker status."""
+        response = client.get("/health")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "yahoo_finance" in data["checks"]
+        assert "circuit_breaker_state" in data["checks"]["yahoo_finance"]
+        assert data["checks"]["yahoo_finance"]["critical"] is False
+
+    def test_liveness_check_always_succeeds(self, client: TestClient):
+        """Liveness check should always return 200 if app is running."""
+        response = client.get("/health/live")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["status"] == "alive"
+
+    def test_readiness_check_success(self, client: TestClient):
+        """Readiness check should return 200 when database is available."""
+        response = client.get("/health/ready")
+
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["status"] == "ready"
 
     def test_root_endpoint(self, client: TestClient):
         """Root endpoint should return API info."""

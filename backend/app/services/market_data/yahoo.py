@@ -31,6 +31,10 @@ from typing import Any
 import yfinance as yf
 
 from app.models import AssetClass
+from app.services.constants import (
+    EXTERNAL_API_TIMEOUT_SECONDS,
+    EXTERNAL_API_HISTORY_TIMEOUT_SECONDS,
+)
 from app.services.exceptions import (
     ProviderUnavailableError,
     TickerNotFoundError,
@@ -209,15 +213,26 @@ class YahooFinanceProvider(MarketDataProvider):
     # INITIALIZATION
     # =========================================================================
 
-    def __init__(self, timeout: int = 10) -> None:
+    def __init__(
+            self,
+            timeout: int | None = None,
+            history_timeout: int | None = None,
+    ) -> None:
         """
         Initialize the Yahoo Finance provider.
 
         Args:
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds for metadata fetches.
+                     Defaults to EXTERNAL_API_TIMEOUT_SECONDS.
+            history_timeout: Request timeout in seconds for historical data fetches.
+                            Defaults to EXTERNAL_API_HISTORY_TIMEOUT_SECONDS.
         """
-        self._timeout = timeout
-        logger.info(f"YahooFinanceProvider initialized (timeout={timeout}s)")
+        self._timeout = timeout or EXTERNAL_API_TIMEOUT_SECONDS
+        self._history_timeout = history_timeout or EXTERNAL_API_HISTORY_TIMEOUT_SECONDS
+        logger.info(
+            f"YahooFinanceProvider initialized "
+            f"(timeout={self._timeout}s, history_timeout={self._history_timeout}s)"
+        )
 
     @property
     def name(self) -> str:
@@ -445,12 +460,13 @@ class YahooFinanceProvider(MarketDataProvider):
             # Yahoo Finance end date is exclusive, so add 1 day
             yahoo_end = end_date + timedelta(days=1)
 
-            # Fetch historical data
+            # Fetch historical data with explicit timeout
             df = yf_ticker.history(
                 start=start_date.isoformat(),
                 end=yahoo_end.isoformat(),
                 interval="1d",
                 auto_adjust=False,  # Get raw prices, not adjusted. Adjusted prices take dividends into account and the values are removed
+                timeout=self._history_timeout,
             )
 
             if df.empty:

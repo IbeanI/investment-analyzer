@@ -497,6 +497,55 @@ class MarketDataProvider(ABC):
         with circuit_breaker:
             return _inner_with_retry()
 
+    def _execute_with_fallback(
+            self,
+            func: Callable[..., T],
+            fallback: Callable[[], T | None] | None = None,
+            *args: Any,
+            **kwargs: Any,
+    ) -> T:
+        """
+        Execute a function with circuit breaker, retry, and fallback support.
+
+        Same as _execute_with_retry, but if the circuit breaker is open,
+        attempts to use the fallback function before raising the exception.
+
+        This enables graceful degradation by serving cached/stale data
+        when the external service is unavailable.
+
+        Args:
+            func: Function to execute
+            fallback: Optional function to call when circuit is open.
+                      Should return cached data or None if no fallback available.
+            *args: Positional arguments for func
+            **kwargs: Keyword arguments for func
+
+        Returns:
+            Return value of func, or fallback result if circuit is open
+
+        Raises:
+            CircuitBreakerOpen: If circuit is open AND no fallback available
+            The last exception if all retries fail
+        """
+        try:
+            return self._execute_with_retry(func, *args, **kwargs)
+        except CircuitBreakerOpen as e:
+            # Circuit is open - try fallback if available
+            if fallback is not None:
+                fallback_result = fallback()
+                if fallback_result is not None:
+                    logger.warning(
+                        f"Circuit breaker open for {self.name}, "
+                        f"serving fallback/cached data"
+                    )
+                    return fallback_result
+
+            # No fallback or fallback returned None
+            logger.error(
+                f"Circuit breaker open for {self.name}, no fallback available"
+            )
+            raise
+
     # =========================================================================
     # OPTIONAL METHODS (with default implementations)
     # =========================================================================

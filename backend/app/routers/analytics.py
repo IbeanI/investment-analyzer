@@ -22,12 +22,14 @@ are always in the context of a specific portfolio.
 from datetime import date, datetime
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Portfolio, Transaction
+from app.middleware.rate_limit import limiter, RATE_LIMIT_ANALYTICS
+from app.services.constants import MAX_HISTORY_DAYS
 from app.schemas.analytics import (
     PeriodInfo,
     PerformanceMetricsResponse,
@@ -145,11 +147,20 @@ def _decimal_to_str(value: Decimal | None) -> str | None:
 
 
 def _validate_date_range(from_date: date, to_date: date) -> None:
-    """Validate that from_date is before or equal to to_date."""
+    """Validate date range constraints."""
     if from_date > to_date:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="from_date must be before or equal to to_date"
+        )
+
+    # Validate date range doesn't exceed maximum
+    date_range_days = (to_date - from_date).days
+    if date_range_days > MAX_HISTORY_DAYS:
+        max_years = MAX_HISTORY_DAYS // 365
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Date range of {date_range_days} days exceeds maximum of {MAX_HISTORY_DAYS} days ({max_years} years)"
         )
 
 
@@ -300,7 +311,9 @@ def _map_benchmark(bench: BenchmarkMetrics) -> BenchmarkMetricsResponse:
     summary="Get full portfolio analytics",
     response_description="Complete analytics with performance, risk, and optional benchmark"
 )
+@limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_analytics(
+        request: Request,  # Required for rate limiting
         portfolio_id: int,
         from_date: date | None = Query(
             default=None,
@@ -399,7 +412,9 @@ def get_portfolio_analytics(
     summary="Get performance metrics only",
     response_description="Performance metrics (TWR, XIRR, CAGR)"
 )
+@limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_performance(
+        request: Request,  # Required for rate limiting
         portfolio_id: int,
         from_date: date | None = Query(
             default=None,
@@ -464,7 +479,9 @@ def get_portfolio_performance(
     summary="Get risk metrics only",
     response_description="Risk metrics (Volatility, Sharpe, Drawdown)"
 )
+@limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_risk(
+        request: Request,  # Required for rate limiting
         portfolio_id: int,
         from_date: date | None = Query(
             default=None,
@@ -566,7 +583,9 @@ def get_portfolio_risk(
     summary="Get benchmark comparison only",
     response_description="Benchmark metrics (Beta, Alpha, Correlation)"
 )
+@limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_benchmark(
+        request: Request,  # Required for rate limiting
         portfolio_id: int,
         from_date: date | None = Query(
             default=None,

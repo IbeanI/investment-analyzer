@@ -74,7 +74,21 @@ app = FastAPI(
 # MIDDLEWARE (order matters: last added = first executed)
 # =============================================================================
 
-from app.middleware import CorrelationIdMiddleware
+from slowapi.errors import RateLimitExceeded
+from app.middleware import (
+    CorrelationIdMiddleware,
+    limiter,
+    rate_limit_exceeded_handler,
+    SlowAPIMiddleware,
+    RATE_LIMIT_HEALTH,
+)
+
+# Attach limiter to app state (required by slowapi)
+app.state.limiter = limiter
+
+# Add rate limiting middleware
+# Must be added before other middleware that might modify the response
+app.add_middleware(SlowAPIMiddleware)
 
 # Add correlation ID tracking for request tracing
 # This extracts/generates correlation IDs and adds them to response headers
@@ -88,6 +102,10 @@ app.add_middleware(CorrelationIdMiddleware)
 # consistent HTTP responses. Routers can still catch exceptions locally
 # if they need to add endpoint-specific context.
 # =============================================================================
+
+# Rate limit exceeded handler (from slowapi)
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+
 
 @app.exception_handler(AssetNotFoundError)
 async def asset_not_found_handler(request: Request, exc: AssetNotFoundError) -> JSONResponse:
@@ -370,7 +388,8 @@ app.include_router(portfolio_settings_router)  # /portfolios/{id}/settings
 # =============================================================================
 
 @app.get("/", tags=["Health"])
-def root():
+@limiter.limit(RATE_LIMIT_HEALTH)
+def root(request: Request):
     """
     API root - returns basic application info.
     """
@@ -382,23 +401,137 @@ def root():
 
 
 @app.get("/health", tags=["Health"])
-def health_check(db: Session = Depends(get_db)):
+@limiter.limit(RATE_LIMIT_HEALTH)
+def health_check(request: Request, db: Session = Depends(get_db)):
     """
-    Health check endpoint.
+    Comprehensive health check endpoint.
 
-    Verifies:
-    - Application is running
-    - Database connection is working
+    Returns detailed health status of all dependencies.
+    Returns HTTP 503 if critical dependencies (database) are unhealthy.
+    Returns HTTP 200 with degraded status if non-critical dependencies are unhealthy.
+
+    **Response Status Codes:**
+    - 200: All systems healthy, or non-critical systems degraded
+    - 503: Critical systems (database) unhealthy - do not route traffic here
+
+    **Usage by Load Balancers:**
+    Configure your load balancer to use this endpoint for health checks.
+    Instances returning 503 should be removed from the pool.
     """
+    from app.dependencies import get_market_data_provider
+
+    checks = {}
+    critical_healthy = True
+    overall_status = "healthy"
+
+    # Check 1: Database (CRITICAL)
     try:
-        # Execute simple query to verify database connection
         db.execute(text("SELECT 1"))
-        db_status = "healthy"
+        checks["database"] = {
+            "status": "healthy",
+            "critical": True,
+        }
     except Exception as e:
         logger.error(f"Database health check failed: {e}")
-        db_status = "unhealthy"
+        checks["database"] = {
+            "status": "unhealthy",
+            "critical": True,
+            "error": str(e),
+        }
+        critical_healthy = False
+        overall_status = "unhealthy"
 
-    return {
-        "status": "healthy" if db_status == "healthy" else "degraded",
-        "database": db_status,
+    # Check 2: Yahoo Finance API (circuit breaker state) - NON-CRITICAL
+    try:
+        provider = get_market_data_provider()
+        circuit_breaker = provider._get_circuit_breaker()
+        cb_state = circuit_breaker.state.value
+        cb_stats = circuit_breaker.stats
+
+        if circuit_breaker.is_open:
+            checks["yahoo_finance"] = {
+                "status": "unhealthy",
+                "critical": False,
+                "circuit_breaker_state": cb_state,
+                "failed_calls": cb_stats.failed_calls,
+                "rejected_calls": cb_stats.rejected_calls,
+            }
+            if overall_status == "healthy":
+                overall_status = "degraded"
+        else:
+            checks["yahoo_finance"] = {
+                "status": "healthy",
+                "critical": False,
+                "circuit_breaker_state": cb_state,
+                "total_calls": cb_stats.total_calls,
+                "successful_calls": cb_stats.successful_calls,
+            }
+    except Exception as e:
+        logger.warning(f"Yahoo Finance health check failed: {e}")
+        checks["yahoo_finance"] = {
+            "status": "unknown",
+            "critical": False,
+            "error": str(e),
+        }
+
+    response_data = {
+        "status": overall_status,
+        "checks": checks,
     }
+
+    # Return 503 if critical dependencies are unhealthy
+    if not critical_healthy:
+        return JSONResponse(
+            status_code=503,
+            content=response_data,
+        )
+
+    return response_data
+
+
+@app.get("/health/live", tags=["Health"])
+@limiter.limit(RATE_LIMIT_HEALTH)
+def liveness_check(request: Request):
+    """
+    Kubernetes liveness probe endpoint.
+
+    Returns HTTP 200 if the application is running.
+    This check should ALWAYS succeed if the process is alive.
+
+    **Usage:**
+    Configure as Kubernetes livenessProbe. If this fails,
+    Kubernetes will restart the container.
+
+    **Note:** This does NOT check dependencies - use /health/ready for that.
+    """
+    return {"status": "alive"}
+
+
+@app.get("/health/ready", tags=["Health"])
+@limiter.limit(RATE_LIMIT_HEALTH)
+def readiness_check(request: Request, db: Session = Depends(get_db)):
+    """
+    Kubernetes readiness probe endpoint.
+
+    Returns HTTP 200 if the application is ready to serve traffic.
+    Returns HTTP 503 if critical dependencies are unavailable.
+
+    **Usage:**
+    Configure as Kubernetes readinessProbe. Pods returning 503
+    will be removed from service endpoints until they become ready.
+
+    **Checks:**
+    - Database connectivity (critical - causes 503 if down)
+    """
+    try:
+        db.execute(text("SELECT 1"))
+        return {"status": "ready"}
+    except Exception as e:
+        logger.error(f"Readiness check failed: {e}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "not_ready",
+                "error": "Database unavailable",
+            },
+        )

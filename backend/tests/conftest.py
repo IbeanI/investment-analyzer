@@ -8,6 +8,7 @@ This module provides shared fixtures for all tests:
 - Sample data factories
 """
 
+import os
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Iterator
@@ -16,6 +17,14 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
+
+# =============================================================================
+# TEST ENVIRONMENT SETUP
+# =============================================================================
+# Set environment to 'test' before any app imports to enable SQLite fallback
+# This must happen before importing app.config or app.database
+os.environ.setdefault("ENVIRONMENT", "test")
 
 from app.models import (
     Base,

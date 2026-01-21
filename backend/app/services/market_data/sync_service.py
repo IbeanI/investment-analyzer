@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone, timedelta
 from typing import Any
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func, and_, update, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -246,12 +246,19 @@ class MarketDataSyncService:
         )
 
         try:
-            # 1. Update status to IN_PROGRESS
-            self._update_sync_status(
-                db, portfolio_id,
-                status=SyncStatusEnum.IN_PROGRESS,
-                sync_started=sync_started,
-            )
+            # 1. Atomically acquire sync job (prevents duplicate concurrent syncs)
+            job_acquired = self._try_acquire_sync_job(db, portfolio_id, sync_started)
+
+            if not job_acquired:
+                logger.info(
+                    f"Sync already in progress for portfolio {portfolio_id}, skipping"
+                )
+                result.status = "already_running"
+                result.sync_completed = datetime.now(timezone.utc)
+                result.warnings.append(
+                    "Another sync is already in progress for this portfolio"
+                )
+                return result
 
             # 2. Analyze portfolio
             analysis = self.analyze_portfolio(db, portfolio_id)
@@ -432,6 +439,87 @@ class MarketDataSyncService:
         return db.scalar(
             select(SyncStatus).where(SyncStatus.portfolio_id == portfolio_id)
         )
+
+    def _try_acquire_sync_job(
+            self,
+            db: Session,
+            portfolio_id: int,
+            sync_started: datetime,
+    ) -> bool:
+        """
+        Atomically attempt to acquire a sync job for the portfolio.
+
+        Uses a conditional UPDATE to ensure only one sync can run at a time.
+        This prevents race conditions where multiple concurrent requests
+        could all start syncing the same portfolio.
+
+        The algorithm:
+        1. Try to UPDATE status to IN_PROGRESS only if current status
+           is NOT already IN_PROGRESS
+        2. If no rows updated, another sync is already running
+        3. If row updated (or inserted), we have the job
+
+        Args:
+            db: Database session
+            portfolio_id: Portfolio to acquire sync job for
+            sync_started: Timestamp when sync started
+
+        Returns:
+            True if job was acquired, False if another sync is in progress
+        """
+        # Check if record exists and its current status
+        existing = db.scalar(
+            select(SyncStatus).where(SyncStatus.portfolio_id == portfolio_id)
+        )
+
+        if existing is None:
+            # No record exists - create one with IN_PROGRESS status
+            # Use database-agnostic approach: INSERT then check
+            new_status = SyncStatus(
+                portfolio_id=portfolio_id,
+                status=SyncStatusEnum.IN_PROGRESS,
+                last_sync_started=sync_started,
+                coverage_summary={},
+            )
+            db.add(new_status)
+            try:
+                db.commit()
+                return True
+            except Exception:
+                # Concurrent insert - rollback and check status
+                db.rollback()
+                existing = db.scalar(
+                    select(SyncStatus).where(SyncStatus.portfolio_id == portfolio_id)
+                )
+                if existing and existing.status == SyncStatusEnum.IN_PROGRESS:
+                    return False
+                # Status is not IN_PROGRESS, try conditional update
+                pass
+
+        # Record exists - check if already in progress
+        if existing and existing.status == SyncStatusEnum.IN_PROGRESS:
+            return False
+
+        # Try conditional UPDATE (atomic check-and-set)
+        # This UPDATE only succeeds if status is NOT IN_PROGRESS
+        stmt = (
+            update(SyncStatus)
+            .where(
+                SyncStatus.portfolio_id == portfolio_id,
+                SyncStatus.status != SyncStatusEnum.IN_PROGRESS,
+            )
+            .values(
+                status=SyncStatusEnum.IN_PROGRESS,
+                last_sync_started=sync_started,
+            )
+        )
+
+        result = db.execute(stmt)
+        db.commit()
+
+        # rowcount tells us if the UPDATE succeeded
+        # If 0 rows updated, status was already IN_PROGRESS (race condition)
+        return result.rowcount > 0
 
     def is_data_stale(
             self,

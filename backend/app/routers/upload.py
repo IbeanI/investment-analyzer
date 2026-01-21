@@ -15,7 +15,7 @@ Key features:
 
 import logging
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -32,8 +32,10 @@ from app.services.upload import (
     get_supported_content_types,
 )
 from app.services.analytics.service import AnalyticsService
+from app.services.constants import MAX_UPLOAD_FILE_SIZE_BYTES
 from app.schemas.upload import UploadResponse, UploadErrorResponse
 from app.dependencies import get_analytics_service
+from app.middleware.rate_limit import limiter, RATE_LIMIT_UPLOAD, RATE_LIMIT_DEFAULT
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +68,8 @@ def get_upload_service() -> UploadService:
     summary="List supported file formats",
     response_description="Supported file formats for upload"
 )
-def get_supported_formats() -> SupportedFormatsResponse:
+@limiter.limit(RATE_LIMIT_DEFAULT)
+def get_supported_formats(request: Request) -> SupportedFormatsResponse:
     """
     Get list of supported file formats for upload.
     
@@ -97,7 +100,9 @@ def get_supported_formats() -> SupportedFormatsResponse:
         },
     },
 )
+@limiter.limit(RATE_LIMIT_UPLOAD)
 def upload_transactions(
+        request: Request,  # Required for rate limiting
         file: UploadFile = File(
             ...,
             description="Transaction file to upload (CSV, JSON, or Excel)"
@@ -223,6 +228,22 @@ def upload_transactions(
         f"Upload request: {file.filename} -> portfolio {portfolio_id} "
         f"(date_format={date_format.value})"
     )
+
+    # Validate file size
+    # Read the file content to check size (seek back to start for processing)
+    file_content = file.file.read()
+    file_size = len(file_content)
+    file.file.seek(0)  # Reset for processing
+
+    if file_size > MAX_UPLOAD_FILE_SIZE_BYTES:
+        max_mb = MAX_UPLOAD_FILE_SIZE_BYTES / (1024 * 1024)
+        actual_mb = file_size / (1024 * 1024)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File too large: {actual_mb:.1f}MB exceeds maximum of {max_mb:.0f}MB"
+        )
+
+    logger.debug(f"File size: {file_size} bytes")
 
     # Process the file
     result = upload_service.process_file(

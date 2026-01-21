@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Portfolio
+from app.services.constants import MAX_HISTORY_DAYS
 from app.schemas.valuation import (
     CostBasisDetail,
     CurrentValueDetail,
@@ -265,6 +266,15 @@ def get_portfolio_valuation_history(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="from_date must be before or equal to to_date"
+        )
+
+    # Validate date range doesn't exceed maximum
+    date_range_days = (to_date - from_date).days
+    if date_range_days > MAX_HISTORY_DAYS:
+        max_years = MAX_HISTORY_DAYS // 365
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Date range of {date_range_days} days exceeds maximum of {MAX_HISTORY_DAYS} days ({max_years} years)"
         )
 
     # Verify portfolio exists

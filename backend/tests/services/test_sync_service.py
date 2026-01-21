@@ -602,3 +602,126 @@ class TestCoverageSummary:
 
         assert summary["assets"]["total"] == 2
         assert len(summary["assets"]["details"]) == 2
+
+
+# =============================================================================
+# CONCURRENT SYNC PREVENTION TESTS
+# =============================================================================
+
+class TestConcurrentSyncPrevention:
+    """Tests for preventing duplicate concurrent syncs (race condition fix)."""
+
+    def test_sync_returns_already_running_when_in_progress(
+            self, db, mock_provider_and_service, portfolio_with_transactions
+    ):
+        """Should return already_running status when sync is in progress."""
+        mock_provider, sync_service = mock_provider_and_service
+        portfolio = portfolio_with_transactions["portfolio"]
+
+        # Manually set status to IN_PROGRESS to simulate concurrent sync
+        from app.models import SyncStatus, SyncStatusEnum
+        from datetime import datetime, timezone
+
+        existing_status = SyncStatus(
+            portfolio_id=portfolio.id,
+            status=SyncStatusEnum.IN_PROGRESS,
+            last_sync_started=datetime.now(timezone.utc),
+            coverage_summary={},
+        )
+        db.add(existing_status)
+        db.commit()
+
+        # Now try to sync - should be blocked
+        result = sync_service.sync_portfolio(db, portfolio.id)
+
+        assert result.status == "already_running"
+        assert len(result.warnings) > 0
+        assert "already in progress" in result.warnings[0].lower()
+
+    def test_sync_acquires_job_when_not_in_progress(
+            self, db, mock_provider_and_service, portfolio_with_transactions
+    ):
+        """Should acquire job and sync when no sync is in progress."""
+        mock_provider, sync_service = mock_provider_and_service
+        portfolio = portfolio_with_transactions["portfolio"]
+
+        # Set status to COMPLETED (not in progress)
+        from app.models import SyncStatus, SyncStatusEnum
+        from datetime import datetime, timezone, timedelta
+
+        existing_status = SyncStatus(
+            portfolio_id=portfolio.id,
+            status=SyncStatusEnum.COMPLETED,
+            last_sync_started=datetime.now(timezone.utc) - timedelta(hours=2),
+            last_sync_completed=datetime.now(timezone.utc) - timedelta(hours=2),
+            coverage_summary={},
+        )
+        db.add(existing_status)
+        db.commit()
+
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="TEST",
+            exchange="TEST",
+            prices=create_ohlcv_data(date(2024, 1, 1), num_days=5),
+            success=True,
+        )
+
+        # Should be able to sync
+        result = sync_service.sync_portfolio(db, portfolio.id)
+
+        assert result.status in ["completed", "partial"]
+        assert result.status != "already_running"
+
+    def test_sync_acquires_job_when_never_synced(
+            self, db, mock_provider_and_service, portfolio_with_transactions
+    ):
+        """Should acquire job and sync when portfolio has never been synced."""
+        mock_provider, sync_service = mock_provider_and_service
+        portfolio = portfolio_with_transactions["portfolio"]
+
+        # No sync status exists (never synced)
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="TEST",
+            exchange="TEST",
+            prices=create_ohlcv_data(date(2024, 1, 1), num_days=5),
+            success=True,
+        )
+
+        result = sync_service.sync_portfolio(db, portfolio.id)
+
+        assert result.status in ["completed", "partial"]
+        assert result.status != "already_running"
+
+    def test_sync_acquires_job_after_failed_sync(
+            self, db, mock_provider_and_service, portfolio_with_transactions
+    ):
+        """Should acquire job and sync after a previously failed sync."""
+        mock_provider, sync_service = mock_provider_and_service
+        portfolio = portfolio_with_transactions["portfolio"]
+
+        # Set status to FAILED
+        from app.models import SyncStatus, SyncStatusEnum
+        from datetime import datetime, timezone
+
+        existing_status = SyncStatus(
+            portfolio_id=portfolio.id,
+            status=SyncStatusEnum.FAILED,
+            last_sync_started=datetime.now(timezone.utc),
+            last_error="Previous sync failed",
+            coverage_summary={},
+        )
+        db.add(existing_status)
+        db.commit()
+
+        mock_provider.get_historical_prices.return_value = HistoricalPricesResult(
+            ticker="TEST",
+            exchange="TEST",
+            prices=create_ohlcv_data(date(2024, 1, 1), num_days=5),
+            success=True,
+        )
+
+        # Should be able to sync after failure
+        result = sync_service.sync_portfolio(db, portfolio.id)
+
+        assert result.status in ["completed", "partial"]
+        assert result.status != "already_running"

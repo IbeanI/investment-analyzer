@@ -7,6 +7,19 @@
 # After running, you can create portfolios via the Swagger UI at:
 #   http://localhost:8000/docs
 #
+# ============================================================================
+# SECURITY WARNING - LOCAL DEVELOPMENT ONLY
+# ============================================================================
+# This script creates default credentials for local development convenience.
+# These credentials are NOT SECURE and must NEVER be used in production.
+#
+# For production deployments:
+#   - Use a secrets manager (AWS Secrets Manager, HashiCorp Vault, etc.)
+#   - Generate strong, unique passwords
+#   - Never commit credentials to version control
+#   - Use environment-specific configuration
+# ============================================================================
+#
 # USAGE:
 #   chmod +x setup_project.sh
 #   ./setup_project.sh [OPTIONS]
@@ -140,42 +153,45 @@ print_success "Docker daemon running"
 # -----------------------------------------------------------------------------
 print_step "Setting up environment files..."
 
-# Root .env (for Docker Compose)
+# Single .env at project root (for both Docker Compose and FastAPI app)
 if [ ! -f "$PROJECT_ROOT/.env" ]; then
-    print_info "Creating root .env file for Docker (local development defaults)..."
+    print_info "Creating .env file (local development defaults)..."
     cat > "$PROJECT_ROOT/.env" << 'EOF'
-# Docker Compose Environment Variables (LOCAL DEVELOPMENT ONLY)
-# This file is git-ignored. For production, use secure credentials.
+# Investment Portfolio Analyzer - Environment Variables
+# =====================================================================
+# SECURITY WARNING: This file contains credentials!
+# - This file is for LOCAL DEVELOPMENT ONLY
+# - NEVER commit this file to version control (it's in .gitignore)
+# - NEVER use these credentials in production
+# - For production: use secrets management (AWS Secrets Manager, Vault, etc.)
+# =====================================================================
+#
+# Single .env for both Docker Compose and FastAPI app.
 
+# =============================================================================
+# PostgreSQL Container (used by Docker Compose)
+# CHANGE THESE VALUES for any non-local environment!
+# =============================================================================
 POSTGRES_USER=admin
 POSTGRES_PASSWORD=localdevpassword
 POSTGRES_DB=investment_portfolio
-
-# Optional: For local scripts connecting directly
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
+
+# =============================================================================
+# Application Settings (used by FastAPI)
+# =============================================================================
+ENVIRONMENT=development
+DEBUG=true
+LOG_LEVEL=DEBUG
+
+# Database connection for the app
+# Note: Use 'localhost' for local dev, 'investment_db' inside Docker network
+DATABASE_URL=postgresql://admin:localdevpassword@localhost:5432/investment_portfolio
 EOF
     print_success "Created $PROJECT_ROOT/.env with local dev defaults"
 else
-    print_info "Root .env already exists (keeping existing credentials)"
-fi
-
-# Backend .env (for application)
-if [ ! -f "$BACKEND_DIR/.env" ]; then
-    print_info "Creating backend/.env file (local development defaults)..."
-    cat > "$BACKEND_DIR/.env" << 'EOF'
-# Backend Environment Variables (LOCAL DEVELOPMENT ONLY)
-# This file is git-ignored. For production, use secure credentials.
-
-DEBUG=true
-LOG_LEVEL=INFO
-
-# Database connection for local development
-DATABASE_URL=postgresql://admin:localdevpassword@localhost:5432/investment_portfolio
-EOF
-    print_success "Created $BACKEND_DIR/.env with local dev defaults"
-else
-    print_info "Backend .env already exists (keeping existing credentials)"
+    print_info ".env already exists (keeping existing configuration)"
 fi
 
 # -----------------------------------------------------------------------------
@@ -300,16 +316,20 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 9: Seed Test User
+# Step 9: Seed Test User (LOCAL DEVELOPMENT ONLY)
 # -----------------------------------------------------------------------------
-print_step "Seeding test user..."
+print_step "Seeding test user (dev only)..."
 
+# WARNING: This creates a user with a placeholder password hash.
+# This is for LOCAL DEVELOPMENT convenience only.
+# In production, users should be created through proper registration flows
+# with real password hashing (bcrypt, argon2, etc.)
 docker-compose exec -T investment_db psql -U admin -d investment_portfolio -c "
 INSERT INTO users (email, hashed_password, created_at, updated_at)
-VALUES ('test_user@test.com', 'test_password', NOW(), NOW())
+VALUES ('test_user@test.com', '\$2b\$12\$DEV_ONLY_PLACEHOLDER_HASH_NOT_FOR_PRODUCTION', NOW(), NOW())
 ON CONFLICT (email) DO NOTHING;"
 
-print_success "Test user 'test_user@test.com' created (or already exists)"
+print_success "Test user 'test_user@test.com' created (dev placeholder - not for production)"
 
 
 # =============================================================================
@@ -324,7 +344,7 @@ echo ""
 echo "ACCESS POINTS:"
 echo "  Swagger UI:  http://localhost:8000/docs"
 echo "  ReDoc:       http://localhost:8000/redoc"
-echo "  PostgreSQL:  localhost:5432 (admin/password123)"
+echo "  PostgreSQL:  localhost:5432 (see .env for credentials)"
 echo ""
 echo "GETTING STARTED:"
 echo "  1. Open Swagger UI: http://localhost:8000/docs"

@@ -451,3 +451,135 @@ class TestCircuitBreakerThreadSafety:
         # All calls should have succeeded
         assert call_count == 1000
         assert breaker.stats.successful_calls == 1000
+
+
+class TestCircuitBreakerFallback:
+    """Tests for circuit breaker fallback behavior in MarketDataProvider."""
+
+    def test_fallback_used_when_circuit_open(self):
+        """Should use fallback when circuit is open."""
+        from app.services.market_data.base import MarketDataProvider
+        from app.services.exceptions import ProviderUnavailableError
+
+        # Create a concrete provider for testing
+        class TestProvider(MarketDataProvider):
+            @property
+            def name(self) -> str:
+                return "test"
+
+            def get_asset_info(self, ticker, exchange):
+                raise ProviderUnavailableError("test", "unavailable")
+
+            def get_asset_info_batch(self, tickers):
+                pass
+
+            def get_historical_prices(self, ticker, exchange, start_date, end_date):
+                pass
+
+        provider = TestProvider()
+
+        # Trip the circuit
+        for _ in range(5):
+            try:
+                provider._execute_with_retry(
+                    lambda: (_ for _ in ()).throw(ProviderUnavailableError("test", "fail"))
+                )
+            except ProviderUnavailableError:
+                pass
+
+        # Circuit should be open now
+        assert provider._get_circuit_breaker().is_open
+
+        # Now test fallback
+        fallback_called = False
+        fallback_value = "fallback_result"
+
+        def fallback():
+            nonlocal fallback_called
+            fallback_called = True
+            return fallback_value
+
+        result = provider._execute_with_fallback(
+            lambda: None,  # Won't be called - circuit is open
+            fallback=fallback,
+        )
+
+        assert fallback_called
+        assert result == fallback_value
+
+    def test_no_fallback_raises_circuit_open(self):
+        """Should raise CircuitBreakerOpen when no fallback provided."""
+        from app.services.market_data.base import MarketDataProvider
+        from app.services.exceptions import ProviderUnavailableError
+
+        class TestProvider(MarketDataProvider):
+            @property
+            def name(self) -> str:
+                return "test_no_fallback"
+
+            def get_asset_info(self, ticker, exchange):
+                pass
+
+            def get_asset_info_batch(self, tickers):
+                pass
+
+            def get_historical_prices(self, ticker, exchange, start_date, end_date):
+                pass
+
+        provider = TestProvider()
+
+        # Trip the circuit
+        for _ in range(5):
+            try:
+                provider._execute_with_retry(
+                    lambda: (_ for _ in ()).throw(ProviderUnavailableError("test", "fail"))
+                )
+            except ProviderUnavailableError:
+                pass
+
+        # Circuit should be open
+        assert provider._get_circuit_breaker().is_open
+
+        # Should raise CircuitBreakerOpen with no fallback
+        with pytest.raises(CircuitBreakerOpen):
+            provider._execute_with_fallback(
+                lambda: None,
+                fallback=None,
+            )
+
+    def test_fallback_none_raises_circuit_open(self):
+        """Should raise CircuitBreakerOpen when fallback returns None."""
+        from app.services.market_data.base import MarketDataProvider
+        from app.services.exceptions import ProviderUnavailableError
+
+        class TestProvider(MarketDataProvider):
+            @property
+            def name(self) -> str:
+                return "test_fallback_none"
+
+            def get_asset_info(self, ticker, exchange):
+                pass
+
+            def get_asset_info_batch(self, tickers):
+                pass
+
+            def get_historical_prices(self, ticker, exchange, start_date, end_date):
+                pass
+
+        provider = TestProvider()
+
+        # Trip the circuit
+        for _ in range(5):
+            try:
+                provider._execute_with_retry(
+                    lambda: (_ for _ in ()).throw(ProviderUnavailableError("test", "fail"))
+                )
+            except ProviderUnavailableError:
+                pass
+
+        # Should raise CircuitBreakerOpen when fallback returns None
+        with pytest.raises(CircuitBreakerOpen):
+            provider._execute_with_fallback(
+                lambda: None,
+                fallback=lambda: None,  # Fallback returns None
+            )

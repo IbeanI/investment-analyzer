@@ -1,5 +1,20 @@
 #!/usr/bin/env python3
 # backend/scripts/seed_sample_data.py
+"""
+Seed sample data for LOCAL DEVELOPMENT ONLY.
+
+SECURITY WARNING:
+    This script creates test users with PLACEHOLDER password hashes.
+    These are NOT real password hashes and provide NO security.
+
+    NEVER run this script in production environments.
+    NEVER copy these placeholder values to production code.
+
+    For production:
+    - Use proper password hashing (bcrypt, argon2id)
+    - Create users through authenticated registration flows
+    - Never store plaintext or placeholder passwords
+"""
 import logging
 import sys
 from datetime import datetime, timezone
@@ -23,12 +38,14 @@ def seed():
     try:
         logger.info("🌱 Starting Database Seeding...")
 
-        # 1. Create Test User
+        # 1. Create Test User (LOCAL DEVELOPMENT ONLY)
+        # WARNING: This uses a placeholder hash, not a real password hash.
+        # In production, use proper password hashing (bcrypt, argon2, etc.)
         user = db.query(User).filter(User.email == "demo@example.com").first()
         if not user:
             user = User(
                 email="demo@example.com",
-                hashed_password="hashed_secret_password",  # In real app, hash this!
+                hashed_password="$2b$12$DEV_ONLY_PLACEHOLDER_HASH_NOT_FOR_PRODUCTION",
                 created_at=datetime.now(timezone.utc)
             )
             db.add(user)

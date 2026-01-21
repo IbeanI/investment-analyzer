@@ -67,13 +67,21 @@ DEFAULT_STALENESS_HOURS: int = 24
 
 
 # =============================================================================
-# ANALYTICS CACHE SETTINGS
+# CACHE SETTINGS
 # =============================================================================
 
 # Time-to-live for cached analytics results in seconds
 # 1 hour = 3600 seconds
 # Analytics are CPU-intensive, so caching prevents redundant recalculation
 CACHE_TTL_SECONDS: int = 3600
+
+# Time-to-live for cached asset metadata (from market data providers)
+# 1 hour = 3600 seconds
+# Asset metadata (name, currency, sector) rarely changes, but we want
+# to ensure stale data doesn't persist indefinitely. This prevents:
+# - Caching "not found" errors forever when a ticker becomes available
+# - Stale metadata after corporate actions (mergers, name changes)
+ASSET_CACHE_TTL_SECONDS: int = 3600
 
 
 # =============================================================================
@@ -149,6 +157,20 @@ CIRCUIT_BREAKER_HALF_OPEN_MAX_CALLS: int = 3
 # Time window (seconds) for counting failures (0 = count all failures)
 # 300 = 5 minutes, only count recent failures
 CIRCUIT_BREAKER_FAILURE_WINDOW: float = 300.0
+
+
+# =============================================================================
+# EXTERNAL API TIMEOUT SETTINGS
+# =============================================================================
+
+# Default timeout for external API calls (market data providers)
+# 10 seconds is reasonable for most API calls
+# This prevents hanging requests from blocking the application
+EXTERNAL_API_TIMEOUT_SECONDS: int = 10
+
+# Timeout for historical data fetches (may need more time for large date ranges)
+# 30 seconds allows for larger batch fetches
+EXTERNAL_API_HISTORY_TIMEOUT_SECONDS: int = 30
 
 
 # =============================================================================
@@ -233,3 +255,61 @@ MIN_VAR_SAMPLE_SIZE: int = 10
 # Type-safe zero for Decimal comparisons
 # Use this instead of Decimal("0") for cleaner code and avoiding typos
 ZERO: Decimal = Decimal("0")
+
+
+# =============================================================================
+# RATE LIMITING CONSTANTS
+# =============================================================================
+# Limits are expressed as "X per Y" where Y is the time window
+# Format follows slowapi/limits syntax: "100/minute", "10/hour", etc.
+
+# Default rate limit for read endpoints (GET requests)
+# 100 requests per minute per client is generous for normal usage
+RATE_LIMIT_DEFAULT: str = "100/minute"
+
+# Rate limit for write endpoints (POST, PUT, DELETE)
+# Lower limit to prevent data flooding and abuse
+RATE_LIMIT_WRITE: str = "30/minute"
+
+# Rate limit for sync endpoints (trigger external API calls)
+# Very restrictive since these hit external services (Yahoo Finance)
+# and can trigger circuit breakers if abused
+RATE_LIMIT_SYNC: str = "10/minute"
+
+# Rate limit for file upload endpoints
+# File processing is resource-intensive, limit to prevent DoS
+RATE_LIMIT_UPLOAD: str = "5/minute"
+
+# Rate limit for health check endpoints
+# Higher limit for monitoring tools that poll frequently
+RATE_LIMIT_HEALTH: str = "300/minute"
+
+# Rate limit for analytics endpoints
+# Analytics are CPU-intensive, moderate limit
+RATE_LIMIT_ANALYTICS: str = "30/minute"
+
+
+# =============================================================================
+# RESOURCE LIMIT CONSTANTS
+# =============================================================================
+# These limits protect against DoS and resource exhaustion
+
+# Maximum file upload size in bytes (10 MB)
+# Large enough for thousands of transactions, small enough to prevent abuse
+MAX_UPLOAD_FILE_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
+
+# Maximum number of items in a single batch request
+# Prevents memory exhaustion from massive payloads
+MAX_BATCH_SIZE: int = 500
+
+# Maximum number of rows in a single file upload
+# Prevents processing extremely large files
+MAX_UPLOAD_ROWS: int = 10000
+
+# Maximum date range for history endpoints (days)
+# 5 years of daily data = ~1,825 data points, reasonable for charts
+MAX_HISTORY_DAYS: int = 365 * 5  # 5 years
+
+# Maximum number of items returned in a single list response
+# Used as upper bound for pagination limit parameter
+MAX_LIST_LIMIT: int = 1000

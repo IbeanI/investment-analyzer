@@ -134,7 +134,9 @@ class Asset(Base):
     # When an asset has missing historical data (delisted, merged, renamed), we use a similar asset (proxy) to generate synthetic price history.
     # NULL = standard asset (use its own data)
     # SET = use this asset's prices to backfill gaps
-    proxy_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, default=None)
+    proxy_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("assets.id"), nullable=True, default=None, index=True
+    )  # Indexed for JOIN performance when loading proxy relationships
     proxy_notes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)  # e.g., "Lyxor MSCI World Climate Change → Deka MSCI World Climate Change ESG"
 
     # Self-referential relationship for proxy navigation
@@ -237,8 +239,8 @@ class MarketData(Base):
 
     is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     proxy_source_id: Mapped[int | None] = mapped_column(
-        ForeignKey("assets.id"), nullable=True, default=None
-    )
+        ForeignKey("assets.id"), nullable=True, default=None, index=True
+    )  # Indexed for JOIN performance when tracing synthetic data lineage
 
     # =========================================================================
     # RELATIONSHIPS

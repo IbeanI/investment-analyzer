@@ -40,6 +40,7 @@ def _is_postgresql(db: Session) -> bool:
     """Check if the database is PostgreSQL."""
     dialect_name = db.get_bind().dialect.name
     return dialect_name == "postgresql"
+from app.services.constants import ASSET_CACHE_TTL_SECONDS
 from app.services.exceptions import (
     AssetNotFoundError,
     AssetDeactivatedError,
@@ -71,56 +72,125 @@ def _is_unique_constraint_violation(integrity_error: IntegrityError) -> bool:
 
 class BoundedLRUCache:
     """
-    Thread-safe bounded LRU cache.
+    Thread-safe bounded LRU cache with TTL support.
 
-    Evicts least-recently-used entries when capacity is reached.
-    Uses OrderedDict for O(1) access and eviction.
+    Features:
+    - Evicts least-recently-used entries when capacity is reached
+    - Evicts entries after TTL expires (time-based staleness)
+    - Uses OrderedDict for O(1) access and eviction
+    - Thread-safe via threading.Lock
+
+    TTL ensures stale data doesn't persist indefinitely, which is important for:
+    - Asset metadata that may change (corporate actions, mergers)
+    - "Not found" responses that shouldn't be cached forever
     """
 
-    def __init__(self, maxsize: int = 10000) -> None:
+    def __init__(self, maxsize: int = 10000, ttl_seconds: int | None = None) -> None:
         """
         Initialize the cache.
 
         Args:
             maxsize: Maximum number of entries to store
+            ttl_seconds: Time-to-live in seconds. None means no TTL (size-only eviction).
         """
         self._maxsize = maxsize
-        self._cache: OrderedDict = OrderedDict()
+        self._ttl_seconds = ttl_seconds
+        self._cache: OrderedDict = OrderedDict()  # key -> (timestamp, value)
         self._lock = threading.Lock()
 
     def get(self, key):
-        """Get item from cache, moving it to end (most recently used)."""
+        """
+        Get item from cache, moving it to end (most recently used).
+
+        Returns None if:
+        - Key doesn't exist
+        - Entry has expired (TTL exceeded)
+        """
+        import time
+
         with self._lock:
             if key in self._cache:
+                timestamp, value = self._cache[key]
+
+                # Check TTL expiration
+                if self._ttl_seconds is not None:
+                    age = time.time() - timestamp
+                    if age > self._ttl_seconds:
+                        # Entry expired - remove and return None
+                        del self._cache[key]
+                        return None
+
+                # Entry is valid - move to end (most recently used)
                 self._cache.move_to_end(key)
-                return self._cache[key]
+                return value
             return None
 
     def set(self, key, value) -> None:
-        """Set item in cache, evicting oldest if at capacity."""
+        """
+        Set item in cache, evicting oldest if at capacity.
+
+        Stores the current timestamp with the value for TTL checking.
+        """
+        import time
+
         with self._lock:
+            timestamp = time.time()
+
             if key in self._cache:
                 self._cache.move_to_end(key)
-                self._cache[key] = value
+                self._cache[key] = (timestamp, value)
             else:
                 if len(self._cache) >= self._maxsize:
                     self._cache.popitem(last=False)  # Remove oldest
-                self._cache[key] = value
+                self._cache[key] = (timestamp, value)
 
     def clear(self) -> None:
         """Clear all entries from the cache."""
         with self._lock:
             self._cache.clear()
 
+    def cleanup_expired(self) -> int:
+        """
+        Remove all expired entries from the cache.
+
+        Returns:
+            Number of entries removed
+        """
+        import time
+
+        if self._ttl_seconds is None:
+            return 0
+
+        removed = 0
+        current_time = time.time()
+
+        with self._lock:
+            # Build list of expired keys (can't modify dict during iteration)
+            expired_keys = [
+                key for key, (timestamp, _) in self._cache.items()
+                if current_time - timestamp > self._ttl_seconds
+            ]
+
+            for key in expired_keys:
+                del self._cache[key]
+                removed += 1
+
+        return removed
+
     def __len__(self) -> int:
-        """Return number of entries in cache."""
+        """Return number of entries in cache (including potentially expired)."""
         with self._lock:
             return len(self._cache)
 
     def __contains__(self, key) -> bool:
-        """Check if key exists in cache."""
+        """Check if key exists in cache (does NOT check TTL)."""
         with self._lock:
             return key in self._cache
+
+    @property
+    def ttl_seconds(self) -> int | None:
+        """Get the TTL setting for this cache."""
+        return self._ttl_seconds
 
 
 @dataclass
@@ -145,13 +215,14 @@ class AssetResolutionService:
     2. Fetching metadata from market data providers for unknown assets
     3. Creating new asset records automatically
 
-    The service maintains a bounded LRU cache for provider responses to avoid
-    redundant API calls. Cache is limited to CACHE_MAX_SIZE entries to prevent
-    memory leaks on long-running server processes.
+    The service maintains a bounded LRU cache with TTL for provider responses to avoid
+    redundant API calls. Cache features:
+    - Size limit: CACHE_MAX_SIZE entries to prevent memory leaks
+    - TTL: ASSET_CACHE_TTL_SECONDS to prevent stale data persistence
 
     Attributes:
         _provider: Market data provider for fetching asset metadata
-        _cache: Bounded LRU cache for provider responses
+        _cache: Bounded LRU cache with TTL for provider responses
         CACHE_MAX_SIZE: Maximum entries in the cache (default 10,000)
 
     Example:
@@ -176,7 +247,10 @@ class AssetResolutionService:
                       Pass a custom provider for testing or alternative data sources.
         """
         self._provider = provider or YahooFinanceProvider()
-        self._cache: BoundedLRUCache = BoundedLRUCache(maxsize=self.CACHE_MAX_SIZE)
+        self._cache: BoundedLRUCache = BoundedLRUCache(
+            maxsize=self.CACHE_MAX_SIZE,
+            ttl_seconds=ASSET_CACHE_TTL_SECONDS,
+        )
 
         logger.info(f"AssetResolutionService initialized with provider: {self._provider.name}")
 

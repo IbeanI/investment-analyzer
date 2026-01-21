@@ -229,6 +229,93 @@ class TestCaching:
         # TEST0 was evicted
         assert service._cache.get(("TEST0", "NYSE")) is None
 
+    def test_cache_ttl_eviction(self, db, mock_provider):
+        """Entries should expire after TTL and return None."""
+        import time
+        from app.services.asset_resolution import BoundedLRUCache
+
+        # Create cache with 1-second TTL for testing
+        cache = BoundedLRUCache(maxsize=100, ttl_seconds=1)
+
+        # Add an entry
+        cache.set("key1", "value1")
+        assert cache.get("key1") == "value1"
+
+        # Wait for TTL to expire
+        time.sleep(1.1)
+
+        # Entry should now be expired and return None
+        assert cache.get("key1") is None
+
+    def test_cache_ttl_refresh_on_set(self, db, mock_provider):
+        """Setting a key should refresh its TTL."""
+        import time
+        from app.services.asset_resolution import BoundedLRUCache
+
+        # Create cache with 1-second TTL
+        cache = BoundedLRUCache(maxsize=100, ttl_seconds=1)
+
+        # Add an entry
+        cache.set("key1", "value1")
+
+        # Wait 0.6 seconds
+        time.sleep(0.6)
+
+        # Re-set the key (refreshes TTL)
+        cache.set("key1", "value1_updated")
+
+        # Wait another 0.6 seconds (total 1.2s from first set, but only 0.6s from refresh)
+        time.sleep(0.6)
+
+        # Entry should still be valid because we refreshed it
+        assert cache.get("key1") == "value1_updated"
+
+    def test_cache_cleanup_expired(self, db, mock_provider):
+        """cleanup_expired should remove all expired entries."""
+        import time
+        from app.services.asset_resolution import BoundedLRUCache
+
+        # Create cache with 1-second TTL
+        cache = BoundedLRUCache(maxsize=100, ttl_seconds=1)
+
+        # Add entries
+        cache.set("key1", "value1")
+        cache.set("key2", "value2")
+        assert len(cache) == 2
+
+        # Wait for TTL to expire
+        time.sleep(1.1)
+
+        # Add a fresh entry
+        cache.set("key3", "value3")
+
+        # Cleanup expired entries
+        removed = cache.cleanup_expired()
+        assert removed == 2  # key1 and key2 expired
+        assert len(cache) == 1  # Only key3 remains
+        assert cache.get("key3") == "value3"
+
+    def test_cache_no_ttl_means_no_expiration(self, db, mock_provider):
+        """Cache with no TTL should not expire entries."""
+        import time
+        from app.services.asset_resolution import BoundedLRUCache
+
+        # Create cache without TTL
+        cache = BoundedLRUCache(maxsize=100, ttl_seconds=None)
+
+        # Add an entry
+        cache.set("key1", "value1")
+
+        # Wait a bit (would be expired with TTL)
+        time.sleep(0.1)
+
+        # Entry should still be valid
+        assert cache.get("key1") == "value1"
+
+        # cleanup_expired should do nothing
+        removed = cache.cleanup_expired()
+        assert removed == 0
+
 
 # =============================================================================
 # BATCH RESOLUTION TESTS

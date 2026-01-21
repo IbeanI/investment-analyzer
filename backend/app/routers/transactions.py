@@ -33,6 +33,7 @@ from app.schemas.transactions import (
 from app.schemas.validators import validate_currency_query, validate_ticker_query
 from app.services.asset_resolution import AssetResolutionService
 from app.services.analytics.service import AnalyticsService
+from app.services.constants import MAX_BATCH_SIZE
 from app.dependencies import (
     get_asset_resolution_service,
     get_analytics_service,
@@ -471,9 +472,18 @@ def create_transactions_batch(
 
     This is much more efficient than calling POST /transactions/ multiple times.
     It uses batch asset resolution to minimize database and API calls.
+
+    **Limit:** Maximum {MAX_BATCH_SIZE} transactions per request.
     """
     if not transactions:
         return []
+
+    # Validate batch size
+    if len(transactions) > MAX_BATCH_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Batch size {len(transactions)} exceeds maximum of {MAX_BATCH_SIZE} transactions"
+        )
 
     # 1. Validate Portfolios (Optimization: Check unique IDs once)
     portfolio_ids = {t.portfolio_id for t in transactions}

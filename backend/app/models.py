@@ -1,4 +1,36 @@
 # backend/app/models.py
+"""
+SQLAlchemy ORM models for the Investment Portfolio Analyzer.
+
+Models:
+- User: Application users (authentication placeholder)
+- Portfolio: Investment portfolios owned by users
+- Asset: Global asset registry (stocks, ETFs, bonds, crypto, etc.)
+- Transaction: Buy/sell transactions within portfolios
+- MarketData: Historical OHLCV price data cache
+- ExchangeRate: Historical FX rates for currency conversion
+- SyncStatus: Market data synchronization tracking per portfolio
+- PortfolioSettings: Per-portfolio user preferences
+
+Enums:
+- TransactionType: BUY, SELL (DEPOSIT, WITHDRAWAL, DIVIDEND planned)
+- AssetClass: STOCK, ETF, BOND, CRYPTO, INDEX, etc.
+- SyncStatusEnum: NEVER, IN_PROGRESS, COMPLETED, PARTIAL, FAILED
+
+Design Decisions:
+- All financial values use Decimal(18, 8) for precision (supports crypto)
+- Assets are globally shared; identified by (ticker, exchange) pair
+- Composite indexes optimize common query patterns (valuation, history)
+- Proxy backcasting support for synthetic historical data
+
+Relationships:
+- User 1:N Portfolio
+- Portfolio 1:N Transaction
+- Asset 1:N Transaction
+- Asset 1:N MarketData
+- Portfolio 1:1 SyncStatus
+- Portfolio 1:1 PortfolioSettings
+"""
 import enum
 from datetime import date, datetime, timezone
 from decimal import Decimal

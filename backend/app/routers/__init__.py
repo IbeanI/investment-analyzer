@@ -5,11 +5,12 @@ API routers for the Investment Portfolio Analyzer.
 Each router handles a specific domain:
 - assets: Global asset registry (AAPL, MSFT, etc.)
 - portfolios: User portfolio management
+- portfolio_settings: Per-portfolio user preferences (proxy backcasting, etc.)
 - transactions: Buy/sell transaction records
 - upload: File upload for bulk transaction import
-- sync: Market data synchronization (Phase 3)
-- valuation: Portfolio valuation and performance (Phase 4)
-- analytics: Portfolio analytics (performance, risk, benchmark) (Phase 5)
+- sync: Market data synchronization
+- valuation: Portfolio valuation and performance
+- analytics: Portfolio analytics (performance, risk, benchmark)
 """
 
 from app.routers.analytics import router as analytics_router

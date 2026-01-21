@@ -14,6 +14,8 @@ Usage:
     from app.services import FXRateService
     from app.services import MarketDataSyncService
     from app.services import ValuationService
+    from app.services import AnalyticsService
+    from app.services import PortfolioSettingsService
     from app.services import (
         AssetNotFoundError,
         AssetDeactivatedError,
@@ -23,19 +25,35 @@ Usage:
 
 Architecture:
     services/
-    ├── __init__.py              # This file - main exports
-    ├── exceptions.py            # Domain exceptions
-    ├── asset_resolution.py      # Asset resolution service
-    ├── fx_rate_service.py       # FX rate service (Phase 3)
-    ├── market_data/             # Market data package
-    │   ├── base.py              # Abstract provider interface
-    │   ├── yahoo.py             # Yahoo Finance implementation
-    │   └── sync_service.py      # Sync orchestration service
-    └── valuation/               # Valuation service (Phase 4)
-        ├── types.py             # Internal data types
-        ├── calculators.py       # Calculation logic
-        ├── history_calculator.py # Time series calculations
-        └── service.py           # Main service orchestrator
+    ├── __init__.py                  # This file - main exports
+    ├── exceptions.py                # Domain exceptions
+    ├── constants.py                 # Business constants and limits
+    ├── protocols.py                 # Service interfaces (Protocol classes)
+    ├── circuit_breaker.py           # Circuit breaker for external APIs
+    ├── asset_resolution.py          # Asset resolution service
+    ├── fx_rate_service.py           # FX rate service
+    ├── portfolio_settings_service.py # Portfolio settings management
+    ├── proxy_mapping_service.py     # Proxy asset mapping for backcasting
+    ├── analytics/                   # Analytics engine
+    │   ├── service.py               # Main analytics orchestrator
+    │   ├── types.py                 # Analytics data types
+    │   ├── returns.py               # Return calculations (TWR, IRR, CAGR)
+    │   ├── risk.py                  # Risk metrics (Volatility, Sharpe, VaR)
+    │   └── benchmark.py             # Benchmark comparison (Beta, Alpha)
+    ├── market_data/                 # Market data package
+    │   ├── base.py                  # Abstract provider interface
+    │   ├── yahoo.py                 # Yahoo Finance implementation
+    │   └── sync_service.py          # Sync orchestration service
+    ├── upload/                      # File upload processing
+    │   ├── service.py               # Upload orchestration service
+    │   └── parsers/                 # File format parsers
+    │       ├── base.py              # Abstract parser interface
+    │       └── csv_parser.py        # CSV implementation
+    └── valuation/                   # Valuation service
+        ├── service.py               # Main valuation orchestrator
+        ├── types.py                 # Valuation data types
+        ├── calculators.py           # Point-in-time calculations
+        └── history_calculator.py    # Time series calculations
 """
 
 # Asset resolution
@@ -91,6 +109,8 @@ from app.services.proxy_mapping_service import (
 )
 # Valuation Service
 from app.services.valuation import ValuationService
+# Analytics Service
+from app.services.analytics import AnalyticsService
 
 __all__ = [
     # ==========================================================================
@@ -115,6 +135,8 @@ __all__ = [
     "HistoricalPricesResult",
     # Valuation Service
     "ValuationService",
+    # Analytics Service
+    "AnalyticsService",
 
     # Portfolio Settings Service
     "PortfolioSettingsService",

@@ -361,64 +361,6 @@ class UploadService:
 
         return result
 
-        # =========================================================================
-        # PRIVATE METHODS
-        # =========================================================================
-
-    def _validate_rows(
-            self,
-            parsed_rows: list[ParsedTransactionRow],
-            portfolio_id: int,
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Validate parsed rows and convert to transaction data."""
-        validated: list[dict[str, Any]] = []
-        errors: list[dict[str, Any]] = []
-
-        for row in parsed_rows:
-            try:
-                validated_row = {
-                    "row_number": row.row_number,
-                    "portfolio_id": portfolio_id,
-                    "ticker": row.ticker,
-                    "exchange": row.exchange,
-                    "transaction_type": TransactionType(row.transaction_type),
-                    "date": datetime.fromisoformat(row.date.replace("Z", "+00:00")),
-                    "quantity": Decimal(row.quantity),
-                    "price_per_share": Decimal(row.price_per_share),
-                    "currency": row.currency,
-                    "fee": Decimal(row.fee) if row.fee else Decimal("0"),
-                    "fee_currency": row.fee_currency or row.currency,
-                    "exchange_rate": Decimal(row.exchange_rate) if row.exchange_rate else Decimal("1"),
-                }
-
-                if validated_row["date"] > datetime.now(timezone.utc):
-                    errors.append({"row_number": row.row_number, "stage": "validation", "error_type": "invalid_date", "message": "Date in future", "raw_data": row.raw_data})
-                    continue
-                if validated_row["quantity"] <= 0:
-                    errors.append(
-                        {"row_number": row.row_number, "stage": "validation", "error_type": "invalid_quantity", "message": "Quantity must be positive", "raw_data": row.raw_data})
-                    continue
-                if validated_row["price_per_share"] <= 0:
-                    errors.append(
-                        {"row_number": row.row_number, "stage": "validation", "error_type": "invalid_price", "message": "Price must be positive", "raw_data": row.raw_data})
-                    continue
-                if validated_row["fee"] < 0:
-                    errors.append({"row_number": row.row_number, "stage": "validation", "error_type": "invalid_fee", "message": "Fee cannot be negative", "raw_data": row.raw_data})
-                    continue
-
-                validated.append(validated_row)
-
-            except (InvalidOperation, ValueError) as e:
-                errors.append({
-                    "row_number": row.row_number,
-                    "stage": "validation",
-                    "error_type": "invalid_value",
-                    "message": str(e),
-                    "raw_data": row.raw_data,
-                })
-
-        return validated, errors
-
     # =========================================================================
     # PRIVATE METHODS
     # =========================================================================

@@ -4,12 +4,17 @@ Pydantic schemas for API request/response validation.
 
 This package contains all Pydantic schemas organized by domain:
 - analytics: Portfolio analytics (performance, risk, benchmark)
-- valuation: Portfolio valuation (holdings, P&L, history)
+- assets: Asset CRUD operations
+- errors: Error response formats
+- exchange_rates: FX rate responses and lookups
+- market_data: Market data sync requests/responses
+- pagination: Standardized pagination for list endpoints
+- portfolio_settings: Portfolio preferences (backcasting, etc.)
 - portfolios: Portfolio CRUD operations
 - transactions: Transaction CRUD operations
-- assets: Asset CRUD operations
-- pagination: Standardized pagination for list endpoints
-- errors: Error response formats
+- upload: File upload responses and error details
+- validators: Reusable validation functions (ticker, exchange, currency)
+- valuation: Portfolio valuation (holdings, P&L, history)
 
 Usage:
     from app.schemas import AssetCreate, AssetResponse

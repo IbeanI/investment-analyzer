@@ -310,15 +310,16 @@ class TransactionListResponse(BaseModel):
 
 
 # =============================================================================
-# PLACEHOLDER FOR PHASE 3 (Analytics Engine)
+# EXTENDED RESPONSE (Future Use)
 # =============================================================================
 
 class TransactionWithTotalsResponse(TransactionResponse):
     """
     Extended response that includes computed totals.
 
-    TODO: Implement in Phase 3 when building the analytics engine.
-    Will be used for transaction details with calculated values.
+    This schema is defined but not yet used in any endpoint.
+    It will be used for transaction details with calculated values
+    when detailed transaction views are implemented.
     """
 
     total_value: Decimal = Field(

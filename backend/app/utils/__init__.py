@@ -5,10 +5,12 @@ Utility modules for the Investment Portfolio Analyzer.
 This package contains cross-cutting utilities used throughout the application:
 - logging: Logging configuration and setup with correlation ID support
 - context: Request context management for correlation IDs
+- date_utils: Date manipulation helpers (business days, etc.)
 
 Usage:
     from app.utils import setup_logging, get_logger
     from app.utils import get_correlation_id, set_correlation_id
+    from app.utils.date_utils import get_business_days
 """
 
 from app.utils.context import (

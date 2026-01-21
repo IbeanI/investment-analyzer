@@ -1,4 +1,27 @@
 # backend/app/config.py
+"""
+Application configuration using Pydantic Settings.
+
+Loads configuration from environment variables with validation:
+- ENVIRONMENT: Runtime mode (development, test, production)
+- DATABASE_URL: PostgreSQL connection string (required except in test)
+- DB_POOL_*: Connection pool settings for PostgreSQL
+
+Environment-specific behavior:
+- test: Allows SQLite in-memory database for fast isolated tests
+- development: Requires DATABASE_URL, warns if using SQLite
+- production: Requires PostgreSQL, enforces strict validation
+
+Configuration is validated on application startup. Invalid configuration
+will raise a ValueError with a descriptive message.
+
+Usage:
+    from app.config import settings
+
+    if settings.is_production:
+        # Production-specific logic
+        ...
+"""
 from pathlib import Path
 from typing import Literal
 

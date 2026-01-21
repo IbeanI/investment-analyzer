@@ -10,8 +10,6 @@ This file:
 - Defines global endpoints (health checks)
 """
 
-# WORKING VERSION? YES
-
 import logging
 
 from fastapi import FastAPI, Depends, HTTPException, Request

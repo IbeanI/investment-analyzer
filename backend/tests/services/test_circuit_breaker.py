@@ -7,6 +7,8 @@ import pytest
 import time
 from unittest.mock import Mock
 
+from sqlalchemy.testing import skip_test
+
 from app.services.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerOpen,

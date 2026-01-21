@@ -48,3 +48,6 @@ Thumbs.db
 
 # Alembic
 /backend/alembic/
+
+# Data
+/_data/

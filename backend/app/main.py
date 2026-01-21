@@ -14,6 +14,7 @@ import logging
 
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -79,6 +80,24 @@ app = FastAPI(
     title=settings.app_name,
     description="Institution-grade investment portfolio analysis API",
     version="0.1.0",
+)
+
+
+# =============================================================================
+# CORS MIDDLEWARE
+# =============================================================================
+# Must be added before other middleware
+# Configure allowed origins for frontend access
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",  # Next.js dev server
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 

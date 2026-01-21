@@ -25,13 +25,15 @@
 #   ./setup_project.sh [OPTIONS]
 #
 # OPTIONS:
-#   --fresh     Remove all data and start fresh (destructive!)
-#   --no-wait   Skip waiting for services to be ready
-#   --help      Show this help message
+#   --fresh        Remove all data and start fresh (destructive!)
+#   --no-wait      Skip waiting for services to be ready
+#   --no-frontend  Skip frontend setup
+#   --help         Show this help message
 #
 # PREREQUISITES:
 #   - Docker and Docker Compose installed
-#   - Ports 8000 (API) and 5432 (PostgreSQL) available
+#   - Node.js 18+ and npm installed (for frontend)
+#   - Ports 8000 (API), 5432 (PostgreSQL), and 3000 (Frontend) available
 
 set -e  # Exit on error
 
@@ -41,6 +43,7 @@ set -e  # Exit on error
 
 PROJECT_ROOT="$(cd "$(dirname "$0")" && pwd)"
 BACKEND_DIR="$PROJECT_ROOT/backend"
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
 
 # Colors for output
 RED='\033[0;31m'
@@ -52,6 +55,7 @@ NC='\033[0m' # No Color
 # Default options
 FRESH_START=false
 WAIT_FOR_SERVICES=true
+SETUP_FRONTEND=true
 
 # =============================================================================
 # HELPER FUNCTIONS
@@ -103,6 +107,10 @@ for arg in "$@"; do
             WAIT_FOR_SERVICES=false
             shift
             ;;
+        --no-frontend)
+            SETUP_FRONTEND=false
+            shift
+            ;;
         --help|-h)
             show_help
             ;;
@@ -147,6 +155,28 @@ if ! docker info &> /dev/null; then
     exit 1
 fi
 print_success "Docker daemon running"
+
+# Check Node.js (for frontend)
+if [ "$SETUP_FRONTEND" = true ]; then
+    if ! command -v node &> /dev/null; then
+        print_error "Node.js is not installed. Please install Node.js 18+ first."
+        echo "  macOS: brew install node"
+        echo "  Or download from: https://nodejs.org/"
+        exit 1
+    fi
+    NODE_VERSION=$(node -v | cut -d'v' -f2 | cut -d'.' -f1)
+    if [ "$NODE_VERSION" -lt 18 ]; then
+        print_error "Node.js 18+ required (found v$NODE_VERSION)"
+        exit 1
+    fi
+    print_success "Node.js $(node -v) installed"
+
+    if ! command -v npm &> /dev/null; then
+        print_error "npm is not installed."
+        exit 1
+    fi
+    print_success "npm $(npm -v) installed"
+fi
 
 # -----------------------------------------------------------------------------
 # Step 2: Setup Environment Files
@@ -357,6 +387,36 @@ ON CONFLICT (email) DO NOTHING;"
 
 print_success "Test user created: test@example.com / password123"
 
+# -----------------------------------------------------------------------------
+# Step 10: Setup Frontend
+# -----------------------------------------------------------------------------
+if [ "$SETUP_FRONTEND" = true ]; then
+    print_step "Setting up frontend..."
+
+    cd "$FRONTEND_DIR"
+
+    # Install dependencies
+    print_info "Installing frontend dependencies..."
+    npm install --silent
+
+    print_success "Frontend dependencies installed"
+
+    # Create frontend .env.local if it doesn't exist
+    if [ ! -f "$FRONTEND_DIR/.env.local" ]; then
+        print_info "Creating frontend .env.local..."
+        cat > "$FRONTEND_DIR/.env.local" << 'EOF'
+# Frontend Environment Variables
+# This file is for local development only
+
+NEXT_PUBLIC_API_URL=http://localhost:8000
+EOF
+        print_success "Created frontend .env.local"
+    else
+        print_info "Frontend .env.local already exists"
+    fi
+
+    cd "$PROJECT_ROOT"
+fi
 
 # =============================================================================
 # FINAL OUTPUT
@@ -368,6 +428,7 @@ echo ""
 echo -e "${GREEN}Your Investment Portfolio Analyzer is ready!${NC}"
 echo ""
 echo "ACCESS POINTS:"
+echo "  Frontend:    http://localhost:3000 (run 'npm run dev' in frontend/)"
 echo "  Swagger UI:  http://localhost:8000/docs"
 echo "  ReDoc:       http://localhost:8000/redoc"
 echo "  PostgreSQL:  localhost:5432 (see .env for credentials)"
@@ -377,6 +438,14 @@ echo "  Email:     test@example.com"
 echo "  Password:  password123"
 echo ""
 echo "GETTING STARTED:"
+if [ "$SETUP_FRONTEND" = true ]; then
+echo "  1. Start frontend: cd frontend && npm run dev"
+echo "  2. Open browser:   http://localhost:3000"
+echo "  3. Login with test credentials above"
+echo "  4. Create a portfolio and start tracking!"
+echo ""
+echo "  Or use the API directly via Swagger UI:"
+fi
 echo "  1. Open Swagger UI: http://localhost:8000/docs"
 echo "  2. Login: POST /auth/login with test credentials above"
 echo "  3. Copy the access_token from response"
@@ -387,6 +456,8 @@ echo "  7. Sync market data: POST /portfolios/{id}/sync"
 echo "  8. View valuation: GET /portfolios/{id}/valuation"
 echo ""
 echo "COMMON COMMANDS:"
+echo "  Start frontend:   cd frontend && npm run dev"
+echo "  Build frontend:   cd frontend && npm run build"
 echo "  View logs:        docker-compose logs -f backend"
 echo "  Run tests:        docker-compose exec backend pytest"
 echo "  Stop services:    docker-compose down"

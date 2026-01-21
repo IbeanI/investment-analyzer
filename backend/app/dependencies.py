@@ -13,26 +13,46 @@ Usage in routers:
         get_asset_resolution_service,
         get_analytics_service,
         get_sync_service,
+        get_current_user,
+        get_portfolio_with_owner_check,
     )
 
     @router.post("/")
     def create_transaction(
         service: AssetResolutionService = Depends(get_asset_resolution_service),
+        current_user: User = Depends(get_current_user),
     ):
         ...
 """
 
 import logging
 from functools import lru_cache
+from typing import Annotated
 
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from sqlalchemy.orm import Session
+
+from app.database import get_db
+from app.models import User, Portfolio
 from app.services.asset_resolution import AssetResolutionService
 from app.services.analytics.service import AnalyticsService
 from app.services.market_data.sync_service import MarketDataSyncService
 from app.services.market_data.yahoo import YahooFinanceProvider
 from app.services.valuation.service import ValuationService
 from app.services.fx_rate_service import FXRateService
+from app.services.auth import AuthService, EmailService
+from app.services.auth.jwt_handler import JWTHandler
+from app.services.exceptions import (
+    TokenExpiredError,
+    InvalidCredentialsError,
+    PermissionDeniedError,
+)
 
 logger = logging.getLogger(__name__)
+
+# HTTP Bearer scheme for JWT authentication
+_bearer_scheme = HTTPBearer(auto_error=False)
 
 
 # =============================================================================
@@ -127,6 +147,150 @@ def get_sync_service() -> MarketDataSyncService:
 
 
 # =============================================================================
+# AUTHENTICATION SERVICES
+# =============================================================================
+
+
+@lru_cache(maxsize=1)
+def get_email_service() -> EmailService:
+    """
+    Get the singleton EmailService instance.
+
+    Used for sending verification and password reset emails.
+    """
+    logger.debug("Initializing singleton EmailService")
+    return EmailService()
+
+
+@lru_cache(maxsize=1)
+def get_auth_service() -> AuthService:
+    """
+    Get the singleton AuthService instance.
+
+    Handles user registration, authentication, and token management.
+    """
+    logger.debug("Initializing singleton AuthService")
+    return AuthService(email_service=get_email_service())
+
+
+# =============================================================================
+# AUTHENTICATION DEPENDENCIES
+# =============================================================================
+
+
+def get_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User:
+    """
+    Dependency that extracts and validates the current user from JWT.
+
+    Usage:
+        @router.get("/protected")
+        def protected_endpoint(current_user: User = Depends(get_current_user)):
+            return {"user_id": current_user.id}
+
+    Raises:
+        HTTPException 401: If no token provided or token is invalid/expired
+        HTTPException 401: If user not found or inactive
+    """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = JWTHandler.validate_access_token(credentials.credentials)
+        user_id = int(payload["sub"])
+    except TokenExpiredError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except InvalidCredentialsError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=str(e),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is inactive",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+
+
+def get_optional_current_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
+    db: Annotated[Session, Depends(get_db)],
+) -> User | None:
+    """
+    Optional version of get_current_user.
+
+    Returns None if no token provided, but still validates token if present.
+    Useful for endpoints that work differently for authenticated vs anonymous users.
+    """
+    if credentials is None:
+        return None
+
+    try:
+        return get_current_user(credentials, db)
+    except HTTPException:
+        return None
+
+
+def get_portfolio_with_owner_check(
+    portfolio_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> Portfolio:
+    """
+    Dependency that fetches a portfolio and verifies ownership.
+
+    Usage:
+        @router.get("/{portfolio_id}")
+        def get_portfolio(
+            portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
+        ):
+            return portfolio
+
+    Raises:
+        HTTPException 404: If portfolio not found
+        HTTPException 403: If user doesn't own the portfolio
+    """
+    portfolio = db.get(Portfolio, portfolio_id)
+
+    if portfolio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Portfolio {portfolio_id} not found",
+        )
+
+    if portfolio.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this portfolio",
+        )
+
+    return portfolio
+
+
+# =============================================================================
 # CACHE MANAGEMENT
 # =============================================================================
 
@@ -143,4 +307,6 @@ def clear_service_caches() -> None:
     get_valuation_service.cache_clear()
     get_analytics_service.cache_clear()
     get_sync_service.cache_clear()
+    get_email_service.cache_clear()
+    get_auth_service.cache_clear()
     logger.info("Cleared all service singleton caches")

@@ -188,6 +188,32 @@ LOG_LEVEL=DEBUG
 # Database connection for the app
 # Note: Use 'localhost' for local dev, 'investment_db' inside Docker network
 DATABASE_URL=postgresql://admin:localdevpassword@localhost:5432/investment_portfolio
+
+# =============================================================================
+# Authentication (JWT)
+# =============================================================================
+JWT_SECRET_KEY=dev-secret-key-change-in-production-32chars
+
+# =============================================================================
+# Email (Optional - without these, verification emails are logged to console)
+# =============================================================================
+# SMTP_HOST=smtp.gmail.com
+# SMTP_PORT=587
+# SMTP_USER=your-email@gmail.com
+# SMTP_PASSWORD=your-app-password
+# SMTP_FROM_EMAIL=your-email@gmail.com
+
+# =============================================================================
+# Google OAuth (Optional)
+# =============================================================================
+# GOOGLE_CLIENT_ID=your-google-client-id
+# GOOGLE_CLIENT_SECRET=your-google-client-secret
+# GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
+
+# =============================================================================
+# Frontend URL (for email links)
+# =============================================================================
+FRONTEND_URL=http://localhost:3000
 EOF
     print_success "Created $PROJECT_ROOT/.env with local dev defaults"
 else
@@ -307,8 +333,8 @@ else
     print_warn "API: May still be starting (HTTP $API_STATUS)"
 fi
 
-# Test Database connection via API
-DB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/portfolios" 2>/dev/null || echo "000")
+# Test Database connection via API health endpoint
+DB_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:8000/health" 2>/dev/null || echo "000")
 if [ "$DB_STATUS" = "200" ]; then
     print_success "Database: Connected"
 else
@@ -320,16 +346,16 @@ fi
 # -----------------------------------------------------------------------------
 print_step "Seeding test user (dev only)..."
 
-# WARNING: This creates a user with a placeholder password hash.
+# WARNING: This creates a user with a real bcrypt hash for password "password123".
 # This is for LOCAL DEVELOPMENT convenience only.
-# In production, users should be created through proper registration flows
-# with real password hashing (bcrypt, argon2, etc.)
+# In production, users should be created through proper registration flows.
+# Hash generated with: python -c "from passlib.hash import bcrypt; print(bcrypt.hash('password123'))"
 docker-compose exec -T investment_db psql -U admin -d investment_portfolio -c "
-INSERT INTO users (email, hashed_password, created_at, updated_at)
-VALUES ('test_user@test.com', '\$2b\$12\$DEV_ONLY_PLACEHOLDER_HASH_NOT_FOR_PRODUCTION', NOW(), NOW())
+INSERT INTO users (email, hashed_password, is_email_verified, is_active, created_at, updated_at)
+VALUES ('test@example.com', '\$2b\$12\$D1YpH7zZtP9nXP89zArmIec/QClo0ojAYakC4iaY4xtQZIv4VS7ta', true, true, NOW(), NOW())
 ON CONFLICT (email) DO NOTHING;"
 
-print_success "Test user 'test_user@test.com' created (dev placeholder - not for production)"
+print_success "Test user created: test@example.com / password123"
 
 
 # =============================================================================
@@ -346,12 +372,19 @@ echo "  Swagger UI:  http://localhost:8000/docs"
 echo "  ReDoc:       http://localhost:8000/redoc"
 echo "  PostgreSQL:  localhost:5432 (see .env for credentials)"
 echo ""
+echo "TEST USER (dev only):"
+echo "  Email:     test@example.com"
+echo "  Password:  password123"
+echo ""
 echo "GETTING STARTED:"
 echo "  1. Open Swagger UI: http://localhost:8000/docs"
-echo "  2. Create a portfolio: POST /portfolios"
-echo "  3. Add transactions: POST /portfolios/{id}/transactions"
-echo "  4. Sync market data: POST /portfolios/{id}/sync"
-echo "  5. View valuation: GET /portfolios/{id}/valuation"
+echo "  2. Login: POST /auth/login with test credentials above"
+echo "  3. Copy the access_token from response"
+echo "  4. Click 'Authorize' button, paste: Bearer <your_token>"
+echo "  5. Create a portfolio: POST /portfolios"
+echo "  6. Add transactions: POST /transactions"
+echo "  7. Sync market data: POST /portfolios/{id}/sync"
+echo "  8. View valuation: GET /portfolios/{id}/valuation"
 echo ""
 echo "COMMON COMMANDS:"
 echo "  View logs:        docker-compose logs -f backend"
@@ -360,8 +393,9 @@ echo "  Stop services:    docker-compose down"
 echo "  Fresh restart:    ./setup_project.sh --fresh"
 echo ""
 echo "API ENDPOINTS:"
+echo "  Authentication:   /auth/login, /auth/register, /auth/me"
 echo "  Portfolios:       /portfolios"
-echo "  Transactions:     /portfolios/{id}/transactions"
+echo "  Transactions:     /transactions"
 echo "  Sync Data:        /portfolios/{id}/sync"
 echo "  Valuation:        /portfolios/{id}/valuation"
 echo "  History:          /portfolios/{id}/valuation/history"

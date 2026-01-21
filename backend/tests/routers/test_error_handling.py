@@ -80,13 +80,31 @@ def client(test_db: Session) -> TestClient:
 # FACTORY FUNCTIONS
 # =============================================================================
 
-def seed_user(db: Session) -> User:
+def seed_user(
+        db: Session,
+        email: str = "test@example.com",
+        is_email_verified: bool = True,
+        is_active: bool = True,
+) -> User:
     """Create a test user."""
-    user = User(email="test@example.com", hashed_password="hashed")
+    user = User(
+        email=email,
+        hashed_password="hashed",
+        is_email_verified=is_email_verified,
+        is_active=is_active,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_auth_headers(user: User) -> dict[str, str]:
+    """Generate auth headers for a user."""
+    from app.services.auth.jwt_handler import JWTHandler
+    jwt_handler = JWTHandler()
+    token = jwt_handler.create_access_token(user_id=user.id, email=user.email)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def seed_portfolio(db: Session, user: User) -> Portfolio:
@@ -147,9 +165,14 @@ class TestCorrelationIdHeaders:
         assert correlation_id is not None
         assert len(correlation_id) > 0
 
-    def test_error_responses_include_correlation_id(self, client: TestClient):
+    def test_error_responses_include_correlation_id(
+            self, client: TestClient, test_db: Session
+    ):
         """Error responses should also include correlation ID."""
-        response = client.get("/portfolios/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/portfolios/99999", headers=headers)
 
         assert response.status_code == 404
         assert "x-correlation-id" in response.headers
@@ -162,9 +185,14 @@ class TestCorrelationIdHeaders:
 class TestNotFoundErrors:
     """Tests for 404 Not Found error responses."""
 
-    def test_portfolio_not_found_format(self, client: TestClient):
+    def test_portfolio_not_found_format(
+            self, client: TestClient, test_db: Session
+    ):
         """Portfolio not found should return consistent error format."""
-        response = client.get("/portfolios/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/portfolios/99999", headers=headers)
 
         assert response.status_code == 404
         data = response.json()
@@ -174,9 +202,14 @@ class TestNotFoundErrors:
         assert data["error"] == "NotFoundError"
         assert "99999" in data["message"] or "not found" in data["message"].lower()
 
-    def test_transaction_not_found_format(self, client: TestClient):
+    def test_transaction_not_found_format(
+            self, client: TestClient, test_db: Session
+    ):
         """Transaction not found should return consistent error format."""
-        response = client.get("/transactions/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/transactions/99999", headers=headers)
 
         assert response.status_code == 404
         data = response.json()
@@ -185,6 +218,7 @@ class TestNotFoundErrors:
 
     def test_asset_not_found_format(self, client: TestClient):
         """Asset not found should return consistent error format."""
+        # Assets endpoint doesn't require auth
         response = client.get("/assets/99999")
 
         assert response.status_code == 404
@@ -204,6 +238,7 @@ class TestConflictErrors:
             self, client: TestClient, test_db: Session
     ):
         """Duplicate ticker+exchange should return 409 with details."""
+        # Assets endpoint doesn't require auth
         seed_asset(test_db, "AAPL")
 
         response = client.post(
@@ -234,14 +269,15 @@ class TestValidationErrors:
     def test_validation_error_format(self, client: TestClient, test_db: Session):
         """Validation errors should include field details."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "",  # Empty name - invalid
                 "currency": "EUR",
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -257,6 +293,7 @@ class TestValidationErrors:
 
     def test_validation_error_multiple_fields(self, client: TestClient):
         """Should report multiple validation errors."""
+        # Assets endpoint doesn't require auth
         response = client.post(
             "/assets/",
             json={
@@ -275,23 +312,27 @@ class TestValidationErrors:
     def test_validation_error_type_mismatch(self, client: TestClient, test_db: Session):
         """Should handle type mismatch errors."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "Test",
                 "currency": "EUR",
-                "user_id": "not_an_integer",  # Type mismatch
-            }
+            },
+            headers=headers,
         )
 
-        assert response.status_code == 422
+        # This should now succeed since user_id is removed from schema
+        # The test was checking for type mismatch on user_id which no longer exists
+        assert response.status_code == 201
 
     def test_transaction_future_date_validation(
             self, client: TestClient, test_db: Session
     ):
         """Future transaction date should return validation error."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         seed_asset(test_db, "AAPL")
 
@@ -306,7 +347,8 @@ class TestValidationErrors:
                 "quantity": "10",
                 "price_per_share": "180",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -316,6 +358,7 @@ class TestValidationErrors:
     ):
         """Negative quantity should return validation error."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         seed_asset(test_db, "AAPL")
 
@@ -330,7 +373,8 @@ class TestValidationErrors:
                 "quantity": "-10",  # Negative
                 "price_per_share": "180",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -343,18 +387,27 @@ class TestValidationErrors:
 class TestErrorResponseStructure:
     """Tests for consistent error response structure."""
 
-    def test_all_errors_have_required_fields(self, client: TestClient):
+    def test_all_errors_have_required_fields(
+            self, client: TestClient, test_db: Session
+    ):
         """All error responses should have error and message fields."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         # Test various error endpoints
+        # Portfolios and transactions require auth, assets don't
         endpoints = [
-            ("/portfolios/99999", "GET"),
-            ("/transactions/99999", "GET"),
-            ("/assets/99999", "GET"),
+            ("/portfolios/99999", "GET", True),
+            ("/transactions/99999", "GET", True),
+            ("/assets/99999", "GET", False),
         ]
 
-        for endpoint, method in endpoints:
+        for endpoint, method, requires_auth in endpoints:
             if method == "GET":
-                response = client.get(endpoint)
+                if requires_auth:
+                    response = client.get(endpoint, headers=headers)
+                else:
+                    response = client.get(endpoint)
 
             assert response.status_code in [400, 404, 409, 422, 500, 503]
             data = response.json()
@@ -362,16 +415,26 @@ class TestErrorResponseStructure:
             assert "error" in data, f"Missing 'error' field for {endpoint}"
             assert "message" in data, f"Missing 'message' field for {endpoint}"
 
-    def test_error_type_matches_status_code(self, client: TestClient):
+    def test_error_type_matches_status_code(
+            self, client: TestClient, test_db: Session
+    ):
         """Error type should be appropriate for status code."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         # 404 errors
-        response = client.get("/portfolios/99999")
+        response = client.get("/portfolios/99999", headers=headers)
         assert response.status_code == 404
         assert "NotFound" in response.json()["error"]
 
-    def test_details_field_is_optional(self, client: TestClient):
+    def test_details_field_is_optional(
+            self, client: TestClient, test_db: Session
+    ):
         """Details field may be null for simple errors."""
-        response = client.get("/portfolios/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/portfolios/99999", headers=headers)
 
         data = response.json()
         # details can be null or contain data
@@ -460,8 +523,13 @@ class TestMethodNotAllowed:
 class TestCascadingErrors:
     """Tests for errors that cascade through the system."""
 
-    def test_transaction_with_nonexistent_portfolio(self, client: TestClient):
+    def test_transaction_with_nonexistent_portfolio(
+            self, client: TestClient, test_db: Session
+    ):
         """Creating transaction for non-existent portfolio returns 404."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.post(
             "/transactions/",
             json={
@@ -473,47 +541,60 @@ class TestCascadingErrors:
                 "quantity": "10",
                 "price_per_share": "180",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 404
         assert "portfolio" in response.json()["message"].lower()
 
-    def test_update_nonexistent_resource(self, client: TestClient):
+    def test_update_nonexistent_resource(
+            self, client: TestClient, test_db: Session
+    ):
         """Updating non-existent resources returns 404."""
-        # Portfolio
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        # Portfolio (requires auth)
         response = client.patch(
             "/portfolios/99999",
-            json={"name": "New Name"}
+            json={"name": "New Name"},
+            headers=headers,
         )
         assert response.status_code == 404
 
-        # Asset
+        # Asset (doesn't require auth)
         response = client.patch(
             "/assets/99999",
             json={"name": "New Name"}
         )
         assert response.status_code == 404
 
-        # Transaction
+        # Transaction (requires auth)
         response = client.patch(
             "/transactions/99999",
-            json={"quantity": "10"}
+            json={"quantity": "10"},
+            headers=headers,
         )
         assert response.status_code == 404
 
-    def test_delete_nonexistent_resource(self, client: TestClient):
+    def test_delete_nonexistent_resource(
+            self, client: TestClient, test_db: Session
+    ):
         """Deleting non-existent resources returns 404."""
-        # Portfolio
-        response = client.delete("/portfolios/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        # Portfolio (requires auth)
+        response = client.delete("/portfolios/99999", headers=headers)
         assert response.status_code == 404
 
-        # Asset
+        # Asset (doesn't require auth)
         response = client.delete("/assets/99999")
         assert response.status_code == 404
 
-        # Transaction
-        response = client.delete("/transactions/99999")
+        # Transaction (requires auth)
+        response = client.delete("/transactions/99999", headers=headers)
         assert response.status_code == 404
 
 
@@ -524,28 +605,64 @@ class TestCascadingErrors:
 class TestQueryParameterValidation:
     """Tests for query parameter validation."""
 
-    def test_invalid_skip_parameter(self, client: TestClient):
+    def test_invalid_skip_parameter(
+            self, client: TestClient, test_db: Session
+    ):
         """Negative skip should return validation error."""
-        response = client.get("/portfolios/", params={"skip": -1})
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get(
+            "/portfolios/",
+            params={"skip": -1},
+            headers=headers,
+        )
 
         assert response.status_code == 422
 
-    def test_invalid_limit_parameter(self, client: TestClient):
+    def test_invalid_limit_parameter(
+            self, client: TestClient, test_db: Session
+    ):
         """Zero limit should return validation error."""
-        response = client.get("/portfolios/", params={"limit": 0})
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get(
+            "/portfolios/",
+            params={"limit": 0},
+            headers=headers,
+        )
 
         assert response.status_code == 422
 
-    def test_limit_exceeds_maximum(self, client: TestClient):
+    def test_limit_exceeds_maximum(
+            self, client: TestClient, test_db: Session
+    ):
         """Limit exceeding maximum should return validation error."""
-        response = client.get("/portfolios/", params={"limit": 9999})
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get(
+            "/portfolios/",
+            params={"limit": 9999},
+            headers=headers,
+        )
 
         assert response.status_code == 422
 
-    def test_invalid_currency_filter(self, client: TestClient):
+    def test_invalid_currency_filter(
+            self, client: TestClient, test_db: Session
+    ):
         """Invalid currency format should be handled."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         # This depends on how strict the validation is
-        response = client.get("/portfolios/", params={"currency": "INVALID"})
+        response = client.get(
+            "/portfolios/",
+            params={"currency": "INVALID"},
+            headers=headers,
+        )
 
         # Either 422 (strict validation) or 200 with no results
         assert response.status_code in [200, 422]

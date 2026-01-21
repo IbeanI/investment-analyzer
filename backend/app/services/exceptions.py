@@ -378,6 +378,168 @@ class BenchmarkNotSyncedError(AnalyticsError):
 
 
 # =============================================================================
+# AUTHENTICATION ERRORS
+# =============================================================================
+
+
+class AuthenticationError(ServiceError):
+    """
+    Base exception for authentication failures.
+
+    All auth-related exceptions inherit from this for easy catching.
+    """
+    pass
+
+
+class InvalidCredentialsError(AuthenticationError):
+    """
+    Raised when login credentials are incorrect.
+
+    This covers:
+    - Wrong email/password combination
+    - Invalid or malformed tokens
+    - Invalid OAuth state
+    """
+
+    def __init__(self, message: str = "Invalid credentials") -> None:
+        super().__init__(message)
+
+
+class UserExistsError(AuthenticationError):
+    """
+    Raised when attempting to register with an existing email.
+
+    Attributes:
+        email: The email that already exists
+    """
+
+    def __init__(self, email: str) -> None:
+        self.email = email
+        super().__init__(f"User with email '{email}' already exists")
+
+
+class EmailNotVerifiedError(AuthenticationError):
+    """
+    Raised when an unverified user attempts to log in.
+
+    Attributes:
+        email: The unverified user's email
+    """
+
+    def __init__(self, email: str) -> None:
+        self.email = email
+        super().__init__(f"Email '{email}' is not verified. Please check your inbox.")
+
+
+class TokenExpiredError(AuthenticationError):
+    """
+    Raised when a token (access, refresh, verification, reset) has expired.
+
+    Attributes:
+        token_type: The type of token that expired
+    """
+
+    def __init__(self, message: str = "Token has expired", token_type: str = "access") -> None:
+        self.token_type = token_type
+        super().__init__(message)
+
+
+class TokenRevokedError(AuthenticationError):
+    """
+    Raised when attempting to use a revoked refresh token.
+
+    This may indicate a token replay attack. When detected,
+    all tokens in the family should be revoked.
+    """
+
+    def __init__(self, message: str = "Token has been revoked") -> None:
+        super().__init__(message)
+
+
+class OAuthError(AuthenticationError):
+    """
+    Raised when OAuth authentication fails.
+
+    Attributes:
+        provider: The OAuth provider (e.g., "google")
+        reason: Specific failure reason
+    """
+
+    def __init__(self, provider: str, reason: str) -> None:
+        self.provider = provider
+        self.reason = reason
+        super().__init__(f"OAuth error with {provider}: {reason}")
+
+
+class UserNotFoundError(AuthenticationError):
+    """
+    Raised when a user cannot be found.
+
+    Used for password reset, verification resend, etc.
+    Note: For security, expose this carefully to avoid user enumeration.
+    """
+
+    def __init__(self, identifier: str | int) -> None:
+        self.identifier = identifier
+        super().__init__(f"User not found: {identifier}")
+
+
+class UserInactiveError(AuthenticationError):
+    """
+    Raised when an inactive user attempts to authenticate.
+    """
+
+    def __init__(self, message: str = "User account is inactive") -> None:
+        super().__init__(message)
+
+
+class PasswordResetError(AuthenticationError):
+    """
+    Raised when password reset fails.
+
+    Attributes:
+        reason: Specific failure reason
+    """
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(f"Password reset failed: {reason}")
+
+
+# =============================================================================
+# AUTHORIZATION ERRORS
+# =============================================================================
+
+
+class AuthorizationError(ServiceError):
+    """
+    Base exception for authorization (permission) failures.
+    """
+    pass
+
+
+class PermissionDeniedError(AuthorizationError):
+    """
+    Raised when user lacks permission to access a resource.
+
+    Attributes:
+        resource_type: Type of resource (e.g., "Portfolio")
+        resource_id: ID of the resource
+    """
+
+    def __init__(
+        self,
+        resource_type: str,
+        resource_id: int | str,
+        message: str | None = None,
+    ) -> None:
+        self.resource_type = resource_type
+        self.resource_id = resource_id
+        msg = message or f"Permission denied for {resource_type} {resource_id}"
+        super().__init__(msg)
+
+
+# =============================================================================
 # CIRCUIT BREAKER (re-exported for convenience)
 # =============================================================================
 
@@ -410,6 +572,20 @@ __all__ = [
     # Analytics
     "AnalyticsError",
     "BenchmarkNotSyncedError",
+    # Authentication
+    "AuthenticationError",
+    "InvalidCredentialsError",
+    "UserExistsError",
+    "EmailNotVerifiedError",
+    "TokenExpiredError",
+    "TokenRevokedError",
+    "OAuthError",
+    "UserNotFoundError",
+    "UserInactiveError",
+    "PasswordResetError",
+    # Authorization
+    "AuthorizationError",
+    "PermissionDeniedError",
     # Circuit Breaker
     "CircuitBreakerOpen",
 ]

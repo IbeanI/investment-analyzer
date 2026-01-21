@@ -86,13 +86,31 @@ def client(test_db: Session) -> TestClient:
 # FACTORY FUNCTIONS
 # =============================================================================
 
-def seed_user(db: Session, email: str = "test@example.com") -> User:
-    """Create a test user."""
-    user = User(email=email, hashed_password="hashed")
+def seed_user(
+        db: Session,
+        email: str = "test@example.com",
+        is_email_verified: bool = True,
+        is_active: bool = True,
+) -> User:
+    """Create a test user with email verified by default."""
+    user = User(
+        email=email,
+        hashed_password="hashed",
+        is_email_verified=is_email_verified,
+        is_active=is_active,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_auth_headers(user: User) -> dict[str, str]:
+    """Get authorization headers with JWT token for a user."""
+    from app.services.auth.jwt_handler import JWTHandler
+    jwt_handler = JWTHandler()
+    token = jwt_handler.create_access_token(user_id=user.id, email=user.email)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def seed_portfolio(
@@ -119,14 +137,15 @@ class TestCreatePortfolio:
     def test_create_portfolio_success(self, client: TestClient, test_db: Session):
         """Should create portfolio and return 201."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "My Retirement Fund",
                 "currency": "USD",
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
@@ -142,14 +161,15 @@ class TestCreatePortfolio:
     def test_create_portfolio_normalizes_currency(self, client: TestClient, test_db: Session):
         """Should normalize currency to uppercase."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "Test",
                 "currency": "eur",  # lowercase
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
@@ -158,44 +178,44 @@ class TestCreatePortfolio:
     def test_create_portfolio_trims_name(self, client: TestClient, test_db: Session):
         """Should trim whitespace from name."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "  Trimmed Name  ",
                 "currency": "EUR",
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
         assert response.json()["name"] == "Trimmed Name"
 
-    def test_create_portfolio_user_not_found(self, client: TestClient):
-        """Should return 404 if user doesn't exist."""
+    def test_create_portfolio_requires_auth(self, client: TestClient):
+        """Should return 401 if not authenticated."""
         response = client.post(
             "/portfolios/",
             json={
                 "name": "Test",
                 "currency": "EUR",
-                "user_id": 99999,
             }
         )
 
-        assert response.status_code == 404
-        assert "not found" in response.json()["message"].lower()
+        assert response.status_code == 401
 
     def test_create_portfolio_validation_error(self, client: TestClient, test_db: Session):
         """Should return 422 for invalid data."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "",  # Empty name
                 "currency": "EUR",
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -204,14 +224,15 @@ class TestCreatePortfolio:
     def test_create_portfolio_invalid_currency_length(self, client: TestClient, test_db: Session):
         """Should reject currency that's not 3 characters."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         response = client.post(
             "/portfolios/",
             json={
                 "name": "Test",
                 "currency": "EURO",  # 4 characters
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -224,9 +245,12 @@ class TestCreatePortfolio:
 class TestListPortfolios:
     """Tests for GET /portfolios/ endpoint."""
 
-    def test_list_portfolios_empty(self, client: TestClient):
+    def test_list_portfolios_empty(self, client: TestClient, test_db: Session):
         """Should return empty list with pagination when no portfolios exist."""
-        response = client.get("/portfolios/")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/portfolios/", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -242,10 +266,11 @@ class TestListPortfolios:
     def test_list_portfolios_returns_items(self, client: TestClient, test_db: Session):
         """Should return list of portfolios with pagination metadata."""
         user = seed_user(test_db)
-        portfolio1 = seed_portfolio(test_db, user, "Portfolio 1", "EUR")
-        portfolio2 = seed_portfolio(test_db, user, "Portfolio 2", "USD")
+        headers = get_auth_headers(user)
+        seed_portfolio(test_db, user, "Portfolio 1", "EUR")
+        seed_portfolio(test_db, user, "Portfolio 2", "USD")
 
-        response = client.get("/portfolios/")
+        response = client.get("/portfolios/", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -255,19 +280,21 @@ class TestListPortfolios:
         assert data["pagination"]["page"] == 1
         assert data["pagination"]["pages"] == 1
 
-    def test_list_portfolios_filter_by_user_id(self, client: TestClient, test_db: Session):
-        """Should filter portfolios by user_id."""
+    def test_list_portfolios_only_returns_own_portfolios(self, client: TestClient, test_db: Session):
+        """Should only return portfolios owned by the authenticated user."""
         user1 = seed_user(test_db, "user1@test.com")
         user2 = seed_user(test_db, "user2@test.com")
+        headers = get_auth_headers(user1)
 
         seed_portfolio(test_db, user1, "User1 Portfolio")
         seed_portfolio(test_db, user2, "User2 Portfolio")
 
-        response = client.get("/portfolios/", params={"user_id": user1.id})
+        response = client.get("/portfolios/", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
 
+        # User1 should only see their own portfolio
         assert len(data["items"]) == 1
         assert data["items"][0]["name"] == "User1 Portfolio"
         assert data["pagination"]["total"] == 1
@@ -275,10 +302,11 @@ class TestListPortfolios:
     def test_list_portfolios_filter_by_currency(self, client: TestClient, test_db: Session):
         """Should filter portfolios by currency."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         seed_portfolio(test_db, user, "EUR Portfolio", "EUR")
         seed_portfolio(test_db, user, "USD Portfolio", "USD")
 
-        response = client.get("/portfolios/", params={"currency": "EUR"})
+        response = client.get("/portfolios/", params={"currency": "EUR"}, headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -289,10 +317,11 @@ class TestListPortfolios:
     def test_list_portfolios_search(self, client: TestClient, test_db: Session):
         """Should search portfolios by name."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         seed_portfolio(test_db, user, "Retirement Fund", "EUR")
         seed_portfolio(test_db, user, "Trading Account", "USD")
 
-        response = client.get("/portfolios/", params={"search": "Retire"})
+        response = client.get("/portfolios/", params={"search": "Retire"}, headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -303,11 +332,12 @@ class TestListPortfolios:
     def test_list_portfolios_pagination(self, client: TestClient, test_db: Session):
         """Should paginate results correctly."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         for i in range(15):
             seed_portfolio(test_db, user, f"Portfolio {i}", "EUR")
 
         # First page
-        response = client.get("/portfolios/", params={"skip": 0, "limit": 10})
+        response = client.get("/portfolios/", params={"skip": 0, "limit": 10}, headers=headers)
         data = response.json()
 
         assert len(data["items"]) == 10
@@ -318,13 +348,18 @@ class TestListPortfolios:
         assert data["pagination"]["has_previous"] is False
 
         # Second page
-        response = client.get("/portfolios/", params={"skip": 10, "limit": 10})
+        response = client.get("/portfolios/", params={"skip": 10, "limit": 10}, headers=headers)
         data = response.json()
 
         assert len(data["items"]) == 5
         assert data["pagination"]["page"] == 2
         assert data["pagination"]["has_next"] is False
         assert data["pagination"]["has_previous"] is True
+
+    def test_list_portfolios_requires_auth(self, client: TestClient):
+        """Should return 401 if not authenticated."""
+        response = client.get("/portfolios/")
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -337,9 +372,10 @@ class TestGetPortfolio:
     def test_get_portfolio_success(self, client: TestClient, test_db: Session):
         """Should return portfolio with 200."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, "My Portfolio", "EUR")
 
-        response = client.get(f"/portfolios/{portfolio.id}")
+        response = client.get(f"/portfolios/{portfolio.id}", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -349,13 +385,36 @@ class TestGetPortfolio:
         assert data["currency"] == "EUR"
         assert data["user_id"] == user.id
 
-    def test_get_portfolio_not_found(self, client: TestClient):
+    def test_get_portfolio_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 for non-existent portfolio."""
-        response = client.get("/portfolios/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/portfolios/99999", headers=headers)
 
         assert response.status_code == 404
         data = response.json()
         assert data["error"] == "NotFoundError"
+
+    def test_get_portfolio_forbidden_if_not_owner(self, client: TestClient, test_db: Session):
+        """Should return 403 if user doesn't own the portfolio."""
+        user1 = seed_user(test_db, "user1@test.com")
+        user2 = seed_user(test_db, "user2@test.com")
+        portfolio = seed_portfolio(test_db, user1, "User1 Portfolio")
+        headers = get_auth_headers(user2)
+
+        response = client.get(f"/portfolios/{portfolio.id}", headers=headers)
+
+        assert response.status_code == 403
+
+    def test_get_portfolio_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user, "My Portfolio")
+
+        response = client.get(f"/portfolios/{portfolio.id}")
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -368,11 +427,13 @@ class TestUpdatePortfolio:
     def test_update_portfolio_name(self, client: TestClient, test_db: Session):
         """Should update portfolio name."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, "Old Name", "EUR")
 
         response = client.patch(
             f"/portfolios/{portfolio.id}",
-            json={"name": "New Name"}
+            json={"name": "New Name"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -383,11 +444,13 @@ class TestUpdatePortfolio:
     def test_update_portfolio_currency(self, client: TestClient, test_db: Session):
         """Should update portfolio currency."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, "Test", "EUR")
 
         response = client.patch(
             f"/portfolios/{portfolio.id}",
-            json={"currency": "USD"}
+            json={"currency": "USD"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -396,11 +459,13 @@ class TestUpdatePortfolio:
     def test_update_portfolio_partial(self, client: TestClient, test_db: Session):
         """Should only update provided fields."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, "Original Name", "EUR")
 
         response = client.patch(
             f"/portfolios/{portfolio.id}",
-            json={"name": "Updated Name"}
+            json={"name": "Updated Name"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -408,11 +473,15 @@ class TestUpdatePortfolio:
         assert data["name"] == "Updated Name"
         assert data["currency"] == "EUR"  # Not changed
 
-    def test_update_portfolio_not_found(self, client: TestClient):
+    def test_update_portfolio_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 for non-existent portfolio."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.patch(
             "/portfolios/99999",
-            json={"name": "Test"}
+            json={"name": "Test"},
+            headers=headers,
         )
 
         assert response.status_code == 404
@@ -420,15 +489,29 @@ class TestUpdatePortfolio:
     def test_update_portfolio_normalizes_currency(self, client: TestClient, test_db: Session):
         """Should normalize currency to uppercase."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, "Test", "EUR")
 
         response = client.patch(
             f"/portfolios/{portfolio.id}",
-            json={"currency": "usd"}
+            json={"currency": "usd"},
+            headers=headers,
         )
 
         assert response.status_code == 200
         assert response.json()["currency"] == "USD"
+
+    def test_update_portfolio_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user, "Test", "EUR")
+
+        response = client.patch(
+            f"/portfolios/{portfolio.id}",
+            json={"name": "Test"},
+        )
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -441,21 +524,34 @@ class TestDeletePortfolio:
     def test_delete_portfolio_success(self, client: TestClient, test_db: Session):
         """Should delete portfolio and return 204."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, "To Delete", "EUR")
 
-        response = client.delete(f"/portfolios/{portfolio.id}")
+        response = client.delete(f"/portfolios/{portfolio.id}", headers=headers)
 
         assert response.status_code == 204
 
         # Verify deleted
-        get_response = client.get(f"/portfolios/{portfolio.id}")
+        get_response = client.get(f"/portfolios/{portfolio.id}", headers=headers)
         assert get_response.status_code == 404
 
-    def test_delete_portfolio_not_found(self, client: TestClient):
+    def test_delete_portfolio_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 for non-existent portfolio."""
-        response = client.delete("/portfolios/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.delete("/portfolios/99999", headers=headers)
 
         assert response.status_code == 404
+
+    def test_delete_portfolio_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user, "Test", "EUR")
+
+        response = client.delete(f"/portfolios/{portfolio.id}")
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -468,6 +564,7 @@ class TestPortfolioCRUDFlow:
     def test_full_crud_lifecycle(self, client: TestClient, test_db: Session):
         """Test complete Create -> Read -> Update -> Delete flow."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         # CREATE
         create_response = client.post(
@@ -475,58 +572,61 @@ class TestPortfolioCRUDFlow:
             json={
                 "name": "Lifecycle Test",
                 "currency": "EUR",
-                "user_id": user.id,
-            }
+            },
+            headers=headers,
         )
         assert create_response.status_code == 201
         portfolio_id = create_response.json()["id"]
 
         # READ
-        read_response = client.get(f"/portfolios/{portfolio_id}")
+        read_response = client.get(f"/portfolios/{portfolio_id}", headers=headers)
         assert read_response.status_code == 200
         assert read_response.json()["name"] == "Lifecycle Test"
 
         # UPDATE
         update_response = client.patch(
             f"/portfolios/{portfolio_id}",
-            json={"name": "Updated Lifecycle Test", "currency": "USD"}
+            json={"name": "Updated Lifecycle Test", "currency": "USD"},
+            headers=headers,
         )
         assert update_response.status_code == 200
         assert update_response.json()["name"] == "Updated Lifecycle Test"
         assert update_response.json()["currency"] == "USD"
 
         # Verify update persisted
-        verify_response = client.get(f"/portfolios/{portfolio_id}")
+        verify_response = client.get(f"/portfolios/{portfolio_id}", headers=headers)
         assert verify_response.json()["name"] == "Updated Lifecycle Test"
 
         # DELETE
-        delete_response = client.delete(f"/portfolios/{portfolio_id}")
+        delete_response = client.delete(f"/portfolios/{portfolio_id}", headers=headers)
         assert delete_response.status_code == 204
 
         # Verify deleted
-        final_response = client.get(f"/portfolios/{portfolio_id}")
+        final_response = client.get(f"/portfolios/{portfolio_id}", headers=headers)
         assert final_response.status_code == 404
 
     def test_list_reflects_crud_operations(self, client: TestClient, test_db: Session):
         """List endpoint should reflect all CRUD operations."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
 
         # Initially empty
-        response = client.get("/portfolios/", params={"user_id": user.id})
+        response = client.get("/portfolios/", headers=headers)
         assert response.json()["pagination"]["total"] == 0
 
         # Create
         create_response = client.post(
             "/portfolios/",
-            json={"name": "Test", "currency": "EUR", "user_id": user.id}
+            json={"name": "Test", "currency": "EUR"},
+            headers=headers,
         )
         portfolio_id = create_response.json()["id"]
 
-        response = client.get("/portfolios/", params={"user_id": user.id})
+        response = client.get("/portfolios/", headers=headers)
         assert response.json()["pagination"]["total"] == 1
 
         # Delete
-        client.delete(f"/portfolios/{portfolio_id}")
+        client.delete(f"/portfolios/{portfolio_id}", headers=headers)
 
-        response = client.get("/portfolios/", params={"user_id": user.id})
+        response = client.get("/portfolios/", headers=headers)
         assert response.json()["pagination"]["total"] == 0

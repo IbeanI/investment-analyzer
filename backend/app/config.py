@@ -98,6 +98,95 @@ class Settings(BaseSettings):
     app_name: str = "Investment Portfolio Analyzer"
     debug: bool = False
 
+    # =========================================================================
+    # JWT AUTHENTICATION
+    # =========================================================================
+    jwt_secret_key: str | None = Field(
+        default=None,
+        min_length=32,
+        description="Secret key for JWT signing (min 32 chars, required in production)"
+    )
+    jwt_algorithm: str = Field(
+        default="HS256",
+        description="Algorithm for JWT signing"
+    )
+    jwt_access_token_expire_minutes: int = Field(
+        default=15,
+        ge=1,
+        le=60,
+        description="Access token expiration in minutes"
+    )
+    jwt_refresh_token_expire_days: int = Field(
+        default=30,
+        ge=1,
+        le=90,
+        description="Refresh token expiration in days"
+    )
+
+    # =========================================================================
+    # GOOGLE OAUTH
+    # =========================================================================
+    google_client_id: str | None = Field(
+        default=None,
+        description="Google OAuth2 client ID"
+    )
+    google_client_secret: str | None = Field(
+        default=None,
+        description="Google OAuth2 client secret"
+    )
+    google_redirect_uri: str = Field(
+        default="http://localhost:8000/auth/google/callback",
+        description="Google OAuth2 redirect URI"
+    )
+
+    # =========================================================================
+    # EMAIL / SMTP
+    # =========================================================================
+    smtp_host: str | None = Field(
+        default=None,
+        description="SMTP server host"
+    )
+    smtp_port: int = Field(
+        default=587,
+        description="SMTP server port"
+    )
+    smtp_user: str | None = Field(
+        default=None,
+        description="SMTP username"
+    )
+    smtp_password: str | None = Field(
+        default=None,
+        description="SMTP password"
+    )
+    smtp_from_email: str | None = Field(
+        default=None,
+        description="Email address for sending emails"
+    )
+    smtp_from_name: str = Field(
+        default="Investment Portfolio Analyzer",
+        description="Display name for sent emails"
+    )
+    email_verification_expire_hours: int = Field(
+        default=24,
+        ge=1,
+        le=168,
+        description="Email verification token expiration in hours"
+    )
+    password_reset_expire_hours: int = Field(
+        default=1,
+        ge=1,
+        le=24,
+        description="Password reset token expiration in hours"
+    )
+
+    # =========================================================================
+    # FRONTEND
+    # =========================================================================
+    frontend_url: str = Field(
+        default="http://localhost:3000",
+        description="Frontend URL for email links"
+    )
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE) if _ENV_FILE.exists() else None,
         env_file_encoding="utf-8",
@@ -120,6 +209,9 @@ class Settings(BaseSettings):
             if self.database_url is None:
                 # Provide in-memory SQLite for tests only
                 object.__setattr__(self, "database_url", "sqlite:///:memory:")
+            # Provide test JWT secret if not set
+            if self.jwt_secret_key is None:
+                object.__setattr__(self, "jwt_secret_key", "test-secret-key-for-testing-only-32chars")
             return self
 
         # Development and production require DATABASE_URL
@@ -139,6 +231,12 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "Production environment requires PostgreSQL. "
                     f"DATABASE_URL must start with 'postgresql://', got: {self.database_url[:20]}..."
+                )
+            # Production: JWT secret key is required
+            if self.jwt_secret_key is None:
+                raise ValueError(
+                    "JWT_SECRET_KEY is required in production environment. "
+                    "Set JWT_SECRET_KEY to a secure random string (minimum 32 characters)."
                 )
         elif self.environment == "development":
             # Development: warn if using SQLite
@@ -168,6 +266,24 @@ class Settings(BaseSettings):
     def is_test(self) -> bool:
         """Check if running in test environment."""
         return self.environment == "test"
+
+    @property
+    def is_email_configured(self) -> bool:
+        """Check if email/SMTP is properly configured."""
+        return all([
+            self.smtp_host,
+            self.smtp_user,
+            self.smtp_password,
+            self.smtp_from_email,
+        ])
+
+    @property
+    def is_google_oauth_configured(self) -> bool:
+        """Check if Google OAuth is properly configured."""
+        return all([
+            self.google_client_id,
+            self.google_client_secret,
+        ])
 
 
 # Create single instance

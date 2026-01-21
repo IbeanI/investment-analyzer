@@ -100,13 +100,31 @@ def client(test_db: Session) -> TestClient:
 # FACTORY FUNCTIONS
 # =============================================================================
 
-def seed_user(db: Session, email: str = "test@example.com") -> User:
-    """Create a test user."""
-    user = User(email=email, hashed_password="hashed")
+def seed_user(
+        db: Session,
+        email: str = "test@example.com",
+        is_email_verified: bool = True,
+        is_active: bool = True,
+) -> User:
+    """Create a test user with email verified by default."""
+    user = User(
+        email=email,
+        hashed_password="hashed",
+        is_email_verified=is_email_verified,
+        is_active=is_active,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_auth_headers(user: User) -> dict[str, str]:
+    """Get authorization headers with JWT token for a user."""
+    from app.services.auth.jwt_handler import JWTHandler
+    jwt_handler = JWTHandler()
+    token = jwt_handler.create_access_token(user_id=user.id, email=user.email)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def seed_portfolio(
@@ -185,6 +203,7 @@ class TestCreateTransaction:
     ):
         """Should create transaction linking to existing asset."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         asset = seed_asset(test_db, "AAPL", "NASDAQ", "USD")
 
@@ -199,7 +218,8 @@ class TestCreateTransaction:
                 "quantity": "50",
                 "price_per_share": "180.50",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
@@ -220,6 +240,7 @@ class TestCreateTransaction:
     ):
         """Should normalize ticker to uppercase."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         seed_asset(test_db, "MSFT", "NASDAQ", "USD")
 
@@ -234,15 +255,19 @@ class TestCreateTransaction:
                 "quantity": "10",
                 "price_per_share": "400",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
         # Asset should be found despite lowercase input
         assert response.json()["asset"]["ticker"] == "MSFT"
 
-    def test_create_transaction_portfolio_not_found(self, client: TestClient):
+    def test_create_transaction_portfolio_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 if portfolio doesn't exist."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.post(
             "/transactions/",
             json={
@@ -254,17 +279,18 @@ class TestCreateTransaction:
                 "quantity": "10",
                 "price_per_share": "180",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 404
-        assert "portfolio" in response.json()["message"].lower()
 
     def test_create_transaction_validation_quantity(
             self, client: TestClient, test_db: Session
     ):
         """Should reject zero or negative quantity."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
         response = client.post(
@@ -278,7 +304,8 @@ class TestCreateTransaction:
                 "quantity": "0",  # Invalid
                 "price_per_share": "180",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -288,6 +315,7 @@ class TestCreateTransaction:
     ):
         """Should reject transaction with future date."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
         response = client.post(
@@ -301,7 +329,8 @@ class TestCreateTransaction:
                 "quantity": "10",
                 "price_per_share": "180",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -309,6 +338,7 @@ class TestCreateTransaction:
     def test_create_sell_transaction(self, client: TestClient, test_db: Session):
         """Should create SELL transaction."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         seed_asset(test_db, "GOOGL", "NASDAQ", "USD")
 
@@ -323,7 +353,8 @@ class TestCreateTransaction:
                 "quantity": "5",
                 "price_per_share": "175",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
@@ -332,6 +363,7 @@ class TestCreateTransaction:
     def test_create_transaction_with_fee(self, client: TestClient, test_db: Session):
         """Should create transaction with fee."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         seed_asset(test_db, "NVDA", "NASDAQ", "USD")
 
@@ -348,11 +380,33 @@ class TestCreateTransaction:
                 "currency": "USD",
                 "fee": "9.99",
                 "fee_currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 201
         assert Decimal(response.json()["fee"]) == Decimal("9.99")
+
+    def test_create_transaction_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user)
+
+        response = client.post(
+            "/transactions/",
+            json={
+                "portfolio_id": portfolio.id,
+                "ticker": "AAPL",
+                "exchange": "NASDAQ",
+                "transaction_type": "BUY",
+                "date": "2024-06-15T10:00:00Z",
+                "quantity": "10",
+                "price_per_share": "180",
+                "currency": "USD",
+            },
+        )
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -362,9 +416,12 @@ class TestCreateTransaction:
 class TestListTransactions:
     """Tests for GET /transactions/ endpoint."""
 
-    def test_list_transactions_empty(self, client: TestClient):
+    def test_list_transactions_empty(self, client: TestClient, test_db: Session):
         """Should return empty list with pagination."""
-        response = client.get("/transactions/")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/transactions/", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -377,12 +434,13 @@ class TestListTransactions:
     ):
         """Should return list of transactions with assets."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
         seed_transaction(test_db, portfolio, asset)
         seed_transaction(test_db, portfolio, asset, TransactionType.SELL)
 
-        response = client.get("/transactions/")
+        response = client.get("/transactions/", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -400,6 +458,7 @@ class TestListTransactions:
     ):
         """Should filter by portfolio_id."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio1 = seed_portfolio(test_db, user, "P1")
         portfolio2 = seed_portfolio(test_db, user, "P2")
         asset = seed_asset(test_db)
@@ -409,7 +468,8 @@ class TestListTransactions:
 
         response = client.get(
             "/transactions/",
-            params={"portfolio_id": portfolio1.id}
+            params={"portfolio_id": portfolio1.id},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -423,6 +483,7 @@ class TestListTransactions:
     ):
         """Should filter by transaction_type."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
 
@@ -431,7 +492,8 @@ class TestListTransactions:
 
         response = client.get(
             "/transactions/",
-            params={"transaction_type": "BUY"}
+            params={"transaction_type": "BUY"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -445,6 +507,7 @@ class TestListTransactions:
     ):
         """Should filter by ticker."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset1 = seed_asset(test_db, "AAPL", "NASDAQ", "USD")
         asset2 = seed_asset(test_db, "MSFT", "NASDAQ", "USD")
@@ -452,7 +515,7 @@ class TestListTransactions:
         seed_transaction(test_db, portfolio, asset1)
         seed_transaction(test_db, portfolio, asset2)
 
-        response = client.get("/transactions/", params={"ticker": "AAPL"})
+        response = client.get("/transactions/", params={"ticker": "AAPL"}, headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -463,6 +526,7 @@ class TestListTransactions:
     def test_list_transactions_pagination(self, client: TestClient, test_db: Session):
         """Should paginate results correctly."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
 
@@ -471,7 +535,7 @@ class TestListTransactions:
             seed_transaction(test_db, portfolio, asset)
 
         # First page
-        response = client.get("/transactions/", params={"skip": 0, "limit": 10})
+        response = client.get("/transactions/", params={"skip": 0, "limit": 10}, headers=headers)
         data = response.json()
 
         assert len(data["items"]) == 10
@@ -480,12 +544,17 @@ class TestListTransactions:
         assert data["pagination"]["has_previous"] is False
 
         # Second page
-        response = client.get("/transactions/", params={"skip": 10, "limit": 10})
+        response = client.get("/transactions/", params={"skip": 10, "limit": 10}, headers=headers)
         data = response.json()
 
         assert len(data["items"]) == 5
         assert data["pagination"]["has_next"] is False
         assert data["pagination"]["has_previous"] is True
+
+    def test_list_transactions_requires_auth(self, client: TestClient):
+        """Should return 401 if not authenticated."""
+        response = client.get("/transactions/")
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -498,11 +567,12 @@ class TestGetTransaction:
     def test_get_transaction_success(self, client: TestClient, test_db: Session):
         """Should return transaction with nested asset."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db, "TSLA", "NASDAQ", "USD")
         txn = seed_transaction(test_db, portfolio, asset)
 
-        response = client.get(f"/transactions/{txn.id}")
+        response = client.get(f"/transactions/{txn.id}", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -511,11 +581,25 @@ class TestGetTransaction:
         assert data["portfolio_id"] == portfolio.id
         assert data["asset"]["ticker"] == "TSLA"
 
-    def test_get_transaction_not_found(self, client: TestClient):
+    def test_get_transaction_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 for non-existent transaction."""
-        response = client.get("/transactions/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/transactions/99999", headers=headers)
 
         assert response.status_code == 404
+
+    def test_get_transaction_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user)
+        asset = seed_asset(test_db)
+        txn = seed_transaction(test_db, portfolio, asset)
+
+        response = client.get(f"/transactions/{txn.id}")
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -528,13 +612,15 @@ class TestUpdateTransaction:
     def test_update_transaction_quantity(self, client: TestClient, test_db: Session):
         """Should update transaction quantity."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
         txn = seed_transaction(test_db, portfolio, asset, quantity=Decimal("10"))
 
         response = client.patch(
             f"/transactions/{txn.id}",
-            json={"quantity": "20"}
+            json={"quantity": "20"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -543,26 +629,46 @@ class TestUpdateTransaction:
     def test_update_transaction_price(self, client: TestClient, test_db: Session):
         """Should update transaction price."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
         txn = seed_transaction(test_db, portfolio, asset, price=Decimal("100"))
 
         response = client.patch(
             f"/transactions/{txn.id}",
-            json={"price_per_share": "150.50"}
+            json={"price_per_share": "150.50"},
+            headers=headers,
         )
 
         assert response.status_code == 200
         assert Decimal(response.json()["price_per_share"]) == Decimal("150.50")
 
-    def test_update_transaction_not_found(self, client: TestClient):
+    def test_update_transaction_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 for non-existent transaction."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.patch(
             "/transactions/99999",
-            json={"quantity": "10"}
+            json={"quantity": "10"},
+            headers=headers,
         )
 
         assert response.status_code == 404
+
+    def test_update_transaction_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user)
+        asset = seed_asset(test_db)
+        txn = seed_transaction(test_db, portfolio, asset)
+
+        response = client.patch(
+            f"/transactions/{txn.id}",
+            json={"quantity": "20"},
+        )
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -575,23 +681,38 @@ class TestDeleteTransaction:
     def test_delete_transaction_success(self, client: TestClient, test_db: Session):
         """Should delete transaction and return 204."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
+        portfolio = seed_portfolio(test_db, user)
+        asset = seed_asset(test_db)
+        txn = seed_transaction(test_db, portfolio, asset)
+
+        response = client.delete(f"/transactions/{txn.id}", headers=headers)
+
+        assert response.status_code == 204
+
+        # Verify deleted
+        get_response = client.get(f"/transactions/{txn.id}", headers=headers)
+        assert get_response.status_code == 404
+
+    def test_delete_transaction_not_found(self, client: TestClient, test_db: Session):
+        """Should return 404 for non-existent transaction."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.delete("/transactions/99999", headers=headers)
+
+        assert response.status_code == 404
+
+    def test_delete_transaction_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
         txn = seed_transaction(test_db, portfolio, asset)
 
         response = client.delete(f"/transactions/{txn.id}")
 
-        assert response.status_code == 204
-
-        # Verify deleted
-        get_response = client.get(f"/transactions/{txn.id}")
-        assert get_response.status_code == 404
-
-    def test_delete_transaction_not_found(self, client: TestClient):
-        """Should return 404 for non-existent transaction."""
-        response = client.delete("/transactions/99999")
-
-        assert response.status_code == 404
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -604,13 +725,14 @@ class TestGetPortfolioTransactions:
     def test_get_portfolio_transactions(self, client: TestClient, test_db: Session):
         """Should return transactions for specific portfolio."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db)
 
         seed_transaction(test_db, portfolio, asset)
         seed_transaction(test_db, portfolio, asset)
 
-        response = client.get(f"/transactions/portfolio/{portfolio.id}")
+        response = client.get(f"/transactions/portfolio/{portfolio.id}", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -618,11 +740,23 @@ class TestGetPortfolioTransactions:
         assert len(data["items"]) == 2
         assert data["pagination"]["total"] == 2
 
-    def test_get_portfolio_transactions_not_found(self, client: TestClient):
+    def test_get_portfolio_transactions_not_found(self, client: TestClient, test_db: Session):
         """Should return 404 for non-existent portfolio."""
-        response = client.get("/transactions/portfolio/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/transactions/portfolio/99999", headers=headers)
 
         assert response.status_code == 404
+
+    def test_get_portfolio_transactions_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user)
+
+        response = client.get(f"/transactions/portfolio/{portfolio.id}")
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -635,6 +769,7 @@ class TestTransactionCRUDFlow:
     def test_full_crud_lifecycle(self, client: TestClient, test_db: Session):
         """Test complete Create -> Read -> Update -> Delete flow."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         seed_asset(test_db, "META", "NASDAQ", "USD")
 
@@ -650,28 +785,30 @@ class TestTransactionCRUDFlow:
                 "quantity": "25",
                 "price_per_share": "500",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
         assert create_response.status_code == 201
         txn_id = create_response.json()["id"]
 
         # READ
-        read_response = client.get(f"/transactions/{txn_id}")
+        read_response = client.get(f"/transactions/{txn_id}", headers=headers)
         assert read_response.status_code == 200
         assert Decimal(read_response.json()["quantity"]) == Decimal("25")
 
         # UPDATE
         update_response = client.patch(
             f"/transactions/{txn_id}",
-            json={"quantity": "30", "price_per_share": "495"}
+            json={"quantity": "30", "price_per_share": "495"},
+            headers=headers,
         )
         assert update_response.status_code == 200
         assert Decimal(update_response.json()["quantity"]) == Decimal("30")
 
         # DELETE
-        delete_response = client.delete(f"/transactions/{txn_id}")
+        delete_response = client.delete(f"/transactions/{txn_id}", headers=headers)
         assert delete_response.status_code == 204
 
         # Verify deleted
-        final_response = client.get(f"/transactions/{txn_id}")
+        final_response = client.get(f"/transactions/{txn_id}", headers=headers)
         assert final_response.status_code == 404

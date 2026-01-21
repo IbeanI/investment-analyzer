@@ -17,8 +17,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Portfolio
+from app.models import Portfolio, User
 from app.services.constants import MAX_HISTORY_DAYS
+from app.dependencies import get_portfolio_with_owner_check
 from app.schemas.valuation import (
     CostBasisDetail,
     CurrentValueDetail,
@@ -41,23 +42,6 @@ router = APIRouter(
     prefix="/portfolios",
     tags=["Valuation"],
 )
-
-
-# =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
-    """Fetch a portfolio by ID or raise 404 if not found."""
-    portfolio = db.get(Portfolio, portfolio_id)
-
-    if portfolio is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolio with id {portfolio_id} not found"
-        )
-
-    return portfolio
 
 
 # =============================================================================
@@ -158,7 +142,7 @@ def _map_history_point(point) -> ValuationHistoryPoint:
     response_description="Complete portfolio valuation with holdings breakdown",
 )
 def get_portfolio_valuation(
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         valuation_date: date | None = Query(
             default=None,
             description="Valuation date (default: today)",
@@ -183,9 +167,10 @@ def get_portfolio_valuation(
 
     **Note:** If price or FX data is missing for any holding,
     `has_complete_data` will be `false` and affected totals will be `null`.
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists
-    get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     # Get valuation from service
     # Domain exceptions (PortfolioNotFoundError) propagate to global handlers
@@ -228,7 +213,7 @@ def get_portfolio_valuation(
     response_description="Time series of portfolio valuations"
 )
 def get_portfolio_valuation_history(
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         from_date: date = Query(
             ...,
             description="Start date for history"
@@ -260,7 +245,11 @@ def get_portfolio_valuation_history(
 
     **Performance:** Uses batch data fetching and rolling state calculation
     for O(D + T) complexity where D = dates, T = transactions.
+
+    Raises **403** if you don't own the portfolio.
     """
+    portfolio_id = portfolio.id
+
     # Validate date range
     if from_date > to_date:
         raise HTTPException(
@@ -276,9 +265,6 @@ def get_portfolio_valuation_history(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Date range of {date_range_days} days exceeds maximum of {MAX_HISTORY_DAYS} days ({max_years} years)"
         )
-
-    # Verify portfolio exists
-    get_portfolio_or_404(db, portfolio_id)
 
     # Get history from service
     # Domain exceptions (PortfolioNotFoundError, InvalidIntervalError) propagate to global handlers

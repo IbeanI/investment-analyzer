@@ -19,10 +19,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Portfolio, SyncStatus
+from app.models import Portfolio, SyncStatus, User
 from app.services.market_data import MarketDataSyncService, SyncResult
 from app.services.analytics.service import AnalyticsService
-from app.dependencies import get_sync_service, get_analytics_service
+from app.dependencies import get_sync_service, get_analytics_service, get_portfolio_with_owner_check
 from app.middleware.rate_limit import limiter, RATE_LIMIT_SYNC, RATE_LIMIT_DEFAULT
 
 logger = logging.getLogger(__name__)
@@ -78,21 +78,6 @@ class SyncStatusResponse(BaseModel):
 
 
 # =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
-    """Get portfolio or raise 404."""
-    portfolio = db.get(Portfolio, portfolio_id)
-    if not portfolio:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolio {portfolio_id} not found"
-        )
-    return portfolio
-
-
-# =============================================================================
 # ENDPOINTS
 # =============================================================================
 
@@ -105,7 +90,7 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
 @limiter.limit(RATE_LIMIT_SYNC)
 def sync_portfolio(
         request: Request,  # Required for rate limiting
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         sync_request: SyncRequest = SyncRequest(),
         db: Session = Depends(get_db),
         service: MarketDataSyncService = Depends(get_sync_service),
@@ -124,9 +109,10 @@ def sync_portfolio(
     **Note:** This may take 10-30 seconds depending on the number of assets.
 
     Set `force_refresh: true` to re-fetch all data even if recent data exists.
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists
-    get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     logger.info(f"Starting sync for portfolio {portfolio_id} (force={sync_request.force_refresh})")
 
@@ -171,7 +157,7 @@ def sync_portfolio(
 @limiter.limit(RATE_LIMIT_DEFAULT)
 def get_sync_status(
         request: Request,  # Required for rate limiting
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         db: Session = Depends(get_db),
         service: MarketDataSyncService = Depends(get_sync_service),
 ) -> SyncStatusResponse:
@@ -182,9 +168,10 @@ def get_sync_status(
     - **status**: Current sync state (NEVER, COMPLETED, etc.)
     - **is_stale**: Whether data needs to be refreshed
     - **staleness_reason**: Why data is considered stale (if applicable)
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists
-    get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     # Get sync status from database
     sync_status = db.scalar(

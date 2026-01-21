@@ -296,11 +296,17 @@ def create_user(
         db: Session,
         email: str = "test@example.com",
         hashed_password: str = "hashed_password",
+        is_email_verified: bool = True,
+        is_active: bool = True,
+        full_name: str | None = None,
 ) -> User:
     """Factory function for creating User entities in the database."""
     user = User(
         email=email,
         hashed_password=hashed_password,
+        is_email_verified=is_email_verified,
+        is_active=is_active,
+        full_name=full_name,
     )
     db.add(user)
     db.commit()
@@ -346,3 +352,40 @@ def sample_user(db: Session) -> User:
 def sample_portfolio(db: Session, sample_user: User) -> Portfolio:
     """Provide a sample Portfolio for tests."""
     return create_portfolio(db, sample_user)
+
+
+# =============================================================================
+# AUTHENTICATION FIXTURES
+# =============================================================================
+
+@pytest.fixture
+def auth_headers(sample_user: User) -> dict[str, str]:
+    """
+    Provide authentication headers with a valid JWT token.
+
+    This fixture creates a JWT token for the sample_user and returns
+    headers that can be used with the TestClient.
+    """
+    from app.services.auth.jwt_handler import JWTHandler
+
+    jwt_handler = JWTHandler()
+    token = jwt_handler.create_access_token(user_id=sample_user.id, email=sample_user.email)
+    return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def auth_headers_factory(db: Session):
+    """
+    Factory fixture that creates auth headers for any user.
+
+    Usage:
+        headers = auth_headers_factory(user)
+    """
+    from app.services.auth.jwt_handler import JWTHandler
+
+    def _create_headers(user: User) -> dict[str, str]:
+        jwt_handler = JWTHandler()
+        token = jwt_handler.create_access_token(user_id=user.id, email=user.email)
+        return {"Authorization": f"Bearer {token}"}
+
+    return _create_headers

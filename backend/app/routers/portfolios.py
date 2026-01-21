@@ -5,14 +5,12 @@ Portfolio management endpoints.
 Provides CRUD operations for user portfolios.
 Each portfolio belongs to a single user and contains transactions.
 
-Note: Currently there's no authentication, so user_id must be provided.
-When auth is implemented (Phase 5), endpoints will automatically use
-the authenticated user's ID from the JWT token.
+All endpoints require authentication. Users can only access their own portfolios.
 """
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from pydantic import AfterValidator
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -27,6 +25,7 @@ from app.schemas.portfolios import (
     PortfolioListResponse,
 )
 from app.schemas.validators import validate_currency_query
+from app.dependencies import get_current_user, get_portfolio_with_owner_check
 
 # Validated query parameter type
 CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
@@ -42,42 +41,6 @@ router = APIRouter(
 
 
 # =============================================================================
-# HELPER FUNCTIONS
-# =============================================================================
-
-def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
-    """
-    Fetch a portfolio by ID or raise 404 if not found.
-    """
-    portfolio = db.get(Portfolio, portfolio_id)
-
-    if portfolio is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolio with id {portfolio_id} not found"
-        )
-
-    return portfolio
-
-
-def get_user_or_404(db: Session, user_id: int) -> User:
-    """
-    Fetch a user by ID or raise 404 if not found.
-
-    Used to validate that user exists before creating a portfolio.
-    """
-    user = db.get(User, user_id)
-
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"User with id {user_id} not found"
-        )
-
-    return user
-
-
-# =============================================================================
 # ENDPOINTS
 # =============================================================================
 
@@ -90,22 +53,23 @@ def get_user_or_404(db: Session, user_id: int) -> User:
 )
 def create_portfolio(
         portfolio: PortfolioCreate,
-        db: Session = Depends(get_db)
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
 ) -> Portfolio:
     """
-    Create a new portfolio for a user.
+    Create a new portfolio for the authenticated user.
 
     - **name**: Display name for the portfolio
     - **currency**: Base currency for valuations (EUR, USD, etc.)
-    - **user_id**: Owner of the portfolio (will be automatic after auth)
 
     A user can have multiple portfolios (e.g., "Retirement", "Trading").
     """
-    # Verify the user exists
-    get_user_or_404(db, portfolio.user_id)
-
-    # Create the portfolio
-    db_portfolio = Portfolio(**portfolio.model_dump())
+    # Create the portfolio with user_id from JWT
+    db_portfolio = Portfolio(
+        name=portfolio.name,
+        currency=portfolio.currency,
+        user_id=current_user.id,
+    )
 
     db.add(db_portfolio)
     db.commit()
@@ -121,12 +85,9 @@ def create_portfolio(
     response_description="List of portfolios matching the filters"
 )
 def list_portfolios(
-        db: Session = Depends(get_db),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
         # Filters
-        user_id: int | None = Query(
-            default=None,
-            description="Filter by user ID (required until auth is implemented)"
-        ),
         currency: CurrencyQuery = Query(
             default=None,
             description="Filter by base currency (ISO 4217, e.g., EUR, USD)"
@@ -141,24 +102,18 @@ def list_portfolios(
         limit: int = Query(default=100, ge=1, le=1000, description="Maximum records to return"),
 ) -> PortfolioListResponse:
     """
-    Retrieve a list of portfolios with optional filtering.
-
-    **Important:** Until authentication is implemented, you should filter
-    by user_id to get a specific user's portfolios.
+    Retrieve a list of the authenticated user's portfolios.
 
     Supports filtering by:
-    - **user_id**: Get portfolios for a specific user
     - **currency**: Filter by base currency
     - **search**: Partial match on portfolio name
 
     Supports pagination with **skip** and **limit**.
     """
-    query = select(Portfolio)
+    # Only show the current user's portfolios
+    query = select(Portfolio).where(Portfolio.user_id == current_user.id)
 
     # Apply filters
-    if user_id is not None:
-        query = query.where(Portfolio.user_id == user_id)
-
     if currency is not None:
         query = query.where(Portfolio.currency == currency)  # Already normalized by validator
 
@@ -189,15 +144,15 @@ def list_portfolios(
     response_description="The requested portfolio"
 )
 def get_portfolio(
-        portfolio_id: int,
-        db: Session = Depends(get_db)
+        portfolio: Annotated[Portfolio, Depends(get_portfolio_with_owner_check)],
 ) -> Portfolio:
     """
     Retrieve a single portfolio by its ID.
 
     Raises **404** if the portfolio does not exist.
+    Raises **403** if you don't own the portfolio.
     """
-    return get_portfolio_or_404(db, portfolio_id)
+    return portfolio
 
 
 @router.patch(
@@ -207,9 +162,9 @@ def get_portfolio(
     response_description="The updated portfolio"
 )
 def update_portfolio(
-        portfolio_id: int,
         portfolio_update: PortfolioUpdate,
-        db: Session = Depends(get_db)
+        portfolio: Annotated[Portfolio, Depends(get_portfolio_with_owner_check)],
+        db: Annotated[Session, Depends(get_db)],
 ) -> Portfolio:
     """
     Update an existing portfolio (partial update).
@@ -223,19 +178,18 @@ def update_portfolio(
     value is calculated. Historical transactions are not converted.
 
     Raises **404** if the portfolio does not exist.
+    Raises **403** if you don't own the portfolio.
     """
-    db_portfolio = get_portfolio_or_404(db, portfolio_id)
-
     update_data = portfolio_update.model_dump(exclude_unset=True)
 
     # Apply updates
     for field, value in update_data.items():
-        setattr(db_portfolio, field, value)
+        setattr(portfolio, field, value)
 
     db.commit()
-    db.refresh(db_portfolio)
+    db.refresh(portfolio)
 
-    return db_portfolio
+    return portfolio
 
 
 @router.delete(
@@ -244,8 +198,8 @@ def update_portfolio(
     summary="Delete a portfolio",
 )
 def delete_portfolio(
-        portfolio_id: int,
-        db: Session = Depends(get_db)
+        portfolio: Annotated[Portfolio, Depends(get_portfolio_with_owner_check)],
+        db: Annotated[Session, Depends(get_db)],
 ) -> None:
     """
     Delete a portfolio.
@@ -254,13 +208,10 @@ def delete_portfolio(
     This action cannot be undone.
 
     Raises **404** if the portfolio does not exist.
+    Raises **403** if you don't own the portfolio.
     """
-    db_portfolio = get_portfolio_or_404(db, portfolio_id)
-
     # Hard delete — portfolio and its transactions are removed
-    # Note: Transactions will be cascade deleted if FK is set up correctly
-    # If not, you may need to delete transactions first
-    db.delete(db_portfolio)
+    db.delete(portfolio)
     db.commit()
 
     return None

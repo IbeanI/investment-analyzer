@@ -12,9 +12,8 @@ Validation layers:
 - Field validators: normalization (uppercase, trim)
 - Router: existence checks, ownership verification
 
-Note: Currently user_id is provided in the request body.
-When authentication is implemented (Phase 5), user_id will be
-extracted from the JWT token instead.
+Note: user_id is extracted from the JWT token by the router.
+Clients do not need to provide user_id when creating portfolios.
 """
 
 from datetime import datetime
@@ -75,16 +74,10 @@ class PortfolioCreate(PortfolioBase):
     """
     Schema for creating a new portfolio.
 
-    Note: user_id is required now but will be removed when
-    authentication is implemented — it will come from the JWT token.
+    Note: user_id is extracted from the JWT token and set by the router.
+    Clients only need to provide name and currency.
     """
-
-    # TODO: Remove when auth is implemented (Phase 5)
-    user_id: int = Field(
-        ...,
-        gt=0,
-        description="ID of the user who owns this portfolio"
-    )
+    pass  # Inherits name and currency from PortfolioBase
 
 
 # =============================================================================

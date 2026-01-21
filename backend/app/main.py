@@ -30,6 +30,7 @@ from app.routers import (
     analytics_router,
 )
 from app.routers.portfolio_settings import router as portfolio_settings_router
+from app.routers.auth import router as auth_router
 from app.schemas.errors import ErrorDetail, ValidationErrorDetail
 from app.services.exceptions import (
     ServiceError,
@@ -46,6 +47,19 @@ from app.services.exceptions import (
     FXConversionError,
     BenchmarkNotSyncedError,
     CircuitBreakerOpen,
+    # Authentication exceptions
+    AuthenticationError,
+    InvalidCredentialsError,
+    UserExistsError,
+    EmailNotVerifiedError,
+    TokenExpiredError,
+    TokenRevokedError,
+    OAuthError,
+    UserNotFoundError,
+    UserInactiveError,
+    # Authorization exceptions
+    AuthorizationError,
+    PermissionDeniedError,
 )
 from app.utils import setup_logging
 
@@ -305,6 +319,162 @@ async def benchmark_not_synced_handler(
     )
 
 
+# =============================================================================
+# AUTHENTICATION EXCEPTION HANDLERS
+# =============================================================================
+
+
+@app.exception_handler(InvalidCredentialsError)
+async def invalid_credentials_handler(
+    request: Request, exc: InvalidCredentialsError
+) -> JSONResponse:
+    """Handle invalid credentials errors (401)."""
+    logger.warning(f"Invalid credentials attempt")
+    return JSONResponse(
+        status_code=401,
+        content=ErrorDetail(
+            error="InvalidCredentialsError",
+            message=str(exc),
+            details=None,
+        ).model_dump(),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+@app.exception_handler(UserExistsError)
+async def user_exists_handler(
+    request: Request, exc: UserExistsError
+) -> JSONResponse:
+    """Handle user already exists errors (409)."""
+    logger.warning(f"Registration attempt with existing email: {exc.email}")
+    return JSONResponse(
+        status_code=409,
+        content=ErrorDetail(
+            error="UserExistsError",
+            message=str(exc),
+            details={"email": exc.email},
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(EmailNotVerifiedError)
+async def email_not_verified_handler(
+    request: Request, exc: EmailNotVerifiedError
+) -> JSONResponse:
+    """Handle email not verified errors (403)."""
+    logger.warning(f"Login attempt with unverified email: {exc.email}")
+    return JSONResponse(
+        status_code=403,
+        content=ErrorDetail(
+            error="EmailNotVerifiedError",
+            message=str(exc),
+            details={"email": exc.email},
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(TokenExpiredError)
+async def token_expired_handler(
+    request: Request, exc: TokenExpiredError
+) -> JSONResponse:
+    """Handle token expired errors (401)."""
+    logger.warning(f"Expired token used: {exc.token_type}")
+    return JSONResponse(
+        status_code=401,
+        content=ErrorDetail(
+            error="TokenExpiredError",
+            message=str(exc),
+            details={"token_type": exc.token_type},
+        ).model_dump(),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+@app.exception_handler(TokenRevokedError)
+async def token_revoked_handler(
+    request: Request, exc: TokenRevokedError
+) -> JSONResponse:
+    """Handle token revoked errors (401)."""
+    logger.warning("Revoked token used (possible replay attack)")
+    return JSONResponse(
+        status_code=401,
+        content=ErrorDetail(
+            error="TokenRevokedError",
+            message=str(exc),
+            details=None,
+        ).model_dump(),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
+@app.exception_handler(OAuthError)
+async def oauth_error_handler(
+    request: Request, exc: OAuthError
+) -> JSONResponse:
+    """Handle OAuth errors (400)."""
+    logger.error(f"OAuth error with {exc.provider}: {exc.reason}")
+    return JSONResponse(
+        status_code=400,
+        content=ErrorDetail(
+            error="OAuthError",
+            message=str(exc),
+            details={"provider": exc.provider, "reason": exc.reason},
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(UserInactiveError)
+async def user_inactive_handler(
+    request: Request, exc: UserInactiveError
+) -> JSONResponse:
+    """Handle inactive user errors (403)."""
+    logger.warning("Login attempt by inactive user")
+    return JSONResponse(
+        status_code=403,
+        content=ErrorDetail(
+            error="UserInactiveError",
+            message=str(exc),
+            details=None,
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(PermissionDeniedError)
+async def permission_denied_handler(
+    request: Request, exc: PermissionDeniedError
+) -> JSONResponse:
+    """Handle permission denied errors (403)."""
+    logger.warning(f"Permission denied: {exc.resource_type} {exc.resource_id}")
+    return JSONResponse(
+        status_code=403,
+        content=ErrorDetail(
+            error="PermissionDeniedError",
+            message=str(exc),
+            details={
+                "resource_type": exc.resource_type,
+                "resource_id": exc.resource_id,
+            },
+        ).model_dump(),
+    )
+
+
+@app.exception_handler(AuthenticationError)
+async def authentication_error_handler(
+    request: Request, exc: AuthenticationError
+) -> JSONResponse:
+    """Handle generic authentication errors (401)."""
+    logger.warning(f"Authentication error: {exc}")
+    return JSONResponse(
+        status_code=401,
+        content=ErrorDetail(
+            error="AuthenticationError",
+            message=str(exc),
+            details=None,
+        ).model_dump(),
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
     """
@@ -371,6 +541,7 @@ async def validation_exception_handler(
 # ROUTER REGISTRATION
 # =============================================================================
 
+app.include_router(auth_router)  # /auth/*
 app.include_router(assets_router)  # /assets/*
 app.include_router(portfolios_router)  # /portfolios/*
 app.include_router(transactions_router)  # /transactions/*

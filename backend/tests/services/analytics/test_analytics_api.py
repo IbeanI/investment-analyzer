@@ -97,13 +97,31 @@ def client(test_db: Session) -> TestClient:
 # FACTORY FUNCTIONS
 # =============================================================================
 
-def seed_user(db: Session, email: str = "analytics_api_test@example.com") -> User:
+def seed_user(
+        db: Session,
+        email: str = "analytics_api_test@example.com",
+        is_email_verified: bool = True,
+        is_active: bool = True,
+) -> User:
     """Create a test user."""
-    user = User(email=email, hashed_password="hashed")
+    user = User(
+        email=email,
+        hashed_password="hashed",
+        is_email_verified=is_email_verified,
+        is_active=is_active,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_auth_headers(user: User) -> dict[str, str]:
+    """Generate auth headers for a user."""
+    from app.services.auth.jwt_handler import JWTHandler
+    jwt_handler = JWTHandler()
+    token = jwt_handler.create_access_token(user_id=user.id, email=user.email)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def seed_portfolio(
@@ -200,7 +218,7 @@ def seed_market_data(
 def seed_basic_analytics_data(
         db: Session,
         num_days: int = 15,
-) -> tuple[Portfolio, Asset, Asset]:
+) -> tuple[User, Portfolio, Asset, Asset]:
     """
     Seed data for analytics tests.
 
@@ -210,7 +228,7 @@ def seed_basic_analytics_data(
     - Benchmark asset with market data
 
     Returns:
-        Tuple of (portfolio, asset, benchmark)
+        Tuple of (user, portfolio, asset, benchmark)
     """
     user = seed_user(db)
     portfolio = seed_portfolio(db, user, currency="USD")
@@ -240,7 +258,7 @@ def seed_basic_analytics_data(
         bench_price = Decimal("100") + Decimal(str(i * 0.5))
         seed_market_data(db, benchmark, current_date, bench_price)
 
-    return portfolio, asset, benchmark
+    return user, portfolio, asset, benchmark
 
 
 # =============================================================================
@@ -255,7 +273,8 @@ class TestGetAnalyticsEndpoint:
     ):
         """Valid portfolio with data should return 200."""
         # Seed data
-        portfolio, _, _ = seed_basic_analytics_data(test_db, num_days=15)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db, num_days=15)
+        headers = get_auth_headers(user)
 
         # Act
         response = client.get(
@@ -263,7 +282,8 @@ class TestGetAnalyticsEndpoint:
             params={
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
-            }
+            },
+            headers=headers,
         )
 
         # Assert
@@ -283,11 +303,13 @@ class TestGetAnalyticsEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Analytics should include performance metrics."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-15"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -305,11 +327,13 @@ class TestGetAnalyticsEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Analytics should include risk metrics."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-15"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -328,7 +352,8 @@ class TestGetAnalyticsEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Analytics with benchmark should include benchmark metrics."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics",
@@ -336,7 +361,8 @@ class TestGetAnalyticsEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
                 "benchmark": "^SPX",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -350,13 +376,30 @@ class TestGetAnalyticsEndpoint:
         assert "alpha" in bench
         assert "correlation" in bench
 
+    def test_analytics_requires_auth(
+            self, client: TestClient, test_db: Session
+    ):
+        """Analytics endpoint should require authentication."""
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+
+        response = client.get(
+            f"/portfolios/{portfolio.id}/analytics",
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+        )
+
+        assert response.status_code == 401
+
     def test_analytics_returns_404_for_nonexistent_portfolio(
             self, client: TestClient, test_db: Session
     ):
         """Non-existent portfolio should return 404."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.get(
             "/portfolios/99999/analytics",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-31"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-31"},
+            headers=headers,
         )
 
         assert response.status_code == 404
@@ -365,14 +408,16 @@ class TestGetAnalyticsEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """from_date > to_date should return 400."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics",
             params={
                 "from_date": "2024-01-31",
                 "to_date": "2024-01-01",  # Before from_date
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 400
@@ -381,7 +426,8 @@ class TestGetAnalyticsEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Non-synced benchmark should return 400 with clear error."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics",
@@ -389,7 +435,8 @@ class TestGetAnalyticsEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
                 "benchmark": "NONEXISTENT",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 400
@@ -409,11 +456,13 @@ class TestGetPerformanceEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Performance endpoint should return 200 with valid data."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/performance",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-15"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -431,6 +480,7 @@ class TestGetPerformanceEndpoint:
     ):
         """Performance endpoint should return correct return values."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db, "MSFT", "NASDAQ", "USD")
 
@@ -450,7 +500,8 @@ class TestGetPerformanceEndpoint:
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/performance",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-31"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-31"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -474,11 +525,13 @@ class TestGetRiskEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Risk endpoint should return 200 with valid data."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/risk",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-15"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -495,11 +548,13 @@ class TestGetRiskEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Risk endpoint should return volatility and related metrics."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/risk",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-15"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -516,7 +571,8 @@ class TestGetRiskEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Risk endpoint should accept custom risk-free rate."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/risk",
@@ -524,7 +580,8 @@ class TestGetRiskEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
                 "risk_free_rate": "0.05",  # 5%
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -541,7 +598,8 @@ class TestGetBenchmarkEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Benchmark endpoint should return 200 with valid benchmark."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/benchmark",
@@ -549,7 +607,8 @@ class TestGetBenchmarkEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
                 "benchmark": "^SPX",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -566,7 +625,8 @@ class TestGetBenchmarkEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Benchmark endpoint should return beta, alpha, correlation."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/benchmark",
@@ -574,7 +634,8 @@ class TestGetBenchmarkEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
                 "benchmark": "^SPX",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -592,7 +653,8 @@ class TestGetBenchmarkEndpoint:
             self, client: TestClient, test_db: Session
     ):
         """Benchmark endpoint uses default benchmark when none specified."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db)
+        headers = get_auth_headers(user)
 
         # No benchmark param - should use default based on portfolio currency
         response = client.get(
@@ -600,7 +662,8 @@ class TestGetBenchmarkEndpoint:
             params={
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-15",
-            }
+            },
+            headers=headers,
         )
 
         # Should succeed with default benchmark (may be 400 if default not synced)
@@ -621,11 +684,13 @@ class TestPeriodInfo:
             self, client: TestClient, test_db: Session
     ):
         """Period info should include from_date, to_date, trading_days."""
-        portfolio, _, _ = seed_basic_analytics_data(test_db, num_days=15)
+        user, portfolio, _, _ = seed_basic_analytics_data(test_db, num_days=15)
+        headers = get_auth_headers(user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-15"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -651,6 +716,7 @@ class TestInsufficientDataResponses:
     ):
         """Single data point should set has_sufficient_data=False."""
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
         asset = seed_asset(test_db, "TSLA", "NASDAQ", "USD")
 
@@ -667,7 +733,8 @@ class TestInsufficientDataResponses:
 
         response = client.get(
             f"/portfolios/{portfolio.id}/analytics/performance",
-            params={"from_date": "2024-01-01", "to_date": "2024-01-01"}
+            params={"from_date": "2024-01-01", "to_date": "2024-01-01"},
+            headers=headers,
         )
 
         assert response.status_code == 200

@@ -25,13 +25,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Portfolio
+from app.models import Portfolio, User
 from app.schemas.portfolio_settings import (
     PortfolioSettingsResponse,
     PortfolioSettingsUpdate,
     PortfolioSettingsUpdateResponse,
 )
 from app.services.portfolio_settings_service import PortfolioSettingsService
+from app.dependencies import get_current_user, get_portfolio_with_owner_check
 
 logger = logging.getLogger(__name__)
 
@@ -54,31 +55,6 @@ def get_settings_service() -> PortfolioSettingsService:
     return PortfolioSettingsService()
 
 
-def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
-    """
-    Fetch a portfolio by ID or raise 404 if not found.
-
-    Args:
-        db: Database session
-        portfolio_id: Portfolio ID to fetch
-
-    Returns:
-        Portfolio if found
-
-    Raises:
-        HTTPException: 404 if portfolio not found
-    """
-    portfolio = db.get(Portfolio, portfolio_id)
-
-    if portfolio is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolio with id {portfolio_id} not found"
-        )
-
-    return portfolio
-
-
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -93,13 +69,19 @@ def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
             "description": "Settings retrieved successfully",
             "model": PortfolioSettingsResponse,
         },
+        401: {
+            "description": "Not authenticated",
+        },
+        403: {
+            "description": "Not authorized to access this portfolio",
+        },
         404: {
             "description": "Portfolio not found",
         },
     },
 )
 def get_portfolio_settings(
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         db: Session = Depends(get_db),
         service: PortfolioSettingsService = Depends(get_settings_service),
 ) -> PortfolioSettingsResponse:
@@ -115,9 +97,11 @@ def get_portfolio_settings(
 
     **Note:** Default settings use the "opt-out" model - features are enabled
     by default and users can disable them if desired.
+
+    Raises **401** if not authenticated.
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists
-    get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     logger.info(f"Getting settings for portfolio {portfolio_id}")
 
@@ -143,14 +127,20 @@ def get_portfolio_settings(
             "description": "Settings updated successfully",
             "model": PortfolioSettingsUpdateResponse,
         },
+        401: {
+            "description": "Not authenticated",
+        },
+        403: {
+            "description": "Not authorized to access this portfolio",
+        },
         404: {
             "description": "Portfolio not found",
         },
     },
 )
 def update_portfolio_settings(
-        portfolio_id: int,
         settings_update: PortfolioSettingsUpdate,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         db: Session = Depends(get_db),
         service: PortfolioSettingsService = Depends(get_settings_service),
 ) -> PortfolioSettingsUpdateResponse:
@@ -179,9 +169,11 @@ def update_portfolio_settings(
 
     **Warning:** Disabling proxy backcasting may result in incomplete
     performance metrics for assets with limited price history.
+
+    Raises **401** if not authenticated.
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists
-    get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     logger.info(
         f"Updating settings for portfolio {portfolio_id}: "

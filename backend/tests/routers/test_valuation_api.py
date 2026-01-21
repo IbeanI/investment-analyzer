@@ -106,13 +106,31 @@ def client(test_db: Session) -> TestClient:
 # FACTORY FUNCTIONS
 # =============================================================================
 
-def seed_user(db: Session, email: str = "api_test@example.com") -> User:
-    """Create a test user."""
-    user = User(email=email, hashed_password="hashed")
+def seed_user(
+        db: Session,
+        email: str = "api_test@example.com",
+        is_email_verified: bool = True,
+        is_active: bool = True,
+) -> User:
+    """Create a test user with email verified by default."""
+    user = User(
+        email=email,
+        hashed_password="hashed",
+        is_email_verified=is_email_verified,
+        is_active=is_active,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_auth_headers(user: User) -> dict[str, str]:
+    """Get authorization headers with JWT token for a user."""
+    from app.services.auth.jwt_handler import JWTHandler
+    jwt_handler = JWTHandler()
+    token = jwt_handler.create_access_token(user_id=user.id, email=user.email)
+    return {"Authorization": f"Bearer {token}"}
 
 
 def seed_portfolio(
@@ -239,6 +257,7 @@ class TestGetValuationEndpoint:
         """Valid portfolio with holdings should return 200 and correct structure."""
         # Seed data
         user = seed_user(test_db)
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         asset = seed_asset(test_db, "AAPL", "NASDAQ", "USD")
 
@@ -255,7 +274,8 @@ class TestGetValuationEndpoint:
         # Make request
         response = client.get(
             f"/portfolios/{portfolio.id}/valuation",
-            params={"date": "2024-06-15"}
+            params={"date": "2024-06-15"},
+            headers=headers,
         )
 
         # Assert status
@@ -285,10 +305,13 @@ class TestGetValuationEndpoint:
         assert "pnl" in holding
 
     def test_valuation_returns_404_for_nonexistent_portfolio(
-            self, client: TestClient
+            self, client: TestClient, test_db: Session
     ):
         """Non-existent portfolio should return 404."""
-        response = client.get("/portfolios/99999/valuation")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/portfolios/99999/valuation", headers=headers)
 
         assert response.status_code == 404
         data = response.json()
@@ -300,9 +323,10 @@ class TestGetValuationEndpoint:
     ):
         """Omitting date parameter should default to today."""
         user = seed_user(test_db, email="today@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
-        response = client.get(f"/portfolios/{portfolio.id}/valuation")
+        response = client.get(f"/portfolios/{portfolio.id}/valuation", headers=headers)
 
         assert response.status_code == 200
         data = response.json()
@@ -314,11 +338,13 @@ class TestGetValuationEndpoint:
     ):
         """Portfolio with no transactions should return zero values."""
         user = seed_user(test_db, email="empty@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/valuation",
-            params={"date": "2024-06-15"}
+            params={"date": "2024-06-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -332,6 +358,7 @@ class TestGetValuationEndpoint:
     ):
         """Portfolio with only BUY should have tracks_cash=false."""
         user = seed_user(test_db, email="nocash@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         asset = seed_asset(test_db, "MSFT", "NASDAQ", "USD")
 
@@ -347,7 +374,8 @@ class TestGetValuationEndpoint:
 
         response = client.get(
             f"/portfolios/{portfolio.id}/valuation",
-            params={"date": "2024-06-15"}
+            params={"date": "2024-06-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -355,6 +383,15 @@ class TestGetValuationEndpoint:
 
         assert data["tracks_cash"] is False
         assert data["cash_balances"] == []
+
+    def test_valuation_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user)
+
+        response = client.get(f"/portfolios/{portfolio.id}/valuation")
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -369,6 +406,7 @@ class TestGetValuationHistoryEndpoint:
     ):
         """Valid date range should return 200 and time series data."""
         user = seed_user(test_db, email="history@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         asset = seed_asset(test_db, "GOOG", "NASDAQ", "USD")
 
@@ -391,7 +429,8 @@ class TestGetValuationHistoryEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-07",
                 "interval": "daily",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -414,15 +453,19 @@ class TestGetValuationHistoryEndpoint:
         assert "total_pnl" in point
 
     def test_history_returns_404_for_nonexistent_portfolio(
-            self, client: TestClient
+            self, client: TestClient, test_db: Session
     ):
         """Non-existent portfolio should return 404."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.get(
             "/portfolios/99999/valuation/history",
             params={
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-31",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 404
@@ -432,6 +475,7 @@ class TestGetValuationHistoryEndpoint:
     ):
         """from_date after to_date should return 400."""
         user = seed_user(test_db, email="badrange@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
         response = client.get(
@@ -439,7 +483,8 @@ class TestGetValuationHistoryEndpoint:
             params={
                 "from_date": "2024-12-31",  # After to_date
                 "to_date": "2024-01-01",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 400
@@ -452,6 +497,7 @@ class TestGetValuationHistoryEndpoint:
     ):
         """Invalid interval should return 422 validation error."""
         user = seed_user(test_db, email="badinterval@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
         response = client.get(
@@ -460,7 +506,8 @@ class TestGetValuationHistoryEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-31",
                 "interval": "invalid_interval",  # Bad value
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422  # Validation error
@@ -470,6 +517,7 @@ class TestGetValuationHistoryEndpoint:
     ):
         """Weekly interval should return Friday snapshots."""
         user = seed_user(test_db, email="weekly@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         asset = seed_asset(test_db, "AMZN", "NASDAQ", "USD")
 
@@ -492,7 +540,8 @@ class TestGetValuationHistoryEndpoint:
                 "from_date": "2024-01-01",
                 "to_date": "2024-01-31",
                 "interval": "weekly",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -501,6 +550,21 @@ class TestGetValuationHistoryEndpoint:
         # Weekly should have fewer points than daily
         assert data["interval"] == "weekly"
         assert len(data["data"]) < 31  # Less than daily
+
+    def test_history_requires_auth(self, client: TestClient, test_db: Session):
+        """Should return 401 if not authenticated."""
+        user = seed_user(test_db)
+        portfolio = seed_portfolio(test_db, user)
+
+        response = client.get(
+            f"/portfolios/{portfolio.id}/valuation/history",
+            params={
+                "from_date": "2024-01-01",
+                "to_date": "2024-01-31",
+            },
+        )
+
+        assert response.status_code == 401
 
 
 # =============================================================================
@@ -515,6 +579,7 @@ class TestResponseStructure:
     ):
         """Holding valuation should have complete nested structure."""
         user = seed_user(test_db, email="structure@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user, currency="USD")
         asset = seed_asset(test_db, "NVDA", "NASDAQ", "USD", "NVIDIA Corp")
 
@@ -530,7 +595,8 @@ class TestResponseStructure:
 
         response = client.get(
             f"/portfolios/{portfolio.id}/valuation",
-            params={"date": "2024-06-15"}
+            params={"date": "2024-06-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200
@@ -572,11 +638,13 @@ class TestResponseStructure:
     ):
         """Portfolio summary should have all required fields."""
         user = seed_user(test_db, email="summary@test.com")
+        headers = get_auth_headers(user)
         portfolio = seed_portfolio(test_db, user)
 
         response = client.get(
             f"/portfolios/{portfolio.id}/valuation",
-            params={"date": "2024-06-15"}
+            params={"date": "2024-06-15"},
+            headers=headers,
         )
 
         assert response.status_code == 200

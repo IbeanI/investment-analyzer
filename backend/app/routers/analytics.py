@@ -27,8 +27,9 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Portfolio, Transaction
+from app.models import Portfolio, Transaction, User
 from app.middleware.rate_limit import limiter, RATE_LIMIT_ANALYTICS
+from app.dependencies import get_portfolio_with_owner_check
 from app.services.constants import MAX_HISTORY_DAYS
 from app.schemas.analytics import (
     PeriodInfo,
@@ -75,19 +76,6 @@ MAX_DRAWDOWN_PERIODS = 5
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
-
-def get_portfolio_or_404(db: Session, portfolio_id: int) -> Portfolio:
-    """Fetch a portfolio by ID or raise 404 if not found."""
-    portfolio = db.get(Portfolio, portfolio_id)
-
-    if portfolio is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolio with id {portfolio_id} not found"
-        )
-
-    return portfolio
-
 
 def _get_first_transaction_date(db: Session, portfolio_id: int) -> date | None:
     """Get the date of the first transaction for a portfolio."""
@@ -314,7 +302,7 @@ def _map_benchmark(bench: BenchmarkMetrics) -> BenchmarkMetricsResponse:
 @limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_analytics(
         request: Request,  # Required for rate limiting
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         from_date: date | None = Query(
             default=None,
             description="Start date of analysis period (default: first transaction date)",
@@ -359,9 +347,10 @@ def get_portfolio_analytics(
     **Note**: If the portfolio has multiple investment periods (separated by full
     liquidations), the default behavior shows metrics for the current period only.
     Use `scope=full_history` to see combined metrics across all periods.
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists first
-    portfolio = get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     # Resolve date defaults (from_date = first txn, to_date = today)
     from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
@@ -415,7 +404,7 @@ def get_portfolio_analytics(
 @limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_performance(
         request: Request,  # Required for rate limiting
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         from_date: date | None = Query(
             default=None,
             description="Start date of analysis period (default: first transaction date)"
@@ -439,9 +428,10 @@ def get_portfolio_performance(
 
     **Use this endpoint when you only need returns**, without risk
     or benchmark analysis. It's faster than the full analytics endpoint.
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists first
-    portfolio = get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     # Resolve date defaults
     from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
@@ -482,7 +472,7 @@ def get_portfolio_performance(
 @limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_risk(
         request: Request,  # Required for rate limiting
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         from_date: date | None = Query(
             default=None,
             description="Start date of analysis period (default: first transaction date)"
@@ -526,9 +516,10 @@ def get_portfolio_risk(
     - > 3.0: Excellent
 
     **Note:** Risk metrics require daily data internally for accuracy.
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists first
-    portfolio = get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     # Resolve date defaults
     from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)
@@ -586,7 +577,7 @@ def get_portfolio_risk(
 @limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_benchmark(
         request: Request,  # Required for rate limiting
-        portfolio_id: int,
+        portfolio: Portfolio = Depends(get_portfolio_with_owner_check),
         from_date: date | None = Query(
             default=None,
             description="Start date of analysis period (default: first transaction date)"
@@ -628,9 +619,10 @@ def get_portfolio_benchmark(
     - α < 0: Underperforming risk-adjusted expectations
 
     **Note:** Benchmark must be synced (have price data) before comparison.
+
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists first
-    portfolio = get_portfolio_or_404(db, portfolio_id)
+    portfolio_id = portfolio.id
 
     # Resolve date defaults
     from_date, to_date = _resolve_date_range(db, portfolio_id, from_date, to_date)

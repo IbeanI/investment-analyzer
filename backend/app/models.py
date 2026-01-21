@@ -89,16 +89,114 @@ class SyncStatusEnum(str, enum.Enum):
 
 
 class User(Base):
+    """
+    Application users with support for both email/password and OAuth authentication.
+
+    Authentication modes:
+    - Email/password: hashed_password is set, oauth_provider is NULL
+    - OAuth only: hashed_password is NULL, oauth_provider is set
+    - Linked accounts: Both hashed_password and oauth_provider are set
+
+    Email verification is required before login for email/password users.
+    OAuth users are considered verified immediately (email verified by provider).
+    """
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    email: Mapped[str] = mapped_column(String, unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
 
-    # Relationship: One User has Many Portfolios
+    # Password - nullable to support OAuth-only users
+    hashed_password: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Email verification
+    is_email_verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Account status
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # OAuth provider info
+    oauth_provider: Mapped[str | None] = mapped_column(
+        String(50), nullable=True, index=True
+    )  # "google", etc.
+    oauth_provider_id: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # External user ID from provider
+
+    # Password reset tracking
+    password_reset_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Profile info (can be populated from OAuth or user input)
+    full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    picture_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
     portfolios: Mapped[list["Portfolio"]] = relationship(back_populates="owner")
+    refresh_tokens: Mapped[list["RefreshToken"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan"
+    )
+
+
+class RefreshToken(Base):
+    """
+    Stores refresh tokens for JWT authentication.
+
+    Security features:
+    - Token stored as SHA-256 hash (not raw token)
+    - Family ID enables token rotation detection
+    - Device/IP tracking for audit and session management
+    - Revocation support for logout/security events
+
+    Token rotation:
+    - Each refresh creates a new token with the same family_id
+    - If a revoked token is reused, all tokens in the family are revoked (replay attack detection)
+    """
+    __tablename__ = "refresh_tokens"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True
+    )
+
+    # Token storage - store hash, not raw token
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)  # SHA-256 hex
+
+    # Token family for rotation detection
+    family_id: Mapped[str] = mapped_column(String(36), index=True)  # UUID
+
+    # Expiration and revocation
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+    # Session metadata for audit/management
+    device_info: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)  # IPv6 max length
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    user: Mapped["User"] = relationship(back_populates="refresh_tokens")
 
 
 class Portfolio(Base):

@@ -10,6 +10,9 @@ Key concepts:
 - Each transaction references ONE asset
 - Transactions cannot be moved between portfolios
 - Transaction type (BUY/SELL) cannot be changed after creation
+
+All endpoints require authentication. Users can only access transactions
+in portfolios they own.
 """
 
 from datetime import datetime
@@ -22,7 +25,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import joinedload, contains_eager
 
 from app.database import get_db
-from app.models import Transaction, Portfolio, Asset, TransactionType
+from app.models import Transaction, Portfolio, Asset, TransactionType, User
 from app.schemas.pagination import PaginationMeta
 from app.schemas.transactions import (
     TransactionCreate,
@@ -37,6 +40,8 @@ from app.services.constants import MAX_BATCH_SIZE
 from app.dependencies import (
     get_asset_resolution_service,
     get_analytics_service,
+    get_current_user,
+    get_portfolio_with_owner_check,
 )
 
 # Validated query parameter types
@@ -78,9 +83,34 @@ def get_transaction_or_404(db: Session, transaction_id: int) -> Transaction:
     return transaction
 
 
-def validate_portfolio_exists(db: Session, portfolio_id: int) -> Portfolio:
+def get_transaction_with_owner_check(
+    db: Session,
+    transaction_id: int,
+    current_user: User,
+) -> Transaction:
     """
-    Verify that a portfolio exists, raise 404 if not.
+    Fetch a transaction and verify the user owns its portfolio.
+    """
+    transaction = get_transaction_or_404(db, transaction_id)
+
+    # Get the portfolio and check ownership
+    portfolio = db.get(Portfolio, transaction.portfolio_id)
+    if portfolio is None or portfolio.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this transaction"
+        )
+
+    return transaction
+
+
+def validate_portfolio_ownership(
+    db: Session,
+    portfolio_id: int,
+    current_user: User,
+) -> Portfolio:
+    """
+    Verify that a portfolio exists and the user owns it.
     """
     portfolio = db.get(Portfolio, portfolio_id)
 
@@ -88,6 +118,12 @@ def validate_portfolio_exists(db: Session, portfolio_id: int) -> Portfolio:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Portfolio with id {portfolio_id} not found"
+        )
+
+    if portfolio.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You don't have permission to access this portfolio"
         )
 
     return portfolio
@@ -106,9 +142,10 @@ def validate_portfolio_exists(db: Session, portfolio_id: int) -> Portfolio:
 )
 def create_transaction(
         transaction: TransactionCreate,
-        db: Session = Depends(get_db),
-        asset_service: AssetResolutionService = Depends(get_asset_resolution_service),
-        analytics_service: AnalyticsService = Depends(get_analytics_service),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
+        asset_service: Annotated[AssetResolutionService, Depends(get_asset_resolution_service)],
+        analytics_service: Annotated[AnalyticsService, Depends(get_analytics_service)],
 ) -> Transaction:
     """
     Record a new buy or sell transaction.
@@ -128,13 +165,14 @@ def create_transaction(
 
     **Errors:**
     - 404: Portfolio not found, or asset not found on Yahoo Finance
+    - 403: You don't own the portfolio
     - 400: Asset is deactivated
     - 502: Yahoo Finance API error
 
-    The portfolio must exist.
+    The portfolio must exist and belong to you.
     """
-    # Validate portfolio exists
-    validate_portfolio_exists(db, transaction.portfolio_id)
+    # Validate portfolio exists and user owns it
+    validate_portfolio_ownership(db, transaction.portfolio_id, current_user)
 
     # Resolve asset (lookup in DB or create from Yahoo Finance)
     # Domain exceptions propagate to global handlers in main.py
@@ -179,11 +217,12 @@ def create_transaction(
     response_description="List of transactions matching the filters"
 )
 def list_transactions(
-        db: Session = Depends(get_db),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
         # Filters
         portfolio_id: int | None = Query(
             default=None,
-            description="Filter by portfolio ID (recommended)"
+            description="Filter by portfolio ID (must be a portfolio you own)"
         ),
         asset_id: int | None = Query(
             default=None,
@@ -219,7 +258,7 @@ def list_transactions(
     """
     Retrieve a list of transactions with optional filtering.
 
-    **Tip:** Always filter by portfolio_id for better performance.
+    Only returns transactions from portfolios you own.
 
     Supports filtering by:
     - **portfolio_id**: Get transactions for a specific portfolio
@@ -233,8 +272,17 @@ def list_transactions(
 
     Results are ordered by date (newest first).
     """
-    # Build base query
-    query = select(Transaction)
+    # If portfolio_id provided, verify ownership
+    if portfolio_id is not None:
+        validate_portfolio_ownership(db, portfolio_id, current_user)
+
+    # Get user's portfolio IDs
+    user_portfolio_ids = db.scalars(
+        select(Portfolio.id).where(Portfolio.user_id == current_user.id)
+    ).all()
+
+    # Build base query - only from user's portfolios
+    query = select(Transaction).where(Transaction.portfolio_id.in_(user_portfolio_ids))
 
     if ticker is not None:
         # Use explicit join + contains_eager when filtering
@@ -291,14 +339,16 @@ def list_transactions(
 )
 def get_transaction(
         transaction_id: int,
-        db: Session = Depends(get_db)
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
 ) -> Transaction:
     """
     Retrieve a single transaction by its ID.
 
     Raises **404** if the transaction does not exist.
+    Raises **403** if you don't own the portfolio containing this transaction.
     """
-    return get_transaction_or_404(db, transaction_id)
+    return get_transaction_with_owner_check(db, transaction_id, current_user)
 
 
 @router.patch(
@@ -310,8 +360,9 @@ def get_transaction(
 def update_transaction(
         transaction_id: int,
         transaction_update: TransactionUpdate,
-        db: Session = Depends(get_db),
-        analytics_service: AnalyticsService = Depends(get_analytics_service),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
+        analytics_service: Annotated[AnalyticsService, Depends(get_analytics_service)],
 ) -> Transaction:
     """
     Update an existing transaction (partial update).
@@ -327,8 +378,9 @@ def update_transaction(
     To change these, delete the transaction and create a new one.
 
     Raises **404** if the transaction does not exist.
+    Raises **403** if you don't own the portfolio containing this transaction.
     """
-    db_transaction = get_transaction_or_404(db, transaction_id)
+    db_transaction = get_transaction_with_owner_check(db, transaction_id, current_user)
 
     update_data = transaction_update.model_dump(exclude_unset=True)
 
@@ -353,8 +405,9 @@ def update_transaction(
 )
 def delete_transaction(
         transaction_id: int,
-        db: Session = Depends(get_db),
-        analytics_service: AnalyticsService = Depends(get_analytics_service),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
+        analytics_service: Annotated[AnalyticsService, Depends(get_analytics_service)],
 ) -> None:
     """
     Delete a transaction permanently.
@@ -363,8 +416,9 @@ def delete_transaction(
     This will affect portfolio valuations and performance calculations.
 
     Raises **404** if the transaction does not exist.
+    Raises **403** if you don't own the portfolio containing this transaction.
     """
-    db_transaction = get_transaction_or_404(db, transaction_id)
+    db_transaction = get_transaction_with_owner_check(db, transaction_id, current_user)
 
     # Capture portfolio_id before deletion
     portfolio_id = db_transaction.portfolio_id
@@ -390,7 +444,8 @@ def delete_transaction(
 )
 def get_portfolio_transactions(
         portfolio_id: int,
-        db: Session = Depends(get_db),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
         # Optional filters
         asset_id: int | None = Query(default=None, description="Filter by asset"),
         ticker: TickerQuery = Query(default=None, description="Filter by ticker"),
@@ -405,12 +460,13 @@ def get_portfolio_transactions(
     Retrieve all transactions for a specific portfolio.
 
     This is a convenience endpoint that ensures you're looking
-    at transactions for a valid portfolio.
+    at transactions for a valid portfolio that you own.
 
     Raises **404** if the portfolio does not exist.
+    Raises **403** if you don't own the portfolio.
     """
-    # Verify portfolio exists
-    validate_portfolio_exists(db, portfolio_id)
+    # Verify portfolio exists and user owns it
+    validate_portfolio_ownership(db, portfolio_id, current_user)
 
     # Build base query - filter by portfolio_id
     query = select(Transaction).where(Transaction.portfolio_id == portfolio_id)
@@ -463,15 +519,18 @@ def get_portfolio_transactions(
 )
 def create_transactions_batch(
         transactions: list[TransactionCreate],
-        db: Session = Depends(get_db),
-        asset_service: AssetResolutionService = Depends(get_asset_resolution_service),
-        analytics_service: AnalyticsService = Depends(get_analytics_service),
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
+        asset_service: Annotated[AssetResolutionService, Depends(get_asset_resolution_service)],
+        analytics_service: Annotated[AnalyticsService, Depends(get_analytics_service)],
 ) -> list[Transaction]:
     """
     Create multiple transactions in a single request.
 
     This is much more efficient than calling POST /transactions/ multiple times.
     It uses batch asset resolution to minimize database and API calls.
+
+    All portfolios referenced must be owned by you.
 
     **Limit:** Maximum {MAX_BATCH_SIZE} transactions per request.
     """
@@ -485,18 +544,29 @@ def create_transactions_batch(
             detail=f"Batch size {len(transactions)} exceeds maximum of {MAX_BATCH_SIZE} transactions"
         )
 
-    # 1. Validate Portfolios (Optimization: Check unique IDs once)
+    # 1. Validate Portfolios and Ownership
     portfolio_ids = {t.portfolio_id for t in transactions}
-    existing_portfolios = db.scalars(
-        select(Portfolio.id).where(Portfolio.id.in_(portfolio_ids))
-    ).all()
 
-    if len(existing_portfolios) != len(portfolio_ids):
-        missing = sorted(portfolio_ids - set(existing_portfolios))
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Portfolios not found: {', '.join(str(p) for p in missing)}"
-        )
+    # Get user's portfolio IDs
+    user_portfolio_ids = set(db.scalars(
+        select(Portfolio.id).where(Portfolio.user_id == current_user.id)
+    ).all())
+
+    # Check all referenced portfolios exist and are owned by user
+    for pid in portfolio_ids:
+        if pid not in user_portfolio_ids:
+            # Check if portfolio exists at all
+            portfolio = db.get(Portfolio, pid)
+            if portfolio is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Portfolio {pid} not found"
+                )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"You don't have permission to add transactions to portfolio {pid}"
+                )
 
     # 2. Batch Resolve Assets
     # Extract all (ticker, exchange) tuples to resolve in one go

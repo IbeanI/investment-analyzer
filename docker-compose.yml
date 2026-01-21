@@ -32,9 +32,32 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # We construct the connection string dynamically using the same variables
+      # Database connection
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@investment_db:5432/${POSTGRES_DB}
       PYTHONUNBUFFERED: 1
+
+      # Application settings
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      DEBUG: ${DEBUG:-true}
+      LOG_LEVEL: ${LOG_LEVEL:-DEBUG}
+
+      # Authentication (JWT)
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+
+      # Frontend URL (for email links)
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+
+      # Email settings (optional - leave empty to log emails to console)
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-}
+
+      # Google OAuth (optional)
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-http://localhost:8000/auth/google/callback}
     volumes:
       - ./backend/app:/app/app
       - ./backend/init_db.py:/app/init_db.py

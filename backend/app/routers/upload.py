@@ -20,11 +20,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models import User, Portfolio
 from app.schemas.upload import (
     UploadResponse,
     UploadErrorResponse,
     SupportedFormatsResponse,
 )
+from app.dependencies import get_current_user, get_portfolio_with_owner_check
 from app.services.upload import (
     UploadService,
     DateFormat,
@@ -56,6 +58,43 @@ router = APIRouter(
 def get_upload_service() -> UploadService:
     """Dependency that provides the upload service."""
     return UploadService()
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+def validate_portfolio_ownership(
+    db: Session,
+    portfolio_id: int,
+    current_user: User
+) -> Portfolio:
+    """
+    Validate that the portfolio exists and belongs to the current user.
+
+    Args:
+        db: Database session
+        portfolio_id: Portfolio ID to validate
+        current_user: Authenticated user
+
+    Returns:
+        Portfolio if valid
+
+    Raises:
+        HTTPException: 404 if portfolio not found, 403 if user doesn't own it
+    """
+    portfolio = db.get(Portfolio, portfolio_id)
+    if portfolio is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Portfolio with id {portfolio_id} not found"
+        )
+    if portfolio.user_id != current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You do not have permission to access this portfolio"
+        )
+    return portfolio
 
 
 # =============================================================================
@@ -95,6 +134,12 @@ def get_supported_formats(request: Request) -> SupportedFormatsResponse:
         400: {
             "description": "Invalid request (missing file or portfolio_id)",
         },
+        401: {
+            "description": "Not authenticated",
+        },
+        403: {
+            "description": "Not authorized to access this portfolio",
+        },
         404: {
             "description": "Portfolio not found",
         },
@@ -122,6 +167,7 @@ def upload_transactions(
             )
         ),
         db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
         upload_service: UploadService = Depends(get_upload_service),
         analytics_service: AnalyticsService = Depends(get_analytics_service),
 ) -> UploadResponse | JSONResponse:
@@ -223,7 +269,13 @@ def upload_transactions(
         "created_transaction_ids": []
     }
     ```
+
+    Raises **401** if not authenticated.
+    Raises **403** if you don't own the portfolio.
     """
+    # Verify user owns the portfolio
+    validate_portfolio_ownership(db, portfolio_id, current_user)
+
     logger.info(
         f"Upload request: {file.filename} -> portfolio {portfolio_id} "
         f"(date_format={date_format.value})"

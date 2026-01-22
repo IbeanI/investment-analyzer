@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   ArrowLeft,
   TrendingUp,
-  TrendingDown,
   BarChart3,
   Shield,
   Target,
@@ -17,7 +16,6 @@ import {
   CardContent,
   CardDescription,
   CardHeader,
-  CardTitle,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,7 +38,7 @@ import {
   usePortfolioAnalytics,
   usePortfolioHistory,
 } from "@/hooks/use-portfolios";
-import { formatPercentage, cn } from "@/lib/utils";
+import { formatPercentage, formatCurrency, formatDate, cn } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
 // Date Helpers
@@ -75,7 +73,7 @@ function getPeriodDates(period: Period): { from: string; to: string } {
 
   return {
     from: from.toISOString().split("T")[0],
-    to: new Date().toISOString().split("T")[0],
+    to,
   };
 }
 
@@ -179,7 +177,7 @@ export default function AnalyticsPage({ params }: PageProps) {
   // Helper to format metric values
   const formatMetric = (
     value: string | number | null | undefined,
-    type: "percentage" | "ratio" | "number" = "percentage"
+    type: "percentage" | "ratio" | "number" | "currency" = "percentage"
   ): string | null => {
     if (value === null || value === undefined) return null;
     const num = typeof value === "string" ? parseFloat(value) : value;
@@ -192,6 +190,8 @@ export default function AnalyticsPage({ params }: PageProps) {
         return num.toFixed(2);
       case "number":
         return num.toLocaleString();
+      case "currency":
+        return formatCurrency(num, analytics?.portfolio_currency || "EUR");
       default:
         return String(num);
     }
@@ -285,26 +285,26 @@ export default function AnalyticsPage({ params }: PageProps) {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <MetricCard
               title="Total Gain"
-              value={formatMetric(performance?.total_gain)}
+              value={formatMetric(performance?.total_gain, "currency")}
               description="Total monetary gain or loss in portfolio currency."
               trend={getTrend(performance?.total_gain)}
               isLoading={isLoading}
             />
             <MetricCard
-              title="Start Value"
-              value={formatMetric(performance?.start_value, "number")}
-              description="Portfolio value at the start of the selected period."
+              title="Beginning Value"
+              value={formatMetric(performance?.start_value, "currency")}
+              description={`Portfolio value at the beginning of the period (${formatDate(fromDate)}).`}
               isLoading={isLoading}
             />
             <MetricCard
-              title="End Value"
-              value={formatMetric(performance?.end_value, "number")}
-              description="Portfolio value at the end of the selected period."
+              title="Ending Value"
+              value={formatMetric(performance?.end_value, "currency")}
+              description={`Portfolio value at the end of the period (${formatDate(toDate)}).`}
               isLoading={isLoading}
             />
             <MetricCard
               title="Net Invested"
-              value={formatMetric(performance?.net_invested, "number")}
+              value={formatMetric(performance?.net_invested, "currency")}
               description="Total deposits minus withdrawals during the period."
               isLoading={isLoading}
             />

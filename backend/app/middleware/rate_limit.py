@@ -44,6 +44,11 @@ from app.services.constants import (
     RATE_LIMIT_UPLOAD,
     RATE_LIMIT_HEALTH,
     RATE_LIMIT_ANALYTICS,
+    RATE_LIMIT_AUTH_LOGIN,
+    RATE_LIMIT_AUTH_REGISTER,
+    RATE_LIMIT_AUTH_PASSWORD_RESET,
+    RATE_LIMIT_AUTH_EMAIL,
+    RATE_LIMIT_AUTH_REFRESH,
 )
 
 logger = logging.getLogger(__name__)
@@ -155,4 +160,10 @@ __all__ = [
     "RATE_LIMIT_UPLOAD",
     "RATE_LIMIT_HEALTH",
     "RATE_LIMIT_ANALYTICS",
+    # Auth-specific rate limits
+    "RATE_LIMIT_AUTH_LOGIN",
+    "RATE_LIMIT_AUTH_REGISTER",
+    "RATE_LIMIT_AUTH_PASSWORD_RESET",
+    "RATE_LIMIT_AUTH_EMAIL",
+    "RATE_LIMIT_AUTH_REFRESH",
 ]

@@ -1,14 +1,15 @@
 "use client";
 
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getTransactions,
   createTransaction,
   updateTransaction,
   deleteTransaction,
   uploadTransactions,
+  AmbiguousDateFormatException,
 } from "@/lib/api/transactions";
-import type { TransactionCreate, TransactionUpdate } from "@/types/api";
+import type { TransactionCreate, TransactionUpdate, UploadDateFormat } from "@/types/api";
 import { toast } from "sonner";
 import { portfolioKeys } from "./use-portfolios";
 
@@ -38,6 +39,25 @@ export function useTransactions(portfolioId: number, skip = 0, limit = 100) {
     queryKey: [...transactionKeys.list(portfolioId), skip, limit],
     queryFn: () => getTransactions(portfolioId, skip, limit),
     enabled: !!portfolioId,
+  });
+}
+
+const PAGE_SIZE = 100;
+
+/**
+ * Hook to fetch transactions with infinite scroll pagination
+ */
+export function useInfiniteTransactions(portfolioId: number) {
+  return useInfiniteQuery({
+    queryKey: [...transactionKeys.list(portfolioId), "infinite"],
+    queryFn: ({ pageParam = 0 }) => getTransactions(portfolioId, pageParam, PAGE_SIZE),
+    enabled: !!portfolioId,
+    initialPageParam: 0,
+    getNextPageParam: (lastPage, allPages) => {
+      const totalLoaded = allPages.length * PAGE_SIZE;
+      const hasMore = totalLoaded < lastPage.pagination.total;
+      return hasMore ? totalLoaded : undefined;
+    },
   });
 }
 
@@ -132,6 +152,10 @@ export function useDeleteTransaction() {
 
 /**
  * Hook to upload transactions from CSV
+ *
+ * Supports automatic date format detection. If dates are ambiguous,
+ * throws AmbiguousDateFormatException which the component should catch
+ * and display a format selection dialog.
  */
 export function useUploadTransactions() {
   const queryClient = useQueryClient();
@@ -140,10 +164,12 @@ export function useUploadTransactions() {
     mutationFn: ({
       portfolioId,
       file,
+      dateFormat,
     }: {
       portfolioId: number;
       file: File;
-    }) => uploadTransactions(portfolioId, file),
+      dateFormat?: UploadDateFormat;
+    }) => uploadTransactions(portfolioId, file, dateFormat),
     onSuccess: (result, { portfolioId }) => {
       queryClient.invalidateQueries({
         queryKey: transactionKeys.list(portfolioId),
@@ -154,14 +180,21 @@ export function useUploadTransactions() {
 
       if (result.error_count > 0) {
         toast.warning(
-          `Imported ${result.success_count} transactions, ${result.error_count} failed`
+          `Imported ${result.created_count} transactions, ${result.error_count} failed`
         );
       } else {
-        toast.success(`Imported ${result.success_count} transactions`);
+        toast.success(`Imported ${result.created_count} transactions`);
       }
     },
     onError: (error: Error) => {
+      // Don't show toast for ambiguous date format - component will handle it
+      if (error instanceof AmbiguousDateFormatException) {
+        return;
+      }
       toast.error(error.message || "Failed to upload transactions");
     },
   });
 }
+
+// Re-export for convenience
+export { AmbiguousDateFormatException };

@@ -63,6 +63,7 @@ services:
       - ./backend/init_db.py:/app/init_db.py
       - ./backend/pyproject.toml:/app/pyproject.toml
       - ./backend/alembic:/app/alembic
+      - ./backend/alembic.ini:/app/alembic.ini
       - ./backend/scripts:/app/scripts
 
 volumes:

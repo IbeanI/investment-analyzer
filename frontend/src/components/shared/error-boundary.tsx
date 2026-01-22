@@ -188,7 +188,7 @@ export function PermissionDenied() {
       </div>
       <h3 className="text-lg font-semibold mb-2">Access Denied</h3>
       <p className="text-muted-foreground mb-6 max-w-sm">
-        You don't have permission to access this resource.
+        You do not have permission to access this resource.
       </p>
       <Button asChild>
         <Link href="/">

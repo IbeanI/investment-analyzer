@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Cell, Pie, PieChart, ResponsiveContainer, Sector } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatCurrency, formatPercentage } from "@/lib/utils";
+import { formatPercentage } from "@/lib/utils";
 import type { HoldingValuation } from "@/types/api";
 
 // Chart colors - accessible and colorblind-friendly
@@ -35,8 +35,21 @@ interface ChartDataPoint {
   [key: string]: string | number;
 }
 
+// Props for Recharts active shape - Recharts doesn't export proper types for this
+interface ActiveShapeProps {
+  cx: number;
+  cy: number;
+  innerRadius: number;
+  outerRadius: number;
+  startAngle: number;
+  endAngle: number;
+  fill: string;
+  payload: ChartDataPoint;
+  currency: string;
+}
+
 // Custom active shape for the donut
-const renderActiveShape = (props: any) => {
+const renderActiveShape = (props: ActiveShapeProps) => {
   const {
     cx,
     cy,
@@ -46,7 +59,7 @@ const renderActiveShape = (props: any) => {
     endAngle,
     fill,
     payload,
-    currency,
+    currency: _currency,
   } = props;
 
   return (
@@ -192,12 +205,12 @@ export function AllocationChart({
                   outerRadius={70}
                   paddingAngle={2}
                   dataKey="value"
-                  activeShape={(props: any) =>
-                    renderActiveShape({ ...props, currency })
+                  activeShape={(props: unknown) =>
+                    renderActiveShape({ ...(props as ActiveShapeProps), currency })
                   }
                   onMouseEnter={(_, index) => setActiveIndex(index)}
                   onMouseLeave={() => setActiveIndex(undefined)}
-                  {...({ activeIndex } as any)}
+                  {...({ activeIndex } as Record<string, unknown>)}
                 >
                   {chartData.map((entry, index) => (
                     <Cell

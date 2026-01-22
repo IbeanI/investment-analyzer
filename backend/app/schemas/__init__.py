@@ -116,6 +116,16 @@ from app.schemas.valuation import (
     ValuationRequest,
     ValuationHistoryRequest,
 )
+from app.schemas.user_settings import (
+    UserSettingsResponse,
+    UserSettingsUpdate,
+)
+from app.schemas.user_profile import (
+    UserProfileResponse,
+    UserProfileUpdate,
+    PasswordChangeRequest,
+    AccountDeleteRequest,
+)
 
 # =============================================================================
 # PHASE 3: Market Data Engine
@@ -209,4 +219,14 @@ __all__ = [
     "PaginatedResponse",
     "create_pagination_meta",
     "paginate_dict",
+
+    # User Settings
+    "UserSettingsResponse",
+    "UserSettingsUpdate",
+
+    # User Profile
+    "UserProfileResponse",
+    "UserProfileUpdate",
+    "PasswordChangeRequest",
+    "AccountDeleteRequest",
 ]

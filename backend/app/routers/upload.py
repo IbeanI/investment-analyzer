@@ -15,6 +15,8 @@ Key features:
 
 import logging
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -25,6 +27,9 @@ from app.schemas.upload import (
     UploadResponse,
     UploadErrorResponse,
     SupportedFormatsResponse,
+    DateSampleResponse,
+    DateDetectionResponse,
+    AmbiguousDateFormatError,
 )
 from app.dependencies import get_current_user, get_portfolio_with_owner_check
 from app.services.upload import (
@@ -32,6 +37,10 @@ from app.services.upload import (
     DateFormat,
     get_supported_extensions,
     get_supported_content_types,
+)
+from app.services.upload.parsers import (
+    get_parser,
+    DateDetectionStatus,
 )
 from app.services.analytics.service import AnalyticsService
 from app.services.constants import MAX_UPLOAD_FILE_SIZE_BYTES
@@ -143,6 +152,10 @@ def get_supported_formats(request: Request) -> SupportedFormatsResponse:
         404: {
             "description": "Portfolio not found",
         },
+        422: {
+            "description": "Ambiguous date format - user must specify",
+            "model": AmbiguousDateFormatError,
+        },
     },
 )
 @limiter.limit(RATE_LIMIT_UPLOAD)
@@ -157,11 +170,12 @@ def upload_transactions(
             gt=0,
             description="ID of the target portfolio"
         ),
-        date_format: DateFormat = Query(
-            default=DateFormat.ISO,
+        date_format: Literal["ISO", "US", "EU", "AUTO"] = Query(
+            default="AUTO",
             description=(
                     "Date format used in the file. "
-                    "ISO: YYYY-MM-DD (default), "
+                    "AUTO: Auto-detect (default), "
+                    "ISO: YYYY-MM-DD, "
                     "US: M/D/YYYY (American), "
                     "EU: D/M/YYYY (European)"
             )
@@ -173,26 +187,34 @@ def upload_transactions(
 ) -> UploadResponse | JSONResponse:
     """
     Upload transactions from a file.
-    
+
     **Supported formats:** CSV (more coming soon)
-    
+
     **Date Format Parameter:**
-    
-    You MUST specify the date format used in your file to avoid ambiguity:
-    
+
+    By default, the date format is auto-detected. You can also specify explicitly:
+
     | Format | Pattern | Example |
     |--------|---------|---------|
-    | `ISO` (default) | YYYY-MM-DD | 2021-01-22 |
+    | `AUTO` (default) | Auto-detect | Analyzes dates to determine format |
+    | `ISO` | YYYY-MM-DD | 2021-01-22 |
     | `US` | M/D/YYYY | 1/22/2021 |
     | `EU` | D/M/YYYY | 22/01/2021 |
-    
-    **Why is this required?**
-    
+
+    **Auto-Detection Behavior:**
+
+    - If dates are **unambiguous** (e.g., `1/22/2021` where day=22 > 12),
+      the format is detected automatically and upload proceeds.
+    - If dates are **ambiguous** (e.g., all dates have day ≤ 12 like `1/2/2021`),
+      returns 422 with sample interpretations for the user to choose.
+
+    **Why auto-detect?**
+
     The date "1/2/2021" is ambiguous:
     - US format: January 2, 2021
     - EU format: February 1, 2021
-    
-    For financial data, we cannot guess - you must be explicit.
+
+    But "1/22/2021" is unambiguous (US format only, since month can't be 22).
     
     **CSV Format:**
     ```
@@ -278,7 +300,7 @@ def upload_transactions(
 
     logger.info(
         f"Upload request: {file.filename} -> portfolio {portfolio_id} "
-        f"(date_format={date_format.value})"
+        f"(date_format={date_format})"
     )
 
     # Validate file size
@@ -297,6 +319,66 @@ def upload_transactions(
 
     logger.debug(f"File size: {file_size} bytes")
 
+    # Handle AUTO date format detection
+    resolved_date_format: DateFormat
+    if date_format == "AUTO":
+        logger.info("Auto-detecting date format")
+        try:
+            parser = get_parser(file.filename or "unknown", file.content_type)
+            detection = parser.detect_date_format(
+                file.file,
+                file.filename or "unknown",
+            )
+            file.file.seek(0)  # Reset for parsing
+
+            if detection.status == DateDetectionStatus.ERROR:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=detection.reason,
+                )
+
+            if detection.status == DateDetectionStatus.AMBIGUOUS:
+                # Return 422 with detection data for user to choose
+                logger.info("Date format is ambiguous, requesting user input")
+                return JSONResponse(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    content={
+                        "error": "ambiguous_date_format",
+                        "message": "Could not automatically determine date format. Please select the correct format.",
+                        "detection": {
+                            "status": detection.status.value,
+                            "detected_format": None,
+                            "samples": [
+                                {
+                                    "raw_value": s.raw_value,
+                                    "row_number": s.row_number,
+                                    "us_interpretation": s.us_interpretation,
+                                    "eu_interpretation": s.eu_interpretation,
+                                    "iso_interpretation": s.iso_interpretation,
+                                    "is_disambiguator": s.is_disambiguator,
+                                }
+                                for s in detection.samples
+                            ],
+                            "reason": detection.reason,
+                        },
+                    },
+                )
+
+            # Unambiguous - use detected format
+            resolved_date_format = detection.detected_format
+            logger.info(f"Auto-detected date format: {resolved_date_format.value}")
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Date format detection failed: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to detect date format: {e}",
+            )
+    else:
+        resolved_date_format = DateFormat(date_format)
+
     # Process the file
     result = upload_service.process_file(
         db=db,
@@ -304,7 +386,7 @@ def upload_transactions(
         filename=file.filename or "unknown",
         portfolio_id=portfolio_id,
         content_type=file.content_type,
-        date_format=date_format,
+        date_format=resolved_date_format,
     )
 
     # Build response

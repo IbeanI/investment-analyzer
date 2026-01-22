@@ -17,10 +17,12 @@ from sqlalchemy import select, and_, or_, func
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Asset, AssetClass
+from app.dependencies import get_current_user
+from app.models import Asset, AssetClass, User
 from app.schemas.assets import AssetCreate, AssetUpdate, AssetResponse, AssetListResponse
 from app.schemas.pagination import PaginationMeta
 from app.schemas.validators import validate_currency_query, validate_exchange_query
+from app.utils import escape_like_pattern
 
 # Validated query parameter types
 CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
@@ -120,7 +122,8 @@ def check_isin_exists(
 )
 def create_asset(
         asset: AssetCreate,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ) -> Asset:
     """
     Create a new asset in the global registry.
@@ -165,6 +168,7 @@ def create_asset(
 )
 def list_assets(
         db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
         # Query parameters for filtering
         asset_class: AssetClass | None = Query(
             default=None,
@@ -219,11 +223,12 @@ def list_assets(
         query = query.where(Asset.is_active == is_active)
 
     if search is not None:
-        search_pattern = f"%{search}%"
+        # Escape SQL wildcards to prevent query manipulation
+        search_pattern = f"%{escape_like_pattern(search)}%"
         query = query.where(
             or_(
-                Asset.ticker.ilike(search_pattern),
-                Asset.name.ilike(search_pattern)
+                Asset.ticker.ilike(search_pattern, escape="\\"),
+                Asset.name.ilike(search_pattern, escape="\\")
             )
         )
 
@@ -251,7 +256,8 @@ def list_assets(
 )
 def get_asset(
         asset_id: int,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ) -> Asset:
     """
     Retrieve a single asset by its ID.
@@ -270,7 +276,8 @@ def get_asset(
 def update_asset(
         asset_id: int,
         asset_update: AssetUpdate,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ) -> Asset:
     """
     Update an existing asset (partial update).
@@ -328,7 +335,8 @@ def update_asset(
 )
 def delete_asset(
         asset_id: int,
-        db: Session = Depends(get_db)
+        db: Session = Depends(get_db),
+        current_user: User = Depends(get_current_user),
 ) -> None:
     """
     Deactivate an asset (soft delete).

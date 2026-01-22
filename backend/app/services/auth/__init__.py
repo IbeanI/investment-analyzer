@@ -28,7 +28,7 @@ from app.services.auth.password import PasswordService
 from app.services.auth.jwt_handler import JWTHandler
 from app.services.auth.service import AuthService
 from app.services.auth.email_service import EmailService
-from app.services.auth.oauth_google import GoogleOAuthService
+from app.services.auth.oauth_google import GoogleOAuthService, get_oauth_state_store
 
 __all__ = [
     "PasswordService",
@@ -36,4 +36,5 @@ __all__ = [
     "AuthService",
     "EmailService",
     "GoogleOAuthService",
+    "get_oauth_state_store",
 ]

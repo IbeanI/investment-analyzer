@@ -51,8 +51,10 @@ from app.services.exceptions import (
 
 logger = logging.getLogger(__name__)
 
-# HTTP Bearer scheme for JWT authentication
-_bearer_scheme = HTTPBearer(auto_error=False)
+# HTTP Bearer scheme for JWT authentication (required - shows lock in Swagger)
+_bearer_scheme = HTTPBearer(auto_error=True)
+# Optional bearer scheme for endpoints that work with or without auth
+_bearer_scheme_optional = HTTPBearer(auto_error=False)
 
 
 # =============================================================================
@@ -179,7 +181,7 @@ def get_auth_service() -> AuthService:
 
 
 def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(_bearer_scheme)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
     """
@@ -194,13 +196,7 @@ def get_current_user(
         HTTPException 401: If no token provided or token is invalid/expired
         HTTPException 401: If user not found or inactive
     """
-    if credentials is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authenticated",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+    # Note: credentials is never None because _bearer_scheme has auto_error=True
     try:
         payload = JWTHandler.validate_access_token(credentials.credentials)
         user_id = int(payload["sub"])
@@ -236,7 +232,7 @@ def get_current_user(
 
 
 def get_optional_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer_scheme_optional)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User | None:
     """
@@ -249,8 +245,13 @@ def get_optional_current_user(
         return None
 
     try:
-        return get_current_user(credentials, db)
-    except HTTPException:
+        payload = JWTHandler.validate_access_token(credentials.credentials)
+        user_id = int(payload["sub"])
+        user = db.get(User, user_id)
+        if user is None or not user.is_active:
+            return None
+        return user
+    except (TokenExpiredError, InvalidCredentialsError):
         return None
 
 

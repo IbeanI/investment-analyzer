@@ -216,10 +216,12 @@ class TestNotFoundErrors:
 
         assert data["error"] == "NotFoundError"
 
-    def test_asset_not_found_format(self, client: TestClient):
+    def test_asset_not_found_format(self, client: TestClient, test_db: Session):
         """Asset not found should return consistent error format."""
-        # Assets endpoint doesn't require auth
-        response = client.get("/assets/99999")
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        response = client.get("/assets/99999", headers=headers)
 
         assert response.status_code == 404
         data = response.json()
@@ -238,7 +240,8 @@ class TestConflictErrors:
             self, client: TestClient, test_db: Session
     ):
         """Duplicate ticker+exchange should return 409 with details."""
-        # Assets endpoint doesn't require auth
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
         seed_asset(test_db, "AAPL")
 
         response = client.post(
@@ -249,7 +252,8 @@ class TestConflictErrors:
                 "name": "Duplicate Apple",
                 "asset_class": "STOCK",
                 "currency": "USD",
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 409
@@ -291,9 +295,11 @@ class TestValidationErrors:
         field_errors = [e for e in data["details"] if "name" in e.get("field", "")]
         assert len(field_errors) > 0
 
-    def test_validation_error_multiple_fields(self, client: TestClient):
+    def test_validation_error_multiple_fields(self, client: TestClient, test_db: Session):
         """Should report multiple validation errors."""
-        # Assets endpoint doesn't require auth
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
         response = client.post(
             "/assets/",
             json={
@@ -301,7 +307,8 @@ class TestValidationErrors:
                 "exchange": "",  # Invalid (could be empty but ticker is required)
                 "asset_class": "INVALID_TYPE",  # Invalid enum
                 "currency": "TOOLONG",  # Invalid length
-            }
+            },
+            headers=headers,
         )
 
         assert response.status_code == 422
@@ -395,11 +402,11 @@ class TestErrorResponseStructure:
         headers = get_auth_headers(user)
 
         # Test various error endpoints
-        # Portfolios and transactions require auth, assets don't
+        # All protected endpoints require auth
         endpoints = [
             ("/portfolios/99999", "GET", True),
             ("/transactions/99999", "GET", True),
-            ("/assets/99999", "GET", False),
+            ("/assets/99999", "GET", True),
         ]
 
         for endpoint, method, requires_auth in endpoints:
@@ -563,10 +570,11 @@ class TestCascadingErrors:
         )
         assert response.status_code == 404
 
-        # Asset (doesn't require auth)
+        # Asset (requires auth)
         response = client.patch(
             "/assets/99999",
-            json={"name": "New Name"}
+            json={"name": "New Name"},
+            headers=headers,
         )
         assert response.status_code == 404
 
@@ -589,8 +597,8 @@ class TestCascadingErrors:
         response = client.delete("/portfolios/99999", headers=headers)
         assert response.status_code == 404
 
-        # Asset (doesn't require auth)
-        response = client.delete("/assets/99999")
+        # Asset (requires auth)
+        response = client.delete("/assets/99999", headers=headers)
         assert response.status_code == 404
 
         # Transaction (requires auth)

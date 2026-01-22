@@ -46,6 +46,9 @@ from app.services.upload.parsers.base import (
     ParseError,
     ParseResult,
     DateFormat,
+    DateDetectionStatus,
+    DateInterpretation,
+    DateDetectionResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -236,6 +239,305 @@ class CSVTransactionParser(TransactionFileParser):
         )
 
         return result
+
+    def detect_date_format(
+            self,
+            file: BinaryIO,
+            filename: str,
+            max_samples: int = 5,
+    ) -> DateDetectionResult:
+        """
+        Detect the date format used in a CSV file.
+
+        Analyzes all dates in the file and determines:
+        - If dates are unambiguous (only one format works)
+        - If dates are ambiguous (multiple formats could work)
+        - If dates are invalid in all formats
+
+        A date like "1/22/2021" is a "disambiguator" because day=22 > 12,
+        meaning it can only be US format (M/D/Y), not EU format (D/M/Y).
+
+        Args:
+            file: Binary file object containing CSV data
+            filename: Original filename for error messages
+            max_samples: Maximum number of sample dates to return
+
+        Returns:
+            DateDetectionResult with status, detected format, and samples
+        """
+        logger.info(f"Detecting date format for: {filename}")
+
+        # Read and decode file content
+        try:
+            content = self._read_file_content(file)
+        except Exception as e:
+            logger.error(f"Failed to read file {filename}: {e}", exc_info=True)
+            return DateDetectionResult(
+                status=DateDetectionStatus.ERROR,
+                reason=f"Could not read file: {e}",
+            )
+
+        # Parse CSV to extract dates
+        try:
+            reader = csv.DictReader(io.StringIO(content))
+
+            if not reader.fieldnames:
+                return DateDetectionResult(
+                    status=DateDetectionStatus.ERROR,
+                    reason="CSV file has no headers",
+                )
+
+            # Build column mapping
+            column_map = self._build_column_map(reader.fieldnames)
+
+            if "date" not in column_map:
+                return DateDetectionResult(
+                    status=DateDetectionStatus.ERROR,
+                    reason="CSV file has no date column",
+                )
+
+            date_column = column_map["date"]
+
+            # Collect all date values with their row numbers
+            date_values: list[tuple[int, str]] = []
+            for row_num, row in enumerate(reader, start=2):
+                raw_date = row.get(date_column, "").strip()
+                if raw_date:
+                    date_values.append((row_num, raw_date))
+
+            if not date_values:
+                return DateDetectionResult(
+                    status=DateDetectionStatus.ERROR,
+                    reason="No dates found in file",
+                )
+
+            # Analyze dates and determine viable formats
+            return self._analyze_dates(date_values, max_samples)
+
+        except csv.Error as e:
+            logger.error(f"CSV parsing error in {filename}: {e}")
+            return DateDetectionResult(
+                status=DateDetectionStatus.ERROR,
+                reason=f"Invalid CSV format: {e}",
+            )
+
+    def _analyze_dates(
+            self,
+            date_values: list[tuple[int, str]],
+            max_samples: int,
+    ) -> DateDetectionResult:
+        """
+        Analyze date values to determine the format.
+
+        For each date, tries parsing with ISO, US, and EU formats.
+        Tracks which formats remain viable across all dates.
+
+        Args:
+            date_values: List of (row_number, raw_date) tuples
+            max_samples: Maximum samples to include in result
+
+        Returns:
+            DateDetectionResult with detection status and samples
+        """
+        # Track viable formats
+        iso_viable = True
+        us_viable = True
+        eu_viable = True
+
+        # Build interpretations for all dates
+        interpretations: list[DateInterpretation] = []
+        disambiguators: list[DateInterpretation] = []
+
+        for row_num, raw_date in date_values:
+            interpretation = self._interpret_date(row_num, raw_date)
+            interpretations.append(interpretation)
+
+            # Update viability based on this date
+            if interpretation.iso_interpretation is None:
+                iso_viable = False
+            if interpretation.us_interpretation is None:
+                us_viable = False
+            if interpretation.eu_interpretation is None:
+                eu_viable = False
+
+            # Track disambiguators
+            if interpretation.is_disambiguator:
+                disambiguators.append(interpretation)
+
+        # Determine result based on viable formats
+        viable_formats = []
+        if iso_viable:
+            viable_formats.append(DateFormat.ISO)
+        if us_viable:
+            viable_formats.append(DateFormat.US)
+        if eu_viable:
+            viable_formats.append(DateFormat.EU)
+
+        # Select samples: prefer disambiguators, then first few dates
+        samples = []
+        seen_rows = set()
+
+        # Add disambiguators first
+        for interp in disambiguators[:max_samples]:
+            if interp.row_number not in seen_rows:
+                samples.append(interp)
+                seen_rows.add(interp.row_number)
+
+        # Fill with other dates if needed
+        for interp in interpretations:
+            if len(samples) >= max_samples:
+                break
+            if interp.row_number not in seen_rows:
+                samples.append(interp)
+                seen_rows.add(interp.row_number)
+
+        # Sort samples by row number
+        samples.sort(key=lambda x: x.row_number)
+
+        # Build result
+        if len(viable_formats) == 0:
+            return DateDetectionResult(
+                status=DateDetectionStatus.ERROR,
+                samples=samples,
+                reason="No valid date format found. Dates could not be parsed "
+                       "as ISO (YYYY-MM-DD), US (M/D/YYYY), or EU (D/M/YYYY).",
+            )
+        elif len(viable_formats) == 1:
+            detected = viable_formats[0]
+            format_names = {
+                DateFormat.ISO: "ISO (YYYY-MM-DD)",
+                DateFormat.US: "US (M/D/YYYY)",
+                DateFormat.EU: "EU (D/M/YYYY)",
+            }
+            return DateDetectionResult(
+                status=DateDetectionStatus.UNAMBIGUOUS,
+                detected_format=detected,
+                samples=samples,
+                reason=f"Detected {format_names[detected]} format.",
+            )
+        else:
+            format_names = []
+            if DateFormat.ISO in viable_formats:
+                format_names.append("ISO")
+            if DateFormat.US in viable_formats:
+                format_names.append("US")
+            if DateFormat.EU in viable_formats:
+                format_names.append("EU")
+            return DateDetectionResult(
+                status=DateDetectionStatus.AMBIGUOUS,
+                samples=samples,
+                reason=f"Dates are ambiguous between {' and '.join(format_names)} formats. "
+                       "All date values have day and month <= 12.",
+            )
+
+    def _interpret_date(
+            self,
+            row_number: int,
+            raw_date: str,
+    ) -> DateInterpretation:
+        """
+        Try to interpret a date value under all formats.
+
+        Args:
+            row_number: Row where date appears
+            raw_date: Raw date string
+
+        Returns:
+            DateInterpretation showing how date parses under each format
+        """
+        interpretation = DateInterpretation(
+            raw_value=raw_date,
+            row_number=row_number,
+        )
+
+        # Try ISO format
+        iso_result = self._try_parse_date(raw_date, DateFormat.ISO)
+        if iso_result:
+            interpretation.iso_interpretation = iso_result
+
+        # Try US format
+        us_result = self._try_parse_date(raw_date, DateFormat.US)
+        if us_result:
+            interpretation.us_interpretation = us_result
+
+        # Try EU format
+        eu_result = self._try_parse_date(raw_date, DateFormat.EU)
+        if eu_result:
+            interpretation.eu_interpretation = eu_result
+
+        # Determine if this date is a disambiguator
+        # A date disambiguates if it eliminates at least one format
+        valid_count = sum([
+            bool(iso_result),
+            bool(us_result),
+            bool(eu_result),
+        ])
+
+        # If exactly one format works, or if US and EU differ (one is None),
+        # this date helps disambiguate
+        if valid_count == 1:
+            interpretation.is_disambiguator = True
+        elif us_result and eu_result and us_result != eu_result:
+            # Both parse but give different dates - check if one has day > 12
+            # which would make it invalid for the other format
+            interpretation.is_disambiguator = self._has_day_over_12(raw_date)
+        elif (us_result and not eu_result) or (eu_result and not us_result):
+            interpretation.is_disambiguator = True
+
+        return interpretation
+
+    def _try_parse_date(self, value: str, date_format: DateFormat) -> str | None:
+        """
+        Try to parse a date with the specified format.
+
+        Args:
+            value: Raw date string
+            date_format: Format to try
+
+        Returns:
+            ISO format date string if successful, None otherwise
+        """
+        value = value.strip()
+        patterns = self.DATE_FORMAT_PATTERNS.get(date_format, [])
+
+        for fmt in patterns:
+            try:
+                dt = datetime.strptime(value, fmt)
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+
+        # Also try ISO format with time component (always accepted)
+        if date_format == DateFormat.ISO:
+            try:
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                return dt.strftime("%Y-%m-%d")
+            except ValueError:
+                pass
+
+        return None
+
+    def _has_day_over_12(self, raw_date: str) -> bool:
+        """
+        Check if a date string contains a component > 12.
+
+        This indicates that the date cannot be both US and EU format,
+        as one of month/day must be > 12.
+
+        Args:
+            raw_date: Raw date string
+
+        Returns:
+            True if any numeric component > 12
+        """
+        import re
+        # Extract numeric components
+        components = re.findall(r'\d+', raw_date)
+        for comp in components:
+            val = int(comp)
+            if 12 < val <= 31:
+                return True
+        return False
 
     # =========================================================================
     # PRIVATE METHODS

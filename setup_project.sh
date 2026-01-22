@@ -142,12 +142,17 @@ if ! command -v docker &> /dev/null; then
 fi
 print_success "Docker installed"
 
-# Check Docker Compose
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+# Check Docker Compose and determine which command to use
+DOCKER_COMPOSE=""
+if docker compose version &> /dev/null; then
+    DOCKER_COMPOSE="docker compose"
+elif command -v docker-compose &> /dev/null; then
+    DOCKER_COMPOSE="docker-compose"
+else
     print_error "Docker Compose is not installed."
     exit 1
 fi
-print_success "Docker Compose installed"
+print_success "Docker Compose installed (using '$DOCKER_COMPOSE')"
 
 # Check if Docker daemon is running
 if ! docker info &> /dev/null; then
@@ -155,6 +160,13 @@ if ! docker info &> /dev/null; then
     exit 1
 fi
 print_success "Docker daemon running"
+
+# Check curl (used for health checks)
+if ! command -v curl &> /dev/null; then
+    print_error "curl is not installed. Please install curl first."
+    exit 1
+fi
+print_success "curl installed"
 
 # Check Node.js (for frontend)
 if [ "$SETUP_FRONTEND" = true ]; then
@@ -259,7 +271,7 @@ if [ "$FRESH_START" = true ]; then
 
     # Stop and remove containers
     cd "$PROJECT_ROOT"
-    docker-compose down -v 2>/dev/null || true
+    $DOCKER_COMPOSE down -v 2>/dev/null || true
 
     # Remove any orphan volumes
     docker volume rm investment-analyzer_postgres_data 2>/dev/null || true
@@ -275,12 +287,12 @@ print_step "Building and starting Docker containers..."
 cd "$PROJECT_ROOT"
 
 # Check if containers are already running
-if docker-compose ps --services --filter "status=running" 2>/dev/null | grep -q "backend"; then
+if $DOCKER_COMPOSE ps --services --filter "status=running" 2>/dev/null | grep -q "backend"; then
     print_info "Containers already running. Restarting..."
-    docker-compose restart
+    $DOCKER_COMPOSE restart
 else
     print_info "Starting containers (this may take a moment on first run)..."
-    docker-compose up -d --build
+    $DOCKER_COMPOSE up -d --build
 fi
 
 print_success "Containers started"
@@ -295,7 +307,7 @@ if [ "$WAIT_FOR_SERVICES" = true ]; then
     RETRY_COUNT=0
 
     while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-        if docker-compose exec -T investment_db pg_isready -U admin -d investment_portfolio > /dev/null 2>&1; then
+        if $DOCKER_COMPOSE exec -T investment_db pg_isready -U admin -d investment_portfolio > /dev/null 2>&1; then
             print_success "PostgreSQL is ready"
             break
         fi
@@ -306,7 +318,7 @@ if [ "$WAIT_FOR_SERVICES" = true ]; then
     echo ""
 
     if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-        print_error "PostgreSQL failed to start. Check logs with: docker-compose logs investment_db"
+        print_error "PostgreSQL failed to start. Check logs with: $DOCKER_COMPOSE logs investment_db"
         exit 1
     fi
 fi
@@ -317,10 +329,10 @@ fi
 print_step "Initializing database schema..."
 
 # Run init_db.py to create tables
-docker-compose exec -T backend python /app/init_db.py
+$DOCKER_COMPOSE exec -T backend python /app/init_db.py
 
 # Stamp Alembic to mark current state as migrated
-docker-compose exec -T backend alembic stamp head 2>/dev/null || true
+$DOCKER_COMPOSE exec -T backend alembic stamp head 2>/dev/null || true
 
 print_success "Database schema initialized"
 
@@ -346,7 +358,7 @@ if [ "$WAIT_FOR_SERVICES" = true ]; then
     echo ""
 
     if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-        print_warn "API may not be ready yet. Check logs with: docker-compose logs backend"
+        print_warn "API may not be ready yet. Check logs with: $DOCKER_COMPOSE logs backend"
     fi
 fi
 
@@ -380,7 +392,7 @@ print_step "Seeding test user (dev only)..."
 # This is for LOCAL DEVELOPMENT convenience only.
 # In production, users should be created through proper registration flows.
 # Hash generated with: python -c "from passlib.hash import bcrypt; print(bcrypt.hash('password123'))"
-docker-compose exec -T investment_db psql -U admin -d investment_portfolio -c "
+$DOCKER_COMPOSE exec -T investment_db psql -U admin -d investment_portfolio -c "
 INSERT INTO users (email, hashed_password, is_email_verified, is_active, created_at, updated_at)
 VALUES ('test@example.com', '\$2b\$12\$D1YpH7zZtP9nXP89zArmIec/QClo0ojAYakC4iaY4xtQZIv4VS7ta', true, true, NOW(), NOW())
 ON CONFLICT (email) DO NOTHING;"
@@ -458,9 +470,9 @@ echo ""
 echo "COMMON COMMANDS:"
 echo "  Start frontend:   cd frontend && npm run dev"
 echo "  Build frontend:   cd frontend && npm run build"
-echo "  View logs:        docker-compose logs -f backend"
-echo "  Run tests:        docker-compose exec backend pytest"
-echo "  Stop services:    docker-compose down"
+echo "  View logs:        $DOCKER_COMPOSE logs -f backend"
+echo "  Run tests:        $DOCKER_COMPOSE exec backend pytest"
+echo "  Stop services:    $DOCKER_COMPOSE down"
 echo "  Fresh restart:    ./setup_project.sh --fresh"
 echo ""
 echo "API ENDPOINTS:"

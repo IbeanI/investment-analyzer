@@ -20,10 +20,8 @@ from app.routers.portfolios import router as portfolios_router
 from app.routers.sync import router as sync_router
 from app.routers.transactions import router as transactions_router
 from app.routers.upload import router as upload_router
+from app.routers.users import router as users_router
 from app.routers.valuation import router as valuation_router
-
-# Will be added as we create them:
-# from app.routers.users import router as users_router
 
 __all__ = [
     "assets_router",
@@ -33,6 +31,6 @@ __all__ = [
     "sync_router",
     "valuation_router",
     "analytics_router",
-    # "users_router",
+    "users_router",
     "portfolio_settings_router",
 ]

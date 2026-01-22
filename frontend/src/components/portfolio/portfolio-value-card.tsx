@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { TrendingUp, TrendingDown, Minus } from "lucide-react";
 import { motion, useSpring, useTransform } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -47,14 +47,6 @@ export function PortfolioValueCard({
   currency,
   isLoading,
 }: PortfolioValueCardProps) {
-  const [hasAnimated, setHasAnimated] = useState(false);
-
-  useEffect(() => {
-    if (value !== null && !hasAnimated) {
-      setHasAnimated(true);
-    }
-  }, [value, hasAnimated]);
-
   if (isLoading) {
     return (
       <Card>

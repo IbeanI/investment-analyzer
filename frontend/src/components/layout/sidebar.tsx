@@ -6,7 +6,6 @@ import { useState } from "react";
 import {
   Home,
   Briefcase,
-  BarChart3,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -39,11 +38,6 @@ const navItems = [
     label: "Portfolios",
     href: "/portfolios",
     icon: Briefcase,
-  },
-  {
-    label: "Analytics",
-    href: "/analytics",
-    icon: BarChart3,
   },
   {
     label: "Settings",

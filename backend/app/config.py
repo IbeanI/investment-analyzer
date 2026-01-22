@@ -187,6 +187,26 @@ class Settings(BaseSettings):
         description="Frontend URL for email links"
     )
 
+    # =========================================================================
+    # CORS
+    # =========================================================================
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://127.0.0.1:3000"],
+        description="Allowed CORS origins (comma-separated in env var)"
+    )
+    cors_allow_credentials: bool = Field(
+        default=True,
+        description="Allow credentials in CORS requests"
+    )
+    cors_allow_methods: list[str] = Field(
+        default=["*"],
+        description="Allowed HTTP methods for CORS"
+    )
+    cors_allow_headers: list[str] = Field(
+        default=["*"],
+        description="Allowed HTTP headers for CORS"
+    )
+
     model_config = SettingsConfigDict(
         env_file=str(_ENV_FILE) if _ENV_FILE.exists() else None,
         env_file_encoding="utf-8",

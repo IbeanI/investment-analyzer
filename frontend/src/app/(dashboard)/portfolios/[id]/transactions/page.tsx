@@ -1,8 +1,8 @@
 "use client";
 
-import { use, useState } from "react";
+import { use, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Upload, FileSpreadsheet } from "lucide-react";
+import { ArrowLeft, Plus, Upload, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -27,13 +27,12 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
 import { TransactionForm, TransactionList, CsvUpload } from "@/components/forms";
 import { usePortfolio } from "@/hooks/use-portfolios";
-import { useTransactions } from "@/hooks/use-transactions";
+import { useInfiniteTransactions } from "@/hooks/use-transactions";
 import type { Transaction } from "@/types/api";
 
 interface PageProps {
@@ -45,13 +44,24 @@ export default function TransactionsPage({ params }: PageProps) {
   const portfolioId = parseInt(id, 10);
 
   const { data: portfolio, isLoading: portfolioLoading } = usePortfolio(portfolioId);
-  const { data: transactionsData, isLoading: transactionsLoading } =
-    useTransactions(portfolioId);
+  const {
+    data: transactionsData,
+    isLoading: transactionsLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteTransactions(portfolioId);
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [editTransaction, setEditTransaction] = useState<Transaction | null>(null);
 
-  const transactions = transactionsData?.items || [];
+  // Flatten all pages into a single array
+  const transactions = useMemo(() => {
+    return transactionsData?.pages.flatMap((page) => page.items) || [];
+  }, [transactionsData]);
+
+  // Get total count from first page's pagination
+  const totalCount = transactionsData?.pages[0]?.pagination.total || 0;
 
   if (portfolioLoading) {
     return (
@@ -178,8 +188,9 @@ export default function TransactionsPage({ params }: PageProps) {
         <CardHeader>
           <CardTitle>Transaction History</CardTitle>
           <CardDescription>
-            {transactions.length} transaction{transactions.length !== 1 ? "s" : ""}{" "}
-            recorded
+            {totalCount > 0
+              ? `Showing ${transactions.length} of ${totalCount} transaction${totalCount !== 1 ? "s" : ""}`
+              : "No transactions recorded"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -190,12 +201,32 @@ export default function TransactionsPage({ params }: PageProps) {
               ))}
             </div>
           ) : (
-            <TransactionList
-              transactions={transactions}
-              portfolioId={portfolioId}
-              currency={portfolio.currency}
-              onEdit={setEditTransaction}
-            />
+            <>
+              <TransactionList
+                transactions={transactions}
+                portfolioId={portfolioId}
+                currency={portfolio.currency}
+                onEdit={setEditTransaction}
+              />
+              {hasNextPage && (
+                <div className="mt-4 flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => fetchNextPage()}
+                    disabled={isFetchingNextPage}
+                  >
+                    {isFetchingNextPage ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Loading...
+                      </>
+                    ) : (
+                      `Load More (${totalCount - transactions.length} remaining)`
+                    )}
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

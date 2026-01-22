@@ -69,7 +69,7 @@ export function PerformanceSummary({
   performance,
   risk,
   benchmark,
-  currency,
+  currency: _currency,
   isLoading,
 }: PerformanceSummaryProps) {
   const formatPct = (value: string | null | undefined): string | null => {

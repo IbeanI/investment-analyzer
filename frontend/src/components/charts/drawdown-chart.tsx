@@ -37,8 +37,8 @@ interface ChartDataPoint {
 export function DrawdownChart({
   data,
   maxDrawdown,
-  maxDrawdownStart,
-  maxDrawdownEnd,
+  maxDrawdownStart: _maxDrawdownStart,
+  maxDrawdownEnd: _maxDrawdownEnd,
   currentDrawdown,
   drawdownPeriods = [],
   isLoading,

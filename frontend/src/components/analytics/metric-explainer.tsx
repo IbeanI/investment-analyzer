@@ -9,7 +9,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { cn, formatPercentage } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
 // Metric Definitions

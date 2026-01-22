@@ -118,6 +118,60 @@ export interface GoogleAuthUrlResponse {
 }
 
 // -----------------------------------------------------------------------------
+// User Settings Types
+// -----------------------------------------------------------------------------
+
+export type Theme = "light" | "dark" | "system";
+export type DateFormat = "YYYY-MM-DD" | "MM/DD/YYYY" | "DD/MM/YYYY";
+export type NumberFormat = "US" | "EU";
+
+export interface UserSettings {
+  theme: Theme;
+  date_format: DateFormat;
+  number_format: NumberFormat;
+  default_currency: string;
+  default_benchmark: string | null;
+  timezone: string;
+}
+
+export interface UserSettingsUpdate {
+  theme?: Theme | null;
+  date_format?: DateFormat | null;
+  number_format?: NumberFormat | null;
+  default_currency?: string | null;
+  default_benchmark?: string | null;
+  timezone?: string | null;
+}
+
+// -----------------------------------------------------------------------------
+// User Profile Types
+// -----------------------------------------------------------------------------
+
+export interface UserProfile {
+  id: number;
+  email: string;
+  full_name: string | null;
+  picture_url: string | null;
+  has_password: boolean;
+  oauth_provider: string | null;
+  created_at: string;
+}
+
+export interface UserProfileUpdate {
+  full_name?: string | null;
+}
+
+export interface PasswordChangeRequest {
+  current_password: string;
+  new_password: string;
+}
+
+export interface AccountDeleteRequest {
+  password?: string | null;
+  confirmation: string;
+}
+
+// -----------------------------------------------------------------------------
 // Asset Types
 // -----------------------------------------------------------------------------
 
@@ -558,7 +612,33 @@ export interface SyncTriggerResponse {
 // Upload Types
 // -----------------------------------------------------------------------------
 
+export type UploadDateFormat = "ISO" | "US" | "EU" | "AUTO";
+
 export interface UploadResult {
+  success: boolean;
+  filename: string;
+  total_rows: number;
+  created_count: number;
+  error_count: number;
+  errors: Array<{
+    row_number: number;
+    stage: string;
+    error_type: string;
+    message: string;
+    field: string | null;
+  }>;
+  warnings: Array<{
+    row_number: number;
+    stage: string;
+    error_type: string;
+    message: string;
+    field: string | null;
+  }>;
+  created_transaction_ids: number[];
+}
+
+// For backwards compatibility
+export interface UploadResultLegacy {
   success_count: number;
   error_count: number;
   errors: Array<{
@@ -566,6 +646,28 @@ export interface UploadResult {
     field: string;
     message: string;
   }>;
+}
+
+export interface DateSample {
+  raw_value: string;
+  row_number: number;
+  us_interpretation: string | null;
+  eu_interpretation: string | null;
+  iso_interpretation: string | null;
+  is_disambiguator: boolean;
+}
+
+export interface DateDetectionResult {
+  status: "unambiguous" | "ambiguous" | "error";
+  detected_format: "ISO" | "US" | "EU" | null;
+  samples: DateSample[];
+  reason: string;
+}
+
+export interface AmbiguousDateFormatError {
+  error: "ambiguous_date_format";
+  message: string;
+  detection: DateDetectionResult;
 }
 
 // -----------------------------------------------------------------------------

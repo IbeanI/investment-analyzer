@@ -510,7 +510,7 @@ class UnrealizedPnLCalculator:
 
     Formula:
         unrealized_pnl = current_value - cost_basis
-        unrealized_pct = (unrealized_pnl / cost_basis) × 100
+        unrealized_pct = unrealized_pnl / cost_basis (decimal ratio, 0.1735 = 17.35%)
 
     Note:
         Returns None for amount/percentage if current value is unknown.
@@ -538,13 +538,13 @@ class UnrealizedPnLCalculator:
         # Calculate P&L
         unrealized_pnl = current_value_portfolio - cost_basis_portfolio
 
-        # Calculate percentage (guard against division by zero)
+        # Calculate percentage as decimal ratio (guard against division by zero)
         if cost_basis_portfolio == Decimal("0"):
             unrealized_pct = None
         else:
             unrealized_pct = (
-                    (unrealized_pnl / cost_basis_portfolio) * Decimal("100")
-            ).quantize(Decimal("0.01"))
+                    unrealized_pnl / cost_basis_portfolio
+            ).quantize(Decimal("0.0001"))
 
         return unrealized_pnl.quantize(Decimal("0.01")), unrealized_pct
 
@@ -560,7 +560,7 @@ class RealizedPnLCalculator:
     Uses Weighted Average Cost method:
         cost_of_sold = sold_qty × avg_cost_per_share
         realized_pnl = sale_proceeds - cost_of_sold
-        realized_pct = (realized_pnl / cost_of_sold) × 100
+        realized_pct = realized_pnl / cost_of_sold (decimal ratio, 0.1735 = 17.35%)
 
     Return States:
         - No sales (total_sold_qty == 0): Returns (0, None) - normal, no realized P&L
@@ -612,14 +612,14 @@ class RealizedPnLCalculator:
         # Realized P&L = Proceeds - Cost of sold shares
         realized_pnl = position.total_sold_proceeds_portfolio - cost_of_sold
 
-        # Calculate percentage (handle edge case of zero cost)
+        # Calculate percentage as decimal ratio (handle edge case of zero cost)
         if cost_of_sold == Decimal("0"):
             # Free shares sold - infinite return, return None
             realized_pct = None
         else:
             realized_pct = (
-                    (realized_pnl / cost_of_sold) * Decimal("100")
-            ).quantize(Decimal("0.01"))
+                    realized_pnl / cost_of_sold
+            ).quantize(Decimal("0.0001"))
 
         return realized_pnl.quantize(Decimal("0.01")), realized_pct
 

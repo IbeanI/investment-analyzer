@@ -6,7 +6,6 @@ import { useTheme } from "next-themes";
 import {
   Home,
   Briefcase,
-  BarChart3,
   Settings,
   LogOut,
   Moon,
@@ -32,11 +31,6 @@ const navItems = [
     label: "Portfolios",
     href: "/portfolios",
     icon: Briefcase,
-  },
-  {
-    label: "Analytics",
-    href: "/analytics",
-    icon: BarChart3,
   },
   {
     label: "Settings",

@@ -32,6 +32,9 @@ from pathlib import Path
 
 from app.services.upload.parsers.base import (
     DateFormat,
+    DateDetectionStatus,
+    DateInterpretation,
+    DateDetectionResult,
     TransactionFileParser,
     ParsedTransactionRow,
     ParseError,
@@ -169,6 +172,10 @@ def get_supported_content_types() -> list[str]:
 __all__ = [
     # Enums
     "DateFormat",
+    "DateDetectionStatus",
+    # Detection types
+    "DateInterpretation",
+    "DateDetectionResult",
     # Factory
     "get_parser",
     "get_supported_extensions",

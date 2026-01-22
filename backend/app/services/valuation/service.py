@@ -684,8 +684,8 @@ class ValuationService:
             total_amount = unrealized_amount + realized_amount
             if cost_basis.portfolio_amount > Decimal("0"):
                 total_pct = (
-                        (total_amount / cost_basis.portfolio_amount) * Decimal("100")
-                ).quantize(Decimal("0.01"))
+                        total_amount / cost_basis.portfolio_amount
+                ).quantize(Decimal("0.0001"))
             else:
                 total_pct = None
         else:

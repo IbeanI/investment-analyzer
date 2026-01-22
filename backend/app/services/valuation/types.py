@@ -367,11 +367,11 @@ class PortfolioValuation:
 
     @property
     def total_pnl_percentage(self) -> Decimal | None:
-        """Total P&L as percentage of cost basis."""
+        """Total P&L as decimal ratio of cost basis (0.1735 = 17.35%)."""
         if self.total_pnl is None or self.total_cost_basis == Decimal("0"):
             return None
-        return ((self.total_pnl / self.total_cost_basis) * Decimal("100")).quantize(
-            Decimal("0.01")
+        return (self.total_pnl / self.total_cost_basis).quantize(
+            Decimal("0.0001")
         )
 
 
@@ -454,11 +454,11 @@ class HistoryPoint:
 
     @property
     def pnl_percentage(self) -> Decimal | None:
-        """P&L as percentage of cost basis."""
+        """P&L as decimal ratio of cost basis (0.1735 = 17.35%)."""
         if self.total_pnl is None or self.cost_basis == Decimal("0"):
             return None
-        return ((self.total_pnl / self.cost_basis) * Decimal("100")).quantize(
-            Decimal("0.01")
+        return (self.total_pnl / self.cost_basis).quantize(
+            Decimal("0.0001")
         )
 
 

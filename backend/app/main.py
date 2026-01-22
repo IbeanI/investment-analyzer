@@ -29,6 +29,7 @@ from app.routers import (
     sync_router,
     valuation_router,
     analytics_router,
+    users_router,
 )
 from app.routers.portfolio_settings import router as portfolio_settings_router
 from app.routers.auth import router as auth_router
@@ -88,16 +89,14 @@ app = FastAPI(
 # =============================================================================
 # Must be added before other middleware
 # Configure allowed origins for frontend access
+# Origins are configured via CORS_ORIGINS environment variable
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",  # Next.js dev server
-        "http://127.0.0.1:3000",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_allow_credentials,
+    allow_methods=settings.cors_allow_methods,
+    allow_headers=settings.cors_allow_headers,
 )
 
 
@@ -569,6 +568,7 @@ app.include_router(sync_router)  # /portfolios/{id}/sync/* (Phase 3)
 app.include_router(valuation_router)  # /portfolios/{id}/valuation/* (Phase 4)
 app.include_router(analytics_router)  # /portfolios/{id}/analytics/* (Phase 5)
 app.include_router(portfolio_settings_router)  # /portfolios/{id}/settings
+app.include_router(users_router)  # /users/me/*
 
 
 # =============================================================================

@@ -10,9 +10,9 @@ All endpoints require authentication. Users can only access their own portfolios
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import AfterValidator
-from sqlalchemy import select, func
+from sqlalchemy import select, func, and_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -26,6 +26,7 @@ from app.schemas.portfolios import (
 )
 from app.schemas.validators import validate_currency_query
 from app.dependencies import get_current_user, get_portfolio_with_owner_check
+from app.utils import escape_like_pattern
 
 # Validated query parameter type
 CurrencyQuery = Annotated[str | None, AfterValidator(validate_currency_query)]
@@ -63,7 +64,23 @@ def create_portfolio(
     - **currency**: Base currency for valuations (EUR, USD, etc.)
 
     A user can have multiple portfolios (e.g., "Retirement", "Trading").
+    Portfolio names must be unique per user.
     """
+    # Check if portfolio with same name already exists for this user
+    existing = db.scalar(
+        select(Portfolio).where(
+            and_(
+                Portfolio.user_id == current_user.id,
+                Portfolio.name == portfolio.name,
+            )
+        )
+    )
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Portfolio with name '{portfolio.name}' already exists"
+        )
+
     # Create the portfolio with user_id from JWT
     db_portfolio = Portfolio(
         name=portfolio.name,
@@ -118,8 +135,9 @@ def list_portfolios(
         query = query.where(Portfolio.currency == currency)  # Already normalized by validator
 
     if search is not None:
-        search_pattern = f"%{search}%"
-        query = query.where(Portfolio.name.ilike(search_pattern))
+        # Escape SQL wildcards to prevent query manipulation
+        search_pattern = f"%{escape_like_pattern(search)}%"
+        query = query.where(Portfolio.name.ilike(search_pattern, escape="\\"))
 
     # Order by creation date (newest first)
     query = query.order_by(Portfolio.created_at.desc())
@@ -179,8 +197,26 @@ def update_portfolio(
 
     Raises **404** if the portfolio does not exist.
     Raises **403** if you don't own the portfolio.
+    Raises **409** if the new name conflicts with an existing portfolio.
     """
     update_data = portfolio_update.model_dump(exclude_unset=True)
+
+    # Check for name uniqueness if name is being changed
+    if "name" in update_data and update_data["name"] != portfolio.name:
+        existing = db.scalar(
+            select(Portfolio).where(
+                and_(
+                    Portfolio.user_id == portfolio.user_id,
+                    Portfolio.name == update_data["name"],
+                    Portfolio.id != portfolio.id,
+                )
+            )
+        )
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Portfolio with name '{update_data['name']}' already exists"
+            )
 
     # Apply updates
     for field, value in update_data.items():

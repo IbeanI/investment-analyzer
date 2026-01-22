@@ -28,17 +28,17 @@ from typing import BinaryIO, Any
 class DateFormat(str, Enum):
     """
     Supported date formats for file uploads.
-    
+
     User must specify which format their file uses to avoid ambiguity
     between formats like M/D/YYYY (US) and D/M/YYYY (EU).
-    
+
     Example:
         "1/2/2021" could mean:
         - January 2, 2021 (US format)
         - February 1, 2021 (EU format)
-        
+
         By requiring explicit format declaration, we eliminate this ambiguity.
-    
+
     Usage:
         POST /upload/transactions?portfolio_id=1&date_format=US
     """
@@ -48,9 +48,86 @@ class DateFormat(str, Enum):
     EU = "EU"  # D/M/YYYY (European)
 
 
+class DateDetectionStatus(str, Enum):
+    """
+    Result status of automatic date format detection.
+
+    UNAMBIGUOUS: Only one format is valid for all dates in the file
+    AMBIGUOUS: Multiple formats could be valid (e.g., all dates have day <= 12)
+    ERROR: No valid format found (dates are invalid in all formats)
+    """
+    UNAMBIGUOUS = "unambiguous"
+    AMBIGUOUS = "ambiguous"
+    ERROR = "error"
+
+
 # =============================================================================
 # DATA CLASSES
 # =============================================================================
+
+@dataclass
+class DateInterpretation:
+    """
+    Shows how a single date value would be interpreted under different formats.
+
+    Used to help users understand ambiguous dates and choose the correct format.
+
+    Attributes:
+        raw_value: The original date string from the file
+        row_number: 1-based row number where this date appears
+        us_interpretation: Date as ISO string if valid under US format (M/D/Y)
+        eu_interpretation: Date as ISO string if valid under EU format (D/M/Y)
+        iso_interpretation: Date as ISO string if valid under ISO format (Y-M-D)
+        is_disambiguator: True if this date proves a specific format
+                          (e.g., day > 12 proves it's not EU format)
+    """
+    raw_value: str
+    row_number: int
+    us_interpretation: str | None = None
+    eu_interpretation: str | None = None
+    iso_interpretation: str | None = None
+    is_disambiguator: bool = False
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "raw_value": self.raw_value,
+            "row_number": self.row_number,
+            "us_interpretation": self.us_interpretation,
+            "eu_interpretation": self.eu_interpretation,
+            "iso_interpretation": self.iso_interpretation,
+            "is_disambiguator": self.is_disambiguator,
+        }
+
+
+@dataclass
+class DateDetectionResult:
+    """
+    Result of automatic date format detection.
+
+    Contains the detection status, detected format (if unambiguous),
+    and sample dates showing how they would be interpreted.
+
+    Attributes:
+        status: Detection outcome (unambiguous, ambiguous, or error)
+        detected_format: The detected format if status is UNAMBIGUOUS
+        samples: Sample dates showing interpretations (for user preview)
+        reason: Human-readable explanation of the result
+    """
+    status: DateDetectionStatus
+    detected_format: DateFormat | None = None
+    samples: list[DateInterpretation] = field(default_factory=list)
+    reason: str = ""
+
+    def to_dict(self) -> dict:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "status": self.status.value,
+            "detected_format": self.detected_format.value if self.detected_format else None,
+            "samples": [s.to_dict() for s in self.samples],
+            "reason": self.reason,
+        }
+
 
 @dataclass
 class ParsedTransactionRow:

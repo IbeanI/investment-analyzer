@@ -3,10 +3,20 @@
 Tests for correlation ID middleware and context management.
 """
 
+import os
+
+os.environ.setdefault("DATABASE_URL", "sqlite:///:memory:")
+os.environ.setdefault("APP_NAME", "Test App")
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.main import app
+from app.database import get_db
+from app.models import Base
 from app.utils.context import get_correlation_id, set_correlation_id, clear_correlation_id
 
 
@@ -34,10 +44,46 @@ class TestCorrelationIdContext:
 class TestCorrelationIdMiddleware:
     """Tests for correlation ID middleware."""
 
+    @pytest.fixture(scope="function")
+    def test_engine(self):
+        """Create an in-memory SQLite database engine."""
+        engine = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(engine)
+        yield engine
+        Base.metadata.drop_all(engine)
+
+    @pytest.fixture(scope="function")
+    def test_db(self, test_engine) -> Session:
+        """Create a database session for tests."""
+        TestingSessionLocal = sessionmaker(
+            autocommit=False, autoflush=False, bind=test_engine
+        )
+        session = TestingSessionLocal()
+        try:
+            yield session
+        finally:
+            session.rollback()
+            session.close()
+
     @pytest.fixture
-    def client(self):
-        """Create test client."""
-        return TestClient(app)
+    def client(self, test_db: Session):
+        """Create test client with database override."""
+        def override_get_db():
+            try:
+                yield test_db
+            finally:
+                pass
+
+        app.dependency_overrides[get_db] = override_get_db
+
+        with TestClient(app) as c:
+            yield c
+
+        app.dependency_overrides.clear()
 
     def test_generates_correlation_id_when_not_provided(self, client):
         """Should generate correlation ID when not provided in request."""

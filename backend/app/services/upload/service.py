@@ -250,6 +250,13 @@ class UploadService:
             return result
 
         # 4. Resolve Assets (Batch)
+        # Note: Asset resolution may create new assets in the database.
+        # These assets are global shared entities that persist regardless of
+        # whether transaction creation succeeds. This is acceptable because:
+        # - Assets are idempotent (ON CONFLICT DO NOTHING)
+        # - Orphan assets cause no harm and may be used by future uploads
+        # - The critical atomicity requirement is that ALL transactions are
+        #   created or NONE, which is handled in step 7
         asset_requests = [(row["ticker"], row["exchange"]) for row in validated_rows]
 
         try:

@@ -22,10 +22,19 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Query, HTTPException, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.middleware.rate_limit import (
+    limiter,
+    RATE_LIMIT_AUTH_LOGIN,
+    RATE_LIMIT_AUTH_REGISTER,
+    RATE_LIMIT_AUTH_PASSWORD_RESET,
+    RATE_LIMIT_AUTH_EMAIL,
+    RATE_LIMIT_AUTH_REFRESH,
+)
 from app.models import User
 from app.schemas.auth import (
     UserRegisterRequest,
@@ -43,6 +52,7 @@ from app.schemas.auth import (
 )
 from app.services.auth import AuthService, GoogleOAuthService
 from app.services.auth.service import TokenPair
+from app.services.auth.oauth_google import get_oauth_state_store
 from app.dependencies import get_auth_service, get_current_user
 
 
@@ -82,7 +92,9 @@ def _get_client_info(request: Request) -> tuple[str | None, str | None]:
     summary="Register a new user",
     description="Create a new user account with email and password. A verification email will be sent.",
 )
+@limiter.limit(RATE_LIMIT_AUTH_REGISTER)
 def register(
+    request: Request,  # Required for rate limiter
     data: UserRegisterRequest,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
@@ -103,6 +115,7 @@ def register(
     summary="Login with email and password",
     description="Authenticate with email and password. Returns access and refresh tokens.",
 )
+@limiter.limit(RATE_LIMIT_AUTH_LOGIN)
 def login(
     data: UserLoginRequest,
     request: Request,
@@ -133,6 +146,7 @@ def login(
     summary="Refresh access token",
     description="Get a new access token using a refresh token. The old refresh token is invalidated.",
 )
+@limiter.limit(RATE_LIMIT_AUTH_REFRESH)
 def refresh_token(
     data: TokenRefreshRequest,
     request: Request,
@@ -194,7 +208,9 @@ def logout_all(
     summary="Verify email address",
     description="Verify email address using the token sent via email.",
 )
+@limiter.limit(RATE_LIMIT_AUTH_EMAIL)
 def verify_email(
+    request: Request,  # Required for rate limiter
     data: VerifyEmailRequest,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
@@ -210,7 +226,9 @@ def verify_email(
     summary="Resend verification email",
     description="Resend the email verification link. Works even if email doesn't exist (for security).",
 )
+@limiter.limit(RATE_LIMIT_AUTH_EMAIL)
 def resend_verification(
+    request: Request,  # Required for rate limiter
     data: ResendVerificationRequest,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
@@ -231,7 +249,9 @@ def resend_verification(
     summary="Request password reset",
     description="Request a password reset email. Works even if email doesn't exist (for security).",
 )
+@limiter.limit(RATE_LIMIT_AUTH_PASSWORD_RESET)
 def forgot_password(
+    request: Request,  # Required for rate limiter
     data: ForgotPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
@@ -247,7 +267,9 @@ def forgot_password(
     summary="Reset password",
     description="Reset password using the token from the reset email.",
 )
+@limiter.limit(RATE_LIMIT_AUTH_PASSWORD_RESET)
 def reset_password(
+    request: Request,  # Required for rate limiter
     data: ResetPasswordRequest,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
@@ -287,8 +309,18 @@ def get_me(
     description="Get the URL to redirect the user to for Google OAuth authentication.",
 )
 def get_google_auth_url() -> GoogleAuthUrlResponse:
-    """Get Google OAuth authorization URL."""
+    """
+    Get Google OAuth authorization URL.
+
+    The state parameter is stored server-side for CSRF validation.
+    It must be passed back in the callback for the OAuth flow to succeed.
+    """
     url, state = GoogleOAuthService.get_authorization_url()
+
+    # Store state for CSRF validation in callback
+    state_store = get_oauth_state_store()
+    state_store.store(state)
+
     return GoogleAuthUrlResponse(authorization_url=url, state=state)
 
 
@@ -309,11 +341,17 @@ async def google_callback(
     Handle Google OAuth callback.
 
     This endpoint:
-    1. Exchanges the authorization code for tokens
-    2. Retrieves user info from Google
-    3. Creates user if they don't exist, or logs them in
-    4. Returns access and refresh tokens
+    1. Validates the state parameter (CSRF protection)
+    2. Exchanges the authorization code for tokens
+    3. Retrieves user info from Google
+    4. Creates user if they don't exist, or logs them in
+    5. Returns access and refresh tokens
     """
+    # Validate state parameter for CSRF protection
+    # This will raise OAuthError if state is invalid or expired
+    state_store = get_oauth_state_store()
+    state_store.validate_and_consume(state)
+
     # Exchange code for tokens
     google_tokens = await GoogleOAuthService.exchange_code_for_tokens(code)
     access_token = google_tokens.get("access_token")
@@ -327,12 +365,14 @@ async def google_callback(
     # Get user info from Google
     user_info = await GoogleOAuthService.get_user_info(access_token)
 
-    # Find or create user
-    user = db.execute(
-        select(User).where(User.email == user_info.email.lower())
-    ).scalar_one_or_none()
-
     device_info, ip_address = _get_client_info(request)
+    email_normalized = user_info.email.lower()
+
+    # Find or create user with race condition handling
+    # First, try to find existing user
+    user = db.execute(
+        select(User).where(User.email == email_normalized)
+    ).scalar_one_or_none()
 
     if user:
         # Existing user - update OAuth info if needed
@@ -340,7 +380,7 @@ async def google_callback(
             user.oauth_provider = "google"
             user.oauth_provider_id = user_info.id
 
-        # Update profile info from Google
+        # Update profile info from Google (only if not already set)
         if user_info.name and not user.full_name:
             user.full_name = user_info.name
         if user_info.picture and not user.picture_url:
@@ -353,20 +393,38 @@ async def google_callback(
 
         db.commit()
     else:
-        # Create new user
-        user = User(
-            email=user_info.email.lower(),
-            full_name=user_info.name,
-            picture_url=user_info.picture,
-            oauth_provider="google",
-            oauth_provider_id=user_info.id,
-            is_email_verified=True,  # Google verifies email
-            email_verified_at=datetime.now(timezone.utc),
-            is_active=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        # Create new user with race condition protection
+        # If two requests try to create the same user simultaneously,
+        # one will succeed and the other will get an IntegrityError.
+        # We handle this by catching the error and fetching the created user.
+        try:
+            user = User(
+                email=email_normalized,
+                full_name=user_info.name,
+                picture_url=user_info.picture,
+                oauth_provider="google",
+                oauth_provider_id=user_info.id,
+                is_email_verified=True,  # Google verifies email
+                email_verified_at=datetime.now(timezone.utc),
+                is_active=True,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        except IntegrityError:
+            # Race condition: another request created this user
+            # Rollback the failed transaction and fetch the existing user
+            db.rollback()
+            user = db.execute(
+                select(User).where(User.email == email_normalized)
+            ).scalar_one_or_none()
+
+            if user is None:
+                # This shouldn't happen, but handle it gracefully
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to create or find user after OAuth",
+                )
 
     # Create tokens
     tokens = auth_service._create_token_pair(

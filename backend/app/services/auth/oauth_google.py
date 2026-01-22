@@ -6,13 +6,17 @@ Handles:
 - Token exchange
 - User info retrieval
 - User creation/login via OAuth
+- OAuth state management for CSRF protection
 
 Uses httpx for async HTTP requests to Google's OAuth endpoints.
 """
 
 import logging
 import secrets
+import threading
+import time
 from dataclasses import dataclass
+from typing import Optional
 from urllib.parse import urlencode
 
 import httpx
@@ -38,6 +42,84 @@ class GoogleUserInfo:
     verified_email: bool
     name: str | None = None
     picture: str | None = None
+
+
+class OAuthStateStore:
+    """
+    Thread-safe in-memory store for OAuth state parameters.
+
+    Provides CSRF protection by storing generated states and validating
+    them when the OAuth callback is received.
+
+    States expire after a configurable TTL (default 10 minutes) to prevent
+    replay attacks and clean up memory.
+
+    Note: For multi-instance deployments, replace with Redis-backed storage.
+    """
+
+    # TTL for OAuth states in seconds (10 minutes)
+    STATE_TTL_SECONDS: int = 600
+
+    def __init__(self) -> None:
+        self._states: dict[str, float] = {}  # state -> expiration timestamp
+        self._lock = threading.Lock()
+
+    def store(self, state: str) -> None:
+        """
+        Store an OAuth state with expiration.
+
+        Args:
+            state: The state parameter to store
+        """
+        expiration = time.time() + self.STATE_TTL_SECONDS
+        with self._lock:
+            # Clean up expired states while we have the lock
+            self._cleanup_expired()
+            self._states[state] = expiration
+            logger.debug(f"Stored OAuth state (expires in {self.STATE_TTL_SECONDS}s)")
+
+    def validate_and_consume(self, state: str) -> bool:
+        """
+        Validate an OAuth state and remove it (one-time use).
+
+        Args:
+            state: The state parameter to validate
+
+        Returns:
+            True if the state was valid and consumed
+
+        Raises:
+            OAuthError: If state is invalid or expired
+        """
+        with self._lock:
+            self._cleanup_expired()
+
+            if state not in self._states:
+                logger.warning("Invalid OAuth state received (not found or expired)")
+                raise OAuthError("google", "Invalid or expired state parameter (possible CSRF attack)")
+
+            # Remove state (one-time use)
+            del self._states[state]
+            logger.debug("OAuth state validated and consumed")
+            return True
+
+    def _cleanup_expired(self) -> None:
+        """Remove expired states. Called with lock held."""
+        now = time.time()
+        expired = [s for s, exp in self._states.items() if exp < now]
+        for s in expired:
+            del self._states[s]
+        if expired:
+            logger.debug(f"Cleaned up {len(expired)} expired OAuth states")
+
+
+# Singleton instance for OAuth state storage
+_oauth_state_store = OAuthStateStore()
+
+
+def get_oauth_state_store() -> OAuthStateStore:
+    """Get the singleton OAuth state store."""
+    return _oauth_state_store
 
 
 class GoogleOAuthService:

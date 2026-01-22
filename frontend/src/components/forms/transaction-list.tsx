@@ -42,9 +42,43 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { formatCurrency, formatDate, formatNumber } from "@/lib/utils";
+import { cn, formatCurrency, formatDate, formatNumber } from "@/lib/utils";
 import { useDeleteTransaction } from "@/hooks/use-transactions";
-import type { Transaction } from "@/types/api";
+import type { Transaction, TransactionType } from "@/types/api";
+
+/**
+ * Get badge styling for a transaction type.
+ * Colors are chosen to match the semantic meaning:
+ * - BUY: Green (acquisition, growth)
+ * - SELL: Red (disposal, reduction)
+ * - DIVIDEND: Blue (passive income)
+ * - DEPOSIT: Teal (money coming in)
+ * - WITHDRAWAL: Orange (money going out)
+ * - FEE: Slate (neutral cost)
+ * - TAX: Purple (government)
+ */
+function getTransactionTypeBadgeClass(type: TransactionType): string {
+  const baseClass = "border-transparent";
+
+  switch (type) {
+    case "BUY":
+      return cn(baseClass, "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400");
+    case "SELL":
+      return cn(baseClass, "bg-rose-500/15 text-rose-700 dark:text-rose-400");
+    case "DIVIDEND":
+      return cn(baseClass, "bg-blue-500/15 text-blue-700 dark:text-blue-400");
+    case "DEPOSIT":
+      return cn(baseClass, "bg-teal-500/15 text-teal-700 dark:text-teal-400");
+    case "WITHDRAWAL":
+      return cn(baseClass, "bg-amber-500/15 text-amber-700 dark:text-amber-400");
+    case "FEE":
+      return cn(baseClass, "bg-slate-500/15 text-slate-700 dark:text-slate-400");
+    case "TAX":
+      return cn(baseClass, "bg-violet-500/15 text-violet-700 dark:text-violet-400");
+    default:
+      return cn(baseClass, "bg-secondary text-secondary-foreground");
+  }
+}
 
 interface TransactionListProps {
   transactions: Transaction[];
@@ -56,7 +90,7 @@ interface TransactionListProps {
 export function TransactionList({
   transactions,
   portfolioId,
-  currency,
+  currency: _currency,
   onEdit,
 }: TransactionListProps) {
   const [sorting, setSorting] = useState<SortingState>([
@@ -112,7 +146,8 @@ export function TransactionList({
       header: "Type",
       cell: ({ row }) => (
         <Badge
-          variant={row.original.transaction_type === "BUY" ? "default" : "secondary"}
+          variant="outline"
+          className={getTransactionTypeBadgeClass(row.original.transaction_type)}
         >
           {row.original.transaction_type}
         </Badge>
@@ -318,12 +353,11 @@ export function TransactionList({
                     <div className="flex items-center gap-2">
                       <span className="font-medium">{transaction.asset?.ticker}</span>
                       <Badge
-                        variant={
-                          transaction.transaction_type === "BUY"
-                            ? "default"
-                            : "secondary"
-                        }
-                        className="text-xs"
+                        variant="outline"
+                        className={cn(
+                          "text-xs",
+                          getTransactionTypeBadgeClass(transaction.transaction_type)
+                        )}
                       >
                         {transaction.transaction_type}
                       </Badge>

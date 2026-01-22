@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   AlertCircle,
   Loader2,
+  HelpCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -21,8 +22,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { useUploadTransactions } from "@/hooks/use-transactions";
-import type { UploadResult } from "@/types/api";
+import { useUploadTransactions, AmbiguousDateFormatException } from "@/hooks/use-transactions";
+import type { UploadResult, DateDetectionResult, UploadDateFormat } from "@/types/api";
 
 interface CsvUploadProps {
   portfolioId: number;
@@ -33,12 +34,15 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<UploadResult | null>(null);
   const [showResult, setShowResult] = useState(false);
+  const [dateDetection, setDateDetection] = useState<DateDetectionResult | null>(null);
+  const [showDateFormatDialog, setShowDateFormatDialog] = useState(false);
   const uploadMutation = useUploadTransactions();
 
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (acceptedFiles.length > 0) {
       setFile(acceptedFiles[0]);
       setResult(null);
+      setDateDetection(null);
     }
   }, []);
 
@@ -52,28 +56,40 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
     maxSize: 5 * 1024 * 1024, // 5MB
   });
 
-  const handleUpload = async () => {
+  const handleUpload = async (dateFormat?: UploadDateFormat) => {
     if (!file) return;
 
     try {
       const uploadResult = await uploadMutation.mutateAsync({
         portfolioId,
         file,
+        dateFormat,
       });
       setResult(uploadResult);
       setShowResult(true);
+      setShowDateFormatDialog(false);
+      setDateDetection(null);
       if (uploadResult.error_count === 0) {
         setFile(null);
         onSuccess?.();
       }
-    } catch {
-      // Error handled by mutation
+    } catch (error) {
+      if (error instanceof AmbiguousDateFormatException) {
+        setDateDetection(error.detection);
+        setShowDateFormatDialog(true);
+      }
+      // Other errors handled by mutation
     }
+  };
+
+  const handleFormatSelect = (format: "US" | "EU") => {
+    handleUpload(format);
   };
 
   const handleClear = () => {
     setFile(null);
     setResult(null);
+    setDateDetection(null);
   };
 
   const closeResultDialog = () => {
@@ -81,6 +97,26 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
     if (result && result.error_count === 0) {
       setFile(null);
       setResult(null);
+    }
+  };
+
+  const closeDateFormatDialog = () => {
+    setShowDateFormatDialog(false);
+    setDateDetection(null);
+  };
+
+  // Format a date string for display (e.g., "2021-01-22" -> "Jan 22, 2021")
+  const formatDateForDisplay = (isoDate: string | null): string => {
+    if (!isoDate) return "-";
+    try {
+      const date = new Date(isoDate + "T00:00:00");
+      return date.toLocaleDateString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      });
+    } catch {
+      return isoDate;
     }
   };
 
@@ -131,7 +167,7 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
       {file && (
         <div className="flex gap-2">
           <Button
-            onClick={handleUpload}
+            onClick={() => handleUpload()}
             disabled={uploadMutation.isPending}
             className="flex-1"
           >
@@ -165,7 +201,7 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
           </code>
           <ul className="text-xs text-muted-foreground mt-2 space-y-1">
             <li>
-              <strong>date:</strong> YYYY-MM-DD format
+              <strong>date:</strong> Auto-detected (YYYY-MM-DD, M/D/YYYY, or D/M/YYYY)
             </li>
             <li>
               <strong>type:</strong> BUY or SELL
@@ -180,6 +216,92 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
         </CardContent>
       </Card>
 
+      {/* Date format confirmation dialog */}
+      <Dialog open={showDateFormatDialog} onOpenChange={setShowDateFormatDialog}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <HelpCircle className="h-5 w-5 text-amber-500" />
+              Confirm Date Format
+            </DialogTitle>
+            <DialogDescription>
+              We couldn&apos;t automatically determine your date format. Please select
+              the correct interpretation.
+            </DialogDescription>
+          </DialogHeader>
+
+          {dateDetection && (
+            <div className="space-y-4">
+              {/* Sample dates table */}
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50">
+                    <tr>
+                      <th className="p-2 text-left w-16">Row</th>
+                      <th className="p-2 text-left">Raw Value</th>
+                      <th className="p-2 text-left">US (M/D/Y)</th>
+                      <th className="p-2 text-left">EU (D/M/Y)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dateDetection.samples.map((sample) => (
+                      <tr key={sample.row_number} className="border-t">
+                        <td className="p-2 font-mono text-muted-foreground">
+                          {sample.row_number}
+                        </td>
+                        <td className="p-2 font-mono">
+                          {sample.raw_value}
+                        </td>
+                        <td className="p-2">
+                          {formatDateForDisplay(sample.us_interpretation)}
+                        </td>
+                        <td className="p-2">
+                          {formatDateForDisplay(sample.eu_interpretation)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Format selection buttons */}
+              <div className="flex gap-3">
+                <Button
+                  onClick={() => handleFormatSelect("US")}
+                  disabled={uploadMutation.isPending}
+                  className="flex-1"
+                  variant="outline"
+                >
+                  {uploadMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Use US Format (M/D/YYYY)
+                </Button>
+                <Button
+                  onClick={() => handleFormatSelect("EU")}
+                  disabled={uploadMutation.isPending}
+                  className="flex-1"
+                  variant="outline"
+                >
+                  {uploadMutation.isPending ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : null}
+                  Use EU Format (D/M/YYYY)
+                </Button>
+              </div>
+
+              <Button
+                variant="ghost"
+                onClick={closeDateFormatDialog}
+                className="w-full"
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Result dialog */}
       <Dialog open={showResult} onOpenChange={setShowResult}>
         <DialogContent>
@@ -193,13 +315,13 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
           {result && (
             <div className="space-y-4">
               {/* Success summary */}
-              {result.success_count > 0 && (
+              {result.created_count > 0 && (
                 <Alert>
                   <CheckCircle2 className="h-4 w-4 text-green-500" />
                   <AlertTitle>Success</AlertTitle>
                   <AlertDescription>
-                    {result.success_count} transaction
-                    {result.success_count !== 1 ? "s" : ""} imported successfully.
+                    {result.created_count} transaction
+                    {result.created_count !== 1 ? "s" : ""} imported successfully.
                   </AlertDescription>
                 </Alert>
               )}
@@ -230,8 +352,8 @@ export function CsvUpload({ portfolioId, onSuccess }: CsvUploadProps) {
                     <tbody>
                       {result.errors.map((error, i) => (
                         <tr key={i} className="border-t">
-                          <td className="p-2">{error.row}</td>
-                          <td className="p-2">{error.field}</td>
+                          <td className="p-2">{error.row_number}</td>
+                          <td className="p-2">{error.field || "-"}</td>
                           <td className="p-2 text-muted-foreground">
                             {error.message}
                           </td>

@@ -288,6 +288,31 @@ RATE_LIMIT_HEALTH: str = "300/minute"
 # Analytics are CPU-intensive, moderate limit
 RATE_LIMIT_ANALYTICS: str = "30/minute"
 
+# =============================================================================
+# AUTHENTICATION RATE LIMITING CONSTANTS
+# =============================================================================
+# Stricter limits for auth endpoints to prevent brute force and abuse
+
+# Login endpoint - allows retries but prevents brute force
+# 10 attempts per minute is reasonable for users who mistype passwords
+RATE_LIMIT_AUTH_LOGIN: str = "10/minute"
+
+# Registration endpoint - prevent mass account creation
+# 5 per minute is sufficient for legitimate users
+RATE_LIMIT_AUTH_REGISTER: str = "5/minute"
+
+# Password reset request - prevent email bombing
+# 3 per minute per IP to avoid email spam
+RATE_LIMIT_AUTH_PASSWORD_RESET: str = "3/minute"
+
+# Email verification/resend - prevent email spam
+# 3 per minute is enough for legitimate retries
+RATE_LIMIT_AUTH_EMAIL: str = "3/minute"
+
+# Token refresh - moderate limit, legitimate apps refresh frequently
+# but we need to prevent token farming
+RATE_LIMIT_AUTH_REFRESH: str = "30/minute"
+
 
 # =============================================================================
 # RESOURCE LIMIT CONSTANTS

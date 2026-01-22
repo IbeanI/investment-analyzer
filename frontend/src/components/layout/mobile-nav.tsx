@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Briefcase, Plus, BarChart3, Settings } from "lucide-react";
+import { Home, Briefcase, Plus, Settings } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
@@ -25,11 +25,6 @@ const navItems = [
     href: "/portfolios/new",
     icon: Plus,
     isAction: true,
-  },
-  {
-    label: "Analytics",
-    href: "/analytics",
-    icon: BarChart3,
   },
   {
     label: "Settings",

@@ -150,6 +150,11 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan"
     )
+    settings: Mapped["UserSettings | None"] = relationship(
+        back_populates="user",
+        uselist=False,  # One-to-one
+        cascade="all, delete-orphan"
+    )
 
 
 class RefreshToken(Base):
@@ -201,11 +206,15 @@ class RefreshToken(Base):
 
 class Portfolio(Base):
     __tablename__ = "portfolios"
+    __table_args__ = (
+        # Each user can only have one portfolio with a given name
+        UniqueConstraint('user_id', 'name', name='uq_portfolio_user_name'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    name: Mapped[str] = mapped_column(String)
-    currency: Mapped[str] = mapped_column(String, default="EUR")
+    name: Mapped[str] = mapped_column(String(255))
+    currency: Mapped[str] = mapped_column(String(3), default="EUR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -522,3 +531,51 @@ class PortfolioSettings(Base):
 
     # Relationship
     portfolio: Mapped["Portfolio"] = relationship(back_populates="settings")
+
+
+class UserSettings(Base):
+    """
+    User-level preferences and defaults.
+
+    Stores:
+    - Display preferences (theme, date/number format)
+    - Defaults for new portfolios (currency, benchmark)
+    - Regional settings (timezone)
+
+    One-to-one relationship with User. Settings are auto-created
+    with defaults on first access.
+    """
+    __tablename__ = "user_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        unique=True,  # One settings record per user
+        index=True
+    )
+
+    # Display Preferences
+    theme: Mapped[str] = mapped_column(String(20), default="system")
+    date_format: Mapped[str] = mapped_column(String(20), default="YYYY-MM-DD")
+    number_format: Mapped[str] = mapped_column(String(10), default="US")
+
+    # Defaults for New Portfolios
+    default_currency: Mapped[str] = mapped_column(String(3), default="EUR")
+    default_benchmark: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    # Regional
+    timezone: Mapped[str] = mapped_column(String(50), default="UTC")
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationship
+    user: Mapped["User"] = relationship(back_populates="settings")

@@ -355,6 +355,32 @@ def sample_portfolio(db: Session, sample_user: User) -> Portfolio:
 
 
 # =============================================================================
+# RATE LIMITER RESET
+# =============================================================================
+
+@pytest.fixture(autouse=True)
+def reset_rate_limiter():
+    """
+    Reset rate limiter storage before each test.
+
+    This prevents rate limit state from persisting between tests,
+    which could cause tests to fail with 429 responses when tests
+    make many requests to rate-limited endpoints.
+    """
+    from app.middleware.rate_limit import limiter
+
+    # Clear the limiter's internal storage
+    # slowapi's Limiter uses limits library under the hood
+    # Structure: limiter._limiter.storage (MemoryStorage)
+    if hasattr(limiter, '_limiter') and hasattr(limiter._limiter, 'storage'):
+        storage = limiter._limiter.storage
+        if hasattr(storage, 'reset'):
+            storage.reset()
+
+    yield
+
+
+# =============================================================================
 # AUTHENTICATION FIXTURES
 # =============================================================================
 

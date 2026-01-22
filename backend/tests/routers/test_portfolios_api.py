@@ -237,6 +237,51 @@ class TestCreatePortfolio:
 
         assert response.status_code == 422
 
+    def test_create_portfolio_duplicate_name_conflict(self, client: TestClient, test_db: Session):
+        """Should return 409 when creating portfolio with duplicate name for same user."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+
+        # Create first portfolio
+        response1 = client.post(
+            "/portfolios/",
+            json={"name": "My Portfolio", "currency": "EUR"},
+            headers=headers,
+        )
+        assert response1.status_code == 201
+
+        # Try to create duplicate
+        response2 = client.post(
+            "/portfolios/",
+            json={"name": "My Portfolio", "currency": "USD"},  # Same name, different currency
+            headers=headers,
+        )
+        assert response2.status_code == 409
+        assert "already exists" in response2.json()["message"]
+
+    def test_create_portfolio_same_name_different_user_allowed(self, client: TestClient, test_db: Session):
+        """Different users should be able to create portfolios with same name."""
+        user1 = seed_user(test_db, email="user1@example.com")
+        user2 = seed_user(test_db, email="user2@example.com")
+        headers1 = get_auth_headers(user1)
+        headers2 = get_auth_headers(user2)
+
+        # Create portfolio for user 1
+        response1 = client.post(
+            "/portfolios/",
+            json={"name": "My Portfolio", "currency": "EUR"},
+            headers=headers1,
+        )
+        assert response1.status_code == 201
+
+        # Create portfolio with same name for user 2
+        response2 = client.post(
+            "/portfolios/",
+            json={"name": "My Portfolio", "currency": "EUR"},
+            headers=headers2,
+        )
+        assert response2.status_code == 201
+
 
 # =============================================================================
 # TEST: GET /portfolios/ (List)
@@ -512,6 +557,40 @@ class TestUpdatePortfolio:
         )
 
         assert response.status_code == 401
+
+    def test_update_portfolio_duplicate_name_conflict(self, client: TestClient, test_db: Session):
+        """Should return 409 when renaming to existing portfolio name."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+        portfolio1 = seed_portfolio(test_db, user, "Portfolio 1", "EUR")
+        portfolio2 = seed_portfolio(test_db, user, "Portfolio 2", "EUR")
+
+        # Try to rename portfolio2 to portfolio1's name
+        response = client.patch(
+            f"/portfolios/{portfolio2.id}",
+            json={"name": "Portfolio 1"},
+            headers=headers,
+        )
+
+        assert response.status_code == 409
+        assert "already exists" in response.json()["message"]
+
+    def test_update_portfolio_same_name_unchanged_allowed(self, client: TestClient, test_db: Session):
+        """Should allow updating without changing name (no conflict with self)."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+        portfolio = seed_portfolio(test_db, user, "My Portfolio", "EUR")
+
+        # Update only currency, keeping same name
+        response = client.patch(
+            f"/portfolios/{portfolio.id}",
+            json={"name": "My Portfolio", "currency": "USD"},
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["name"] == "My Portfolio"
+        assert response.json()["currency"] == "USD"
 
 
 # =============================================================================

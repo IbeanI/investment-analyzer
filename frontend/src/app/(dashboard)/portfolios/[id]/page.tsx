@@ -68,7 +68,7 @@ function getPeriodDates(period: Period): { from: string; to: string } {
 
   return {
     from: from.toISOString().split("T")[0],
-    to: new Date().toISOString().split("T")[0],
+    to,
   };
 }
 

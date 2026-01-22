@@ -59,6 +59,7 @@ const transactionSchema = z.object({
     .transform((val) => val.toUpperCase()),
   exchange: z
     .string()
+    .min(1, "Exchange is required")
     .max(10, "Exchange must be 10 characters or less"),
   transaction_type: z.enum(["BUY", "SELL"]),
   date: z.string().min(1, "Date is required"),
@@ -211,7 +212,7 @@ export function TransactionForm({
             name="exchange"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Exchange (optional)</FormLabel>
+                <FormLabel>Exchange</FormLabel>
                 <FormControl>
                   <Input
                     placeholder="NASDAQ"

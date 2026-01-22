@@ -90,18 +90,19 @@ export function TransactionList({
       cell: ({ row }) => formatDate(row.original.date),
     },
     {
-      accessorKey: "asset.ticker",
+      id: "ticker",
+      accessorFn: (row) => row.asset?.ticker ?? "",
       header: "Asset",
       cell: ({ row }) => (
         <div>
-          <div className="font-medium">{row.original.asset.ticker}</div>
+          <div className="font-medium">{row.original.asset?.ticker}</div>
           <div className="text-sm text-muted-foreground">
-            {row.original.asset.exchange}
+            {row.original.asset?.exchange}
           </div>
         </div>
       ),
       filterFn: (row, id, value) => {
-        return row.original.asset.ticker
+        return (row.original.asset?.ticker ?? "")
           .toLowerCase()
           .includes(value.toLowerCase());
       },
@@ -256,10 +257,10 @@ export function TransactionList({
         <Input
           placeholder="Filter by ticker..."
           value={
-            (table.getColumn("asset.ticker")?.getFilterValue() as string) ?? ""
+            (table.getColumn("ticker")?.getFilterValue() as string) ?? ""
           }
           onChange={(e) =>
-            table.getColumn("asset.ticker")?.setFilterValue(e.target.value)
+            table.getColumn("ticker")?.setFilterValue(e.target.value)
           }
           className="max-w-sm"
         />
@@ -315,7 +316,7 @@ export function TransactionList({
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{transaction.asset.ticker}</span>
+                      <span className="font-medium">{transaction.asset?.ticker}</span>
                       <Badge
                         variant={
                           transaction.transaction_type === "BUY"
@@ -409,7 +410,7 @@ export function TransactionList({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Transaction</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete this {deleteTransaction?.asset.ticker}{" "}
+              Are you sure you want to delete this {deleteTransaction?.asset?.ticker}{" "}
               transaction? This action cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>

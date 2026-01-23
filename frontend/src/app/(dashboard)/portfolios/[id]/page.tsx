@@ -337,7 +337,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
           <MetricCard
             title="Total Value"
             value={formatCurrency(summary.total_value, currency)}
-            infoDescription="The sum of all your assets (stocks, ETFs, etc.) priced at today's market rate, plus any available cash in the account."
+            infoDescription="The sum of all your assets (stocks, ETFs, etc.) priced at today's market rate, plus any available cash in the portfolio."
           />
           <MetricCard
             title="Total Invested"

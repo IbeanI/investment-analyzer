@@ -40,44 +40,64 @@ import {
   usePortfolioHistory,
   useSyncStatus,
 } from "@/hooks/use-portfolios";
+import { useEarliestTransactionDate } from "@/hooks/use-transactions";
 import { formatCurrency, formatPercentage, formatDate } from "@/lib/utils";
 
 // -----------------------------------------------------------------------------
 // Date Helpers
 // -----------------------------------------------------------------------------
 
-function getPeriodDates(period: Period): { from: string; to: string } {
-  const now = new Date();
-  const to = now.toISOString().split("T")[0];
+function getPeriodDates(period: Period, earliestTransactionDate?: string | null): { from: string; to: string } {
+  const today = new Date();
+  const to = today.toISOString().split("T")[0];
 
-  let from: Date;
+  // API limit: max 5 years of history
+  const fiveYearsAgo = new Date();
+  fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+  fiveYearsAgo.setDate(fiveYearsAgo.getDate() + 1); // Add 1 day buffer
+  const maxHistoryDateStr = fiveYearsAgo.toISOString().split("T")[0];
+
+  let from: string;
   switch (period) {
-    case "1M":
-      from = new Date(now.setMonth(now.getMonth() - 1));
+    case "1M": {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 1);
+      from = d.toISOString().split("T")[0];
       break;
-    case "3M":
-      from = new Date(now.setMonth(now.getMonth() - 3));
+    }
+    case "3M": {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 3);
+      from = d.toISOString().split("T")[0];
       break;
-    case "6M":
-      from = new Date(now.setMonth(now.getMonth() - 6));
+    }
+    case "6M": {
+      const d = new Date();
+      d.setMonth(d.getMonth() - 6);
+      from = d.toISOString().split("T")[0];
       break;
+    }
     case "YTD":
-      from = new Date(now.getFullYear(), 0, 1);
+      from = `${today.getFullYear()}-01-01`;
       break;
-    case "1Y":
-      from = new Date(now.setFullYear(now.getFullYear() - 1));
+    case "1Y": {
+      const d = new Date();
+      d.setFullYear(d.getFullYear() - 1);
+      from = d.toISOString().split("T")[0];
       break;
+    }
     case "ALL":
     default:
-      // 10 years back as "ALL"
-      from = new Date(now.setFullYear(now.getFullYear() - 10));
+      // Use earliest transaction date if available and within API limit
+      if (earliestTransactionDate && earliestTransactionDate >= maxHistoryDateStr) {
+        from = earliestTransactionDate;
+      } else {
+        from = maxHistoryDateStr;
+      }
       break;
   }
 
-  return {
-    from: from.toISOString().split("T")[0],
-    to,
-  };
+  return { from, to };
 }
 
 // -----------------------------------------------------------------------------
@@ -163,16 +183,22 @@ export default function PortfolioDetailPage({ params }: PageProps) {
     isLoading: valuationLoading,
   } = usePortfolioValuation(portfolioId);
 
+  // Get earliest transaction date for "ALL" period
+  const { data: earliestTransactionDate, isLoading: earliestDateLoading } = useEarliestTransactionDate(portfolioId);
+
   // Get date range based on selected period
   const { from: fromDate, to: toDate } = useMemo(
-    () => getPeriodDates(period),
-    [period]
+    () => getPeriodDates(period, earliestTransactionDate),
+    [period, earliestTransactionDate]
   );
 
   const {
     data: history,
     isLoading: historyLoading,
   } = usePortfolioHistory(portfolioId, fromDate, toDate);
+
+  // For "ALL" period, also consider earliest date loading state
+  const chartLoading = historyLoading || (period === "ALL" && earliestDateLoading);
 
   const { data: syncStatus } = useSyncStatus(portfolioId);
 
@@ -393,7 +419,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
           <ValueChart
             data={history?.data || []}
             currency={currency}
-            isLoading={historyLoading}
+            isLoading={chartLoading}
             title=""
             showCostBasis
           />

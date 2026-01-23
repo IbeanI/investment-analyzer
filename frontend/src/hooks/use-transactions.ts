@@ -3,6 +3,7 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getTransactions,
+  getEarliestTransactionDate,
   createTransaction,
   updateTransaction,
   deleteTransaction,
@@ -39,6 +40,18 @@ export function useTransactions(portfolioId: number, skip = 0, limit = 100) {
     queryKey: [...transactionKeys.list(portfolioId), skip, limit],
     queryFn: () => getTransactions(portfolioId, skip, limit),
     enabled: !!portfolioId,
+  });
+}
+
+/**
+ * Hook to get the earliest transaction date for a portfolio
+ */
+export function useEarliestTransactionDate(portfolioId: number) {
+  return useQuery({
+    queryKey: [...transactionKeys.list(portfolioId), "earliestDate"],
+    queryFn: () => getEarliestTransactionDate(portfolioId),
+    enabled: !!portfolioId,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 }
 

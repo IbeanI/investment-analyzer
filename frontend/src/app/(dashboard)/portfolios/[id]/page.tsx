@@ -197,10 +197,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
   } = usePortfolioHistory(portfolioId, fromDate, toDate);
 
   // For "ALL" period, also consider earliest date loading state
-  const chartLoading = historyLoading || (period === "ALL" && earliestDateLoading);
-
-  // Combined loading state for synchronized chart animations
-  const chartsLoading = chartLoading || valuationLoading;
+  const valueChartLoading = historyLoading || (period === "ALL" && earliestDateLoading);
 
   const { data: syncStatus } = useSyncStatus(portfolioId);
 
@@ -424,7 +421,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
           <ValueChart
             data={history?.data || []}
             currency={currency}
-            isLoading={chartsLoading}
+            isLoading={valueChartLoading}
             title=""
             showCostBasis
             period={period}
@@ -437,7 +434,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
             holdings={holdings}
             currency={currency}
             groupBy="asset_class"
-            isLoading={chartsLoading}
+            isLoading={valuationLoading}
             title="Allocation"
           />
         </div>

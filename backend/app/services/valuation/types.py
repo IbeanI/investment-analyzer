@@ -105,6 +105,29 @@ class HoldingPosition:
         )
 
 
+@dataclass
+class HoldingsResult:
+    """
+    Result of holdings calculation including data integrity warnings.
+
+    This is the return type for HoldingsCalculator.calculate().
+    It contains both the calculated positions and any warnings about
+    data quality issues that users should be aware of.
+
+    Attributes:
+        positions: List of calculated holdings positions
+        warnings: Data integrity warnings (e.g., sales without prior buys)
+
+    Note:
+        Warnings indicate potential data issues but don't prevent calculation.
+        Positions with severe data issues (e.g., sales without buys) are
+        excluded from the positions list but generate warnings.
+    """
+
+    positions: list[HoldingPosition]
+    warnings: list[str] = field(default_factory=list)
+
+
 # =============================================================================
 # COST BASIS
 # =============================================================================

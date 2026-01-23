@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Loader2, AlertCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -49,6 +49,8 @@ import {
   usePortfolio,
   useUpdatePortfolio,
   useDeletePortfolio,
+  useSyncStatus,
+  useFullResync,
 } from "@/hooks/use-portfolios";
 import { formatDate } from "@/lib/utils";
 
@@ -94,9 +96,12 @@ export default function SettingsPage({ params }: PageProps) {
   const router = useRouter();
 
   const { data: portfolio, isLoading } = usePortfolio(portfolioId);
+  const { data: syncStatus } = useSyncStatus(portfolioId);
   const updatePortfolio = useUpdatePortfolio();
   const deletePortfolio = useDeletePortfolio();
+  const fullResync = useFullResync();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showResyncDialog, setShowResyncDialog] = useState(false);
 
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
@@ -254,6 +259,70 @@ export default function SettingsPage({ params }: PageProps) {
               <p className="text-sm text-muted-foreground">Last Updated</p>
               <p className="font-medium">{formatDate(portfolio.updated_at)}</p>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Data Management */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Data Management</CardTitle>
+          <CardDescription>
+            Manage market data synchronization for this portfolio
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <p className="font-medium">Full Re-sync</p>
+              <p className="text-sm text-muted-foreground">
+                Re-fetch all historical market data from scratch. Use if you suspect
+                missing or incorrect prices.
+              </p>
+              {syncStatus?.last_full_sync && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Last full re-sync: {formatDate(syncStatus.last_full_sync)}
+                </p>
+              )}
+            </div>
+            <AlertDialog open={showResyncDialog} onOpenChange={setShowResyncDialog}>
+              <AlertDialogTrigger asChild>
+                <Button variant="outline" disabled={fullResync.isPending}>
+                  {fullResync.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Re-syncing...
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                      Full Re-sync
+                    </>
+                  )}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Perform Full Re-sync?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will re-fetch all historical market data for this portfolio.
+                    This operation may take several minutes and can only be performed
+                    once per hour.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      fullResync.mutate(portfolioId);
+                      setShowResyncDialog(false);
+                    }}
+                  >
+                    Start Re-sync
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </CardContent>
       </Card>

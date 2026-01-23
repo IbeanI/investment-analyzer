@@ -17,8 +17,13 @@ import {
   register as registerApi,
   getGoogleAuthUrl,
 } from "@/lib/api/auth";
-import { getAccessToken, clearTokens } from "@/lib/api/client";
+import {
+  getAccessToken,
+  clearAccessToken,
+  refreshAccessToken,
+} from "@/lib/api/client";
 import type { UserLoginRequest, UserRegisterRequest } from "@/types/api";
+import { toast } from "@/lib/toast";
 
 // -----------------------------------------------------------------------------
 // Types
@@ -66,30 +71,52 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const isAuthenticated = !!user;
 
-  // Fetch current user on mount
-  const fetchUser = useCallback(async () => {
-    const token = getAccessToken();
+  // Initialize auth state on mount
+  // This restores the session after page refresh by:
+  // 1. Trying to refresh the access token using the httpOnly cookie
+  // 2. If successful, fetching the user data
+  const initializeAuth = useCallback(async () => {
+    // First check if we already have a token in memory
+    let token = getAccessToken();
+
     if (!token) {
+      // No token in memory - try to refresh using the httpOnly cookie
+      // This handles the page refresh case
+      token = await refreshAccessToken();
+    }
+
+    if (!token) {
+      // No valid session
       setUser(null);
       setIsLoading(false);
       return;
     }
 
+    // We have a token, fetch the user
     try {
       const userData = await getCurrentUser();
       setUser(userData);
-    } catch {
-      // Token might be invalid, clear it
-      clearTokens();
+    } catch (error) {
+      // Token might be invalid or server error
+      clearAccessToken();
       setUser(null);
+
+      // Show error toast for server/network errors (not for auth failures)
+      // Auth failures (401) are expected when tokens expire - no need to alert user
+      if (error instanceof Error) {
+        const isAuthError = error.message.includes("401") || error.message.includes("Unauthorized");
+        if (!isAuthError) {
+          toast.error("Session could not be restored. Please log in again.");
+        }
+      }
     } finally {
       setIsLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    fetchUser();
-  }, [fetchUser]);
+    initializeAuth();
+  }, [initializeAuth]);
 
   // Redirect logic
   useEffect(() => {

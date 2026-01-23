@@ -54,12 +54,40 @@ from app.services.constants import (
 logger = logging.getLogger(__name__)
 
 
+def _is_trusted_proxy(request: Request) -> bool:
+    """
+    Check if the immediate client is a trusted proxy.
+
+    This validates that X-Forwarded-For headers can be trusted by checking
+    if the request comes from a known proxy IP address.
+
+    Args:
+        request: Starlette/FastAPI request object
+
+    Returns:
+        True if the request comes from a trusted proxy
+    """
+    from app.config import settings
+
+    # If trust_proxy_headers is enabled, trust all forwarded headers
+    # (use only when behind a trusted load balancer like AWS ALB)
+    if settings.trust_proxy_headers:
+        return True
+
+    # Get the immediate client IP (the proxy's IP if behind one)
+    client_ip = get_remote_address(request)
+
+    # Check if client IP is in the trusted proxy list
+    return client_ip in settings.trusted_proxy_ips
+
+
 def _get_client_ip(request: Request) -> str:
     """
     Extract client IP address from request.
 
-    Checks X-Forwarded-For header first (for requests behind proxy/load balancer),
-    then falls back to direct client IP.
+    Only trusts X-Forwarded-For headers when the immediate client is a
+    trusted proxy. This prevents IP spoofing attacks where clients set
+    their own X-Forwarded-For header.
 
     Args:
         request: Starlette/FastAPI request object
@@ -67,16 +95,18 @@ def _get_client_ip(request: Request) -> str:
     Returns:
         Client IP address string
     """
-    # Check for forwarded header (behind reverse proxy)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        # X-Forwarded-For can contain multiple IPs; first is the original client
-        return forwarded_for.split(",")[0].strip()
+    # Only trust forwarded headers from known proxies
+    if _is_trusted_proxy(request):
+        # Check for forwarded header (behind reverse proxy)
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            # X-Forwarded-For can contain multiple IPs; first is the original client
+            return forwarded_for.split(",")[0].strip()
 
-    # Check for real IP header (nginx)
-    real_ip = request.headers.get("X-Real-IP")
-    if real_ip:
-        return real_ip
+        # Check for real IP header (nginx)
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip
 
     # Fall back to direct client address
     return get_remote_address(request)

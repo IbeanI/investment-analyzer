@@ -15,10 +15,15 @@ All endpoints require authentication. Users can only access transactions
 in portfolios they own.
 """
 
+import logging
 from datetime import datetime
+from decimal import Decimal
 from typing import Annotated
 
+logger = logging.getLogger(__name__)
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import JSONResponse
 from pydantic import AfterValidator
 from sqlalchemy import select, func
 from sqlalchemy.orm import Session
@@ -32,6 +37,8 @@ from app.schemas.transactions import (
     TransactionUpdate,
     TransactionResponse,
     TransactionListResponse,
+    BatchTransactionError,
+    BatchTransactionErrorResponse,
 )
 from app.schemas.validators import validate_currency_query, validate_ticker_query
 from app.services.asset_resolution import AssetResolutionService
@@ -129,6 +136,97 @@ def validate_portfolio_ownership(
     return portfolio
 
 
+def get_current_quantity_held(
+    db: Session,
+    portfolio_id: int,
+    asset_id: int,
+    as_of_date: datetime | None = None,
+) -> tuple[Decimal, Decimal, Decimal]:
+    """
+    Calculate the current quantity held for an asset in a portfolio.
+
+    Args:
+        db: Database session
+        portfolio_id: Portfolio to check
+        asset_id: Asset to check
+        as_of_date: Optional date to calculate holdings as of (inclusive).
+                    If None, calculates current holdings.
+
+    Returns:
+        Tuple of (net_quantity, total_bought, total_sold)
+    """
+    # Build base query for transactions of this asset in this portfolio
+    query = (
+        select(
+            Transaction.transaction_type,
+            func.sum(Transaction.quantity).label("total_qty")
+        )
+        .where(
+            Transaction.portfolio_id == portfolio_id,
+            Transaction.asset_id == asset_id,
+            Transaction.transaction_type.in_([TransactionType.BUY, TransactionType.SELL])
+        )
+        .group_by(Transaction.transaction_type)
+    )
+
+    # If as_of_date is specified, only include transactions up to that date
+    if as_of_date is not None:
+        query = query.where(Transaction.date <= as_of_date)
+
+    results = db.execute(query).all()
+
+    total_bought = Decimal("0")
+    total_sold = Decimal("0")
+
+    for row in results:
+        if row.transaction_type == TransactionType.BUY:
+            total_bought = Decimal(str(row.total_qty))
+        elif row.transaction_type == TransactionType.SELL:
+            total_sold = Decimal(str(row.total_qty))
+
+    net_quantity = total_bought - total_sold
+    return net_quantity, total_bought, total_sold
+
+
+def validate_sell_quantity(
+    db: Session,
+    portfolio_id: int,
+    asset_id: int,
+    sell_quantity: Decimal,
+    transaction_date: datetime,
+    asset_ticker: str,
+) -> None:
+    """
+    Validate that a SELL transaction doesn't exceed available quantity.
+
+    Args:
+        db: Database session
+        portfolio_id: Portfolio containing the asset
+        asset_id: Asset being sold
+        sell_quantity: Quantity to sell
+        transaction_date: Date of the sell transaction
+        asset_ticker: Ticker symbol for error messages
+
+    Raises:
+        HTTPException: If sell quantity exceeds available quantity
+    """
+    # Calculate holdings as of the transaction date
+    # This ensures we consider the chronological order of transactions
+    current_qty, _, _ = get_current_quantity_held(
+        db=db,
+        portfolio_id=portfolio_id,
+        asset_id=asset_id,
+        as_of_date=transaction_date,
+    )
+
+    if sell_quantity > current_qty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot sell {sell_quantity} shares of {asset_ticker}. "
+                   f"Only {current_qty} shares available as of {transaction_date.date()}."
+        )
+
+
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -166,10 +264,11 @@ def create_transaction(
     **Errors:**
     - 404: Portfolio not found, or asset not found on Yahoo Finance
     - 403: You don't own the portfolio
-    - 400: Asset is deactivated
+    - 400: Asset is deactivated, or SELL quantity exceeds available holdings
     - 502: Yahoo Finance API error
 
     The portfolio must exist and belong to you.
+    For SELL transactions, you cannot sell more shares than you currently hold.
     """
     # Validate portfolio exists and user owns it
     validate_portfolio_ownership(db, transaction.portfolio_id, current_user)
@@ -181,6 +280,17 @@ def create_transaction(
         ticker=transaction.ticker,
         exchange=transaction.exchange,
     )
+
+    # Validate SELL quantity doesn't exceed holdings
+    if transaction.transaction_type == TransactionType.SELL:
+        validate_sell_quantity(
+            db=db,
+            portfolio_id=transaction.portfolio_id,
+            asset_id=asset.id,
+            sell_quantity=transaction.quantity,
+            transaction_date=transaction.date,
+            asset_ticker=transaction.ticker,
+        )
 
     # Determine fee_currency (default to transaction currency)
     fee_currency = transaction.fee_currency if transaction.fee_currency is not None else transaction.currency
@@ -515,7 +625,19 @@ def get_portfolio_transactions(
     response_model=list[TransactionResponse],
     status_code=status.HTTP_201_CREATED,
     summary="Batch create transactions",
-    response_description="The created transactions"
+    response_description="The created transactions",
+    responses={
+        400: {
+            "description": "Validation failed - returns detailed per-transaction errors",
+            "model": BatchTransactionErrorResponse,
+        },
+        403: {
+            "description": "Not authorized to access one or more portfolios",
+        },
+        404: {
+            "description": "One or more portfolios not found",
+        },
+    },
 )
 def create_transactions_batch(
         transactions: list[TransactionCreate],
@@ -523,7 +645,7 @@ def create_transactions_batch(
         current_user: Annotated[User, Depends(get_current_user)],
         asset_service: Annotated[AssetResolutionService, Depends(get_asset_resolution_service)],
         analytics_service: Annotated[AnalyticsService, Depends(get_analytics_service)],
-) -> list[Transaction]:
+) -> list[Transaction] | JSONResponse:
     """
     Create multiple transactions in a single request.
 
@@ -533,6 +655,13 @@ def create_transactions_batch(
     All portfolios referenced must be owned by you.
 
     **Limit:** Maximum {MAX_BATCH_SIZE} transactions per request.
+
+    **Atomic Behavior:** If ANY transaction fails validation, NONE are created.
+    This prevents partial states in financial data.
+
+    **Error Response:** On validation failure, returns a structured response with
+    detailed per-transaction error information including the index, ticker,
+    error type, and message for each failing transaction.
     """
     if not transactions:
         return []
@@ -577,21 +706,111 @@ def create_transactions_batch(
 
     # 3. Handle Resolution Failures
     if not resolution_result.all_resolved:
-        errors = []
+        # Build a map from (ticker, exchange) to list of indices for error attribution
+        key_to_indices: dict[tuple[str, str], list[int]] = {}
+        for i, txn_data in enumerate(transactions):
+            key = (txn_data.ticker.strip().upper(), txn_data.exchange.strip().upper() if txn_data.exchange else "")
+            if key not in key_to_indices:
+                key_to_indices[key] = []
+            key_to_indices[key].append(i)
+
+        batch_errors: list[BatchTransactionError] = []
+
         for key in resolution_result.deactivated:
-            errors.append(f"{key[0]} on {key[1]}: deactivated")
+            for idx in key_to_indices.get(key, []):
+                batch_errors.append(BatchTransactionError(
+                    index=idx,
+                    ticker=key[0],
+                    stage="asset_resolution",
+                    error_type="deactivated",
+                    message=f"Asset '{key[0]}' on exchange '{key[1]}' is deactivated",
+                    field="ticker",
+                ))
+
         for key in resolution_result.not_found:
-            errors.append(f"{key[0]} on {key[1]}: not found")
+            for idx in key_to_indices.get(key, []):
+                batch_errors.append(BatchTransactionError(
+                    index=idx,
+                    ticker=key[0],
+                    stage="asset_resolution",
+                    error_type="not_found",
+                    message=f"Asset '{key[0]}' on exchange '{key[1]}' was not found in database or Yahoo Finance",
+                    field="ticker",
+                ))
+
         for key, exc in resolution_result.errors.items():
-            errors.append(f"{key[0]} on {key[1]}: {exc}")
-        error_list = "; ".join(errors)
-        raise HTTPException(
+            for idx in key_to_indices.get(key, []):
+                batch_errors.append(BatchTransactionError(
+                    index=idx,
+                    ticker=key[0],
+                    stage="asset_resolution",
+                    error_type="resolution_error",
+                    message=f"Error resolving '{key[0]}' on '{key[1]}': {exc}",
+                    field="ticker",
+                ))
+
+        error_response = BatchTransactionErrorResponse(
+            total_requested=len(transactions),
+            error_count=len(batch_errors),
+            errors=batch_errors,
+        )
+        return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Asset resolution failed: {error_list}"
+            content=error_response.model_dump(),
         )
 
-    # 4. Create Transaction Objects
+    # 4. Validate SELL Quantities
+    # Group transactions by (portfolio_id, asset_id) and validate in date order
     resolved_assets_map = resolution_result.resolved
+    from collections import defaultdict
+
+    # Build map of normalized key to asset for quick lookup
+    portfolio_asset_txns: dict[tuple[int, int], list[tuple[int, TransactionCreate]]] = defaultdict(list)
+    for i, txn_data in enumerate(transactions):
+        key = (txn_data.ticker.strip().upper(), txn_data.exchange.strip().upper() if txn_data.exchange else "")
+        asset = resolved_assets_map[key]
+        portfolio_asset_txns[(txn_data.portfolio_id, asset.id)].append((i, txn_data))
+
+    # Validate each portfolio-asset group
+    sell_errors: list[BatchTransactionError] = []
+    for (portfolio_id, asset_id), txn_list in portfolio_asset_txns.items():
+        # Sort by date for proper validation
+        txn_list.sort(key=lambda x: x[1].date)
+
+        # Get current holding for this asset
+        current_qty, _, _ = get_current_quantity_held(db, portfolio_id, asset_id)
+
+        # Track running balance through the batch
+        running_balance = current_qty
+
+        for idx, txn_data in txn_list:
+            if txn_data.transaction_type == TransactionType.BUY:
+                running_balance += txn_data.quantity
+            elif txn_data.transaction_type == TransactionType.SELL:
+                if txn_data.quantity > running_balance:
+                    sell_errors.append(BatchTransactionError(
+                        index=idx,
+                        ticker=txn_data.ticker,
+                        stage="sell_quantity",
+                        error_type="insufficient_quantity",
+                        message=f"Cannot sell {txn_data.quantity} shares of {txn_data.ticker}. Only {running_balance} shares available as of {txn_data.date.date()}.",
+                        field="quantity",
+                    ))
+                else:
+                    running_balance -= txn_data.quantity
+
+    if sell_errors:
+        error_response = BatchTransactionErrorResponse(
+            total_requested=len(transactions),
+            error_count=len(sell_errors),
+            errors=sell_errors,
+        )
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content=error_response.model_dump(),
+        )
+
+    # 5. Create Transaction Objects (step 4 was SELL validation above)
     new_transactions = []
 
     for i, txn_data in enumerate(transactions):
@@ -615,34 +834,39 @@ def create_transactions_batch(
         )
         new_transactions.append(new_txn)
 
-    # 5. Atomic Commit (All or Nothing)
+    # 6. Atomic Commit (All or Nothing)
     from sqlalchemy.exc import IntegrityError, DataError, OperationalError
     try:
         db.add_all(new_transactions)
         db.commit()
     except IntegrityError as e:
         db.rollback()
+        # Log full error for debugging, return generic message to client
+        logger.error(f"Batch transaction integrity error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Data integrity error: {str(e)}"
+            detail="Data integrity error: A transaction violates database constraints. This may indicate duplicate or conflicting data."
         )
     except DataError as e:
         db.rollback()
+        logger.error(f"Batch transaction data error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid data: {str(e)}"
+            detail="Invalid data: One or more values are out of acceptable range or format."
         )
     except OperationalError as e:
         db.rollback()
+        logger.error(f"Batch transaction operational error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Database unavailable: {str(e)}"
+            detail="Database temporarily unavailable. Please try again shortly."
         )
     except Exception as e:
         db.rollback()
+        logger.error(f"Batch transaction unexpected error: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unexpected error: {str(e)}"
+            detail="An unexpected error occurred while saving transactions."
         )
 
     # 6. Invalidate analytics cache for all affected portfolios

@@ -62,12 +62,24 @@ export function ValueChart({
   }, [chartData, showCostBasis]);
 
   // Determine if portfolio is up or down overall
-  const isPositive = useMemo(() => {
-    if (chartData.length < 2) return true;
+  const performanceInfo = useMemo(() => {
+    if (chartData.length < 2) return { isPositive: true, change: 0, changePercent: 0 };
     const first = chartData[0]?.value ?? chartData[0]?.costBasis ?? 0;
     const last = chartData[chartData.length - 1]?.value ?? 0;
-    return last >= first;
+    const change = last - first;
+    const changePercent = first !== 0 ? (change / first) * 100 : 0;
+    return { isPositive: last >= first, change, changePercent };
   }, [chartData]);
+
+  const { isPositive, change, changePercent } = performanceInfo;
+
+  // Traditional green/red colors for gain/loss
+  // Accessibility is provided via the text indicator with arrow symbol
+  const chartColors = {
+    positive: "hsl(142, 76%, 36%)", // Green
+    negative: "hsl(0, 84%, 60%)",    // Red
+  };
+  const activeColor = isPositive ? chartColors.positive : chartColors.negative;
 
   if (isLoading) {
     return (
@@ -99,8 +111,19 @@ export function ValueChart({
 
   return (
     <Card>
-      <CardHeader>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle>{title}</CardTitle>
+        {/* Colorblind-accessible performance indicator with text and icon */}
+        {chartData.length >= 2 && (
+          <div
+            className="flex items-center gap-1 text-sm font-medium"
+            style={{ color: activeColor }}
+            aria-label={`Performance: ${isPositive ? "up" : "down"} ${Math.abs(changePercent).toFixed(2)}%`}
+          >
+            <span aria-hidden="true">{isPositive ? "▲" : "▼"}</span>
+            <span>{isPositive ? "+" : ""}{changePercent.toFixed(2)}%</span>
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         <div className="h-64 w-full">
@@ -113,12 +136,12 @@ export function ValueChart({
                 <linearGradient id="valueGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop
                     offset="5%"
-                    stopColor={isPositive ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
+                    stopColor={activeColor}
                     stopOpacity={0.3}
                   />
                   <stop
                     offset="95%"
-                    stopColor={isPositive ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
+                    stopColor={activeColor}
                     stopOpacity={0}
                   />
                 </linearGradient>
@@ -187,13 +210,13 @@ export function ValueChart({
               <Area
                 type="monotone"
                 dataKey="value"
-                stroke={isPositive ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)"}
+                stroke={activeColor}
                 strokeWidth={2}
                 fill="url(#valueGradient)"
                 dot={false}
                 activeDot={{
                   r: 4,
-                  fill: isPositive ? "hsl(142, 76%, 36%)" : "hsl(0, 84%, 60%)",
+                  fill: activeColor,
                   stroke: "hsl(var(--background))",
                   strokeWidth: 2,
                 }}

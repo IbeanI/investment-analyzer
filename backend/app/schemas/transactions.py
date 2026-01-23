@@ -18,6 +18,7 @@ Never use float for money!
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -94,7 +95,11 @@ class TransactionBase(BaseModel):
         gt=0,
         max_digits=18,
         decimal_places=8,
-        description="Exchange rate to portfolio base currency at time of trade",
+        description=(
+            "Broker's FX rate at time of trade. Format: 1 portfolio_currency = X transaction_currency. "
+            "Example: If portfolio is EUR and you buy USD stock, rate 1.10 means 1 EUR = 1.10 USD. "
+            "Set to 1 if transaction currency matches portfolio currency."
+        ),
         examples=["1", "1.0856", "0.8543"]
     )
 
@@ -331,3 +336,59 @@ class TransactionWithTotalsResponse(TransactionResponse):
         ...,
         description="total_value + fee (for BUY) or total_value - fee (for SELL)"
     )
+
+
+# =============================================================================
+# BATCH OPERATION SCHEMAS
+# =============================================================================
+
+
+class BatchTransactionError(BaseModel):
+    """
+    Detailed error information for a single transaction in a batch operation.
+
+    Attributes:
+        index: 0-based index of the transaction in the request array
+        ticker: Asset ticker (if available)
+        stage: Processing stage where error occurred
+        error_type: Category of error
+        message: Human-readable error description
+        field: Specific field that caused the error (if applicable)
+    """
+
+    index: int = Field(..., description="0-based index in the batch request array")
+    ticker: str | None = Field(default=None, description="Asset ticker symbol")
+    stage: str = Field(
+        ...,
+        description="Processing stage: 'validation', 'asset_resolution', 'sell_quantity', 'persistence'"
+    )
+    error_type: str = Field(
+        ...,
+        description="Error category: 'not_found', 'deactivated', 'insufficient_quantity', etc."
+    )
+    message: str = Field(..., description="Human-readable error description")
+    field: str | None = Field(default=None, description="Specific field that caused the error")
+
+
+class BatchTransactionErrorResponse(BaseModel):
+    """
+    Response schema for batch transaction failures.
+
+    This response is returned when a batch create operation fails validation.
+    All errors are aggregated and returned together so clients can show
+    comprehensive error information to users.
+
+    The operation is atomic: if ANY transaction fails validation,
+    NONE are created. This prevents partial states in financial data.
+
+    Attributes:
+        status: Always "error" for this response type
+        total_requested: Number of transactions in the request
+        error_count: Number of transactions that failed
+        errors: Detailed per-transaction error information
+    """
+
+    status: Literal["error"] = Field(default="error", description="Status indicator")
+    total_requested: int = Field(..., description="Number of transactions in request")
+    error_count: int = Field(..., description="Number of transactions with errors")
+    errors: list[BatchTransactionError] = Field(..., description="Detailed error list")

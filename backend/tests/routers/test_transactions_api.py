@@ -342,6 +342,24 @@ class TestCreateTransaction:
         portfolio = seed_portfolio(test_db, user, currency="USD")
         seed_asset(test_db, "GOOGL", "NASDAQ", "USD")
 
+        # First BUY shares
+        buy_response = client.post(
+            "/transactions/",
+            json={
+                "portfolio_id": portfolio.id,
+                "ticker": "GOOGL",
+                "exchange": "NASDAQ",
+                "transaction_type": "BUY",
+                "date": "2024-06-01T10:00:00Z",
+                "quantity": "10",
+                "price_per_share": "150",
+                "currency": "USD",
+            },
+            headers=headers,
+        )
+        assert buy_response.status_code == 201
+
+        # Then SELL some shares
         response = client.post(
             "/transactions/",
             json={
@@ -359,6 +377,80 @@ class TestCreateTransaction:
 
         assert response.status_code == 201
         assert response.json()["transaction_type"] == "SELL"
+
+    def test_create_sell_exceeds_quantity(self, client: TestClient, test_db: Session):
+        """Should return 400 when selling more than available quantity."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+        portfolio = seed_portfolio(test_db, user, currency="USD")
+        seed_asset(test_db, "META", "NASDAQ", "USD")
+
+        # First BUY 5 shares
+        buy_response = client.post(
+            "/transactions/",
+            json={
+                "portfolio_id": portfolio.id,
+                "ticker": "META",
+                "exchange": "NASDAQ",
+                "transaction_type": "BUY",
+                "date": "2024-06-01T10:00:00Z",
+                "quantity": "5",
+                "price_per_share": "500",
+                "currency": "USD",
+            },
+            headers=headers,
+        )
+        assert buy_response.status_code == 201
+
+        # Try to SELL 10 shares (more than owned)
+        response = client.post(
+            "/transactions/",
+            json={
+                "portfolio_id": portfolio.id,
+                "ticker": "META",
+                "exchange": "NASDAQ",
+                "transaction_type": "SELL",
+                "date": "2024-06-15T10:00:00Z",
+                "quantity": "10",
+                "price_per_share": "550",
+                "currency": "USD",
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Cannot sell" in data["message"]
+        assert "META" in data["message"]
+        assert "5" in data["message"]  # Available quantity
+
+    def test_sell_without_prior_buy(self, client: TestClient, test_db: Session):
+        """Should return 400 when selling without any prior buys."""
+        user = seed_user(test_db)
+        headers = get_auth_headers(user)
+        portfolio = seed_portfolio(test_db, user, currency="USD")
+        seed_asset(test_db, "AMZN", "NASDAQ", "USD")
+
+        response = client.post(
+            "/transactions/",
+            json={
+                "portfolio_id": portfolio.id,
+                "ticker": "AMZN",
+                "exchange": "NASDAQ",
+                "transaction_type": "SELL",
+                "date": "2024-06-15T10:00:00Z",
+                "quantity": "5",
+                "price_per_share": "180",
+                "currency": "USD",
+            },
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+        data = response.json()
+        assert "Cannot sell" in data["message"]
+        assert "AMZN" in data["message"]
+        assert "0" in data["message"]  # Zero available quantity
 
     def test_create_transaction_with_fee(self, client: TestClient, test_db: Session):
         """Should create transaction with fee."""

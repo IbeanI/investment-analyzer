@@ -936,6 +936,7 @@ class HistoryCalculator:
                     MarketData.asset_id.in_(asset_ids),
                     MarketData.date >= extended_start,
                     MarketData.date <= end_date,
+                    MarketData.no_data_available == False,  # Exclude no-data markers
                 )
             )
         )
@@ -991,6 +992,7 @@ class HistoryCalculator:
                     ExchangeRate.quote_currency == portfolio_currency.upper(),
                     ExchangeRate.date >= extended_start,  # CHANGED
                     ExchangeRate.date <= end_date,
+                    ExchangeRate.no_data_available == False,  # Exclude no-data markers
                 )
             )
         )

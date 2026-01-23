@@ -37,8 +37,13 @@ from sqlalchemy.orm import Session
 from app.models import Asset, Transaction, TransactionType
 from app.services.valuation.types import (
     HoldingPosition,
+    HoldingsResult,
     CostBasisResult,
     ValueResult,
+)
+from app.utils.fx_conversion import (
+    convert_using_broker_rate,
+    convert_using_fx_rate,
 )
 
 if TYPE_CHECKING:
@@ -71,7 +76,7 @@ class HoldingsCalculator:
             transactions_by_asset: dict[int, list[Transaction]],
             assets: dict[int, Asset],
             portfolio_currency: str,
-    ) -> list[HoldingPosition]:
+    ) -> HoldingsResult:
         """
         Calculate holdings from grouped transactions.
 
@@ -81,14 +86,17 @@ class HoldingsCalculator:
             portfolio_currency: Portfolio's base currency
 
         Returns:
-            List of HoldingPosition for assets with quantity > 0
+            HoldingsResult containing positions and data integrity warnings
         """
         positions: list[HoldingPosition] = []
+        warnings: list[str] = []
 
         for asset_id, transactions in transactions_by_asset.items():
             asset = assets.get(asset_id)
             if asset is None:
-                logger.warning(f"Asset {asset_id} not found, skipping")
+                warning_msg = f"Asset ID {asset_id} not found in database - transactions for this asset were skipped"
+                logger.warning(warning_msg)
+                warnings.append(warning_msg)
                 continue
 
             position = self._calculate_position(
@@ -100,11 +108,13 @@ class HoldingsCalculator:
             # Data integrity check: can't have sales without buys
             # This would cause division by zero in cost basis calculation
             if position.total_bought_qty == Decimal("0") and position.total_sold_qty > Decimal("0"):
-                logger.warning(
-                    f"Invalid position state for asset {asset_id} ({asset.ticker}): "
-                    f"total_sold_qty={position.total_sold_qty} but total_bought_qty=0. "
-                    "Skipping position."
+                warning_msg = (
+                    f"Data integrity issue: {asset.ticker} has {position.total_sold_qty} shares sold "
+                    f"but no BUY transactions recorded. This position has been excluded from calculations. "
+                    f"Please check if BUY transactions are missing."
                 )
+                logger.warning(warning_msg)
+                warnings.append(warning_msg)
                 continue
 
             # Include positions that are either:
@@ -113,7 +123,7 @@ class HoldingsCalculator:
             if position.has_position or position.total_sold_qty > 0:
                 positions.append(position)
 
-        return positions
+        return HoldingsResult(positions=positions, warnings=warnings)
 
     def _calculate_position(
             self,
@@ -149,9 +159,8 @@ class HoldingsCalculator:
                 cost_local = (txn.quantity * txn.price_per_share) + txn.fee
 
                 # Convert to portfolio currency using broker rate
-                # exchange_rate = "1 EUR = X USD" → to get EUR, divide by rate
                 exchange_rate = txn.exchange_rate or Decimal("1")
-                cost_portfolio = cost_local / exchange_rate
+                cost_portfolio = convert_using_broker_rate(cost_local, exchange_rate)
 
                 total_bought_qty += txn.quantity
                 total_bought_cost_local += cost_local
@@ -161,9 +170,9 @@ class HoldingsCalculator:
                 # Proceeds excludes fee (fee reduces proceeds)
                 proceeds_local = (txn.quantity * txn.price_per_share) - txn.fee
 
-                # Convert to portfolio currency
+                # Convert to portfolio currency using broker rate
                 exchange_rate = txn.exchange_rate or Decimal("1")
-                proceeds_portfolio = proceeds_local / exchange_rate
+                proceeds_portfolio = convert_using_broker_rate(proceeds_local, exchange_rate)
 
                 total_sold_qty += txn.quantity
                 total_sold_proceeds_portfolio += proceeds_portfolio
@@ -233,7 +242,7 @@ class HoldingsCalculator:
 
         if transaction.transaction_type == TransactionType.BUY:
             cost_local = (transaction.quantity * transaction.price_per_share) + transaction.fee
-            cost_portfolio = cost_local / exchange_rate
+            cost_portfolio = convert_using_broker_rate(cost_local, exchange_rate)
 
             state['total_bought_qty'] += transaction.quantity
             state['total_bought_cost_local'] += cost_local
@@ -241,7 +250,7 @@ class HoldingsCalculator:
 
         elif transaction.transaction_type == TransactionType.SELL:
             proceeds_local = (transaction.quantity * transaction.price_per_share) - transaction.fee
-            proceeds_portfolio = proceeds_local / exchange_rate
+            proceeds_portfolio = convert_using_broker_rate(proceeds_local, exchange_rate)
 
             state['total_sold_qty'] += transaction.quantity
             state['total_sold_proceeds_portfolio'] += proceeds_portfolio
@@ -477,9 +486,8 @@ class ValueCalculator:
                 warnings=warnings,
             )
 
-        # FX conversion: value_portfolio = value_local × rate
-        # Because FXRateService convention: 1 base = rate × quote
-        value_portfolio = value_local * fx_result.rate
+        # FX conversion using FX service rate convention
+        value_portfolio = convert_using_fx_rate(value_local, fx_result.rate)
 
         # Add warning if fallback rate was used
         if not fx_result.is_exact_match:

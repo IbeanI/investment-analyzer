@@ -237,6 +237,14 @@ class PortfolioValuationSummary(BaseModel):
         ...,
         description="Total P&L as percentage (None if incomplete)"
     )
+    day_change: Decimal | None = Field(
+        default=None,
+        description="Change since previous trading day"
+    )
+    day_change_percentage: Decimal | None = Field(
+        default=None,
+        description="% change since previous trading day"
+    )
 
 
 class PortfolioValuationResponse(BaseModel):

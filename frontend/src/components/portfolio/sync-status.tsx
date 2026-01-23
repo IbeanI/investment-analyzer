@@ -89,34 +89,47 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
     );
   }
 
+  // Only show badge for active/error states, not for COMPLETED
+  const showBadge =
+    isLoading ||
+    syncStatus?.status === "IN_PROGRESS" ||
+    syncStatus?.status === "PENDING" ||
+    syncStatus?.status === "FAILED" ||
+    syncStatus?.status === "PARTIAL" ||
+    syncStatus?.status === "NEVER" ||
+    !syncStatus?.status;
+
   return (
     <div className="flex items-center gap-3">
-      {/* Status badge */}
-      {isLoading ? (
-        <Badge variant="outline">Loading...</Badge>
-      ) : (
-        <Badge variant={getStatusVariant(syncStatus?.status)}>
-          <span className="flex items-center gap-1.5">
-            {getStatusIcon(syncStatus?.status)}
-            {syncStatus?.status || "NEVER"}
-          </span>
-        </Badge>
+      {/* Status badge - only for active/error states */}
+      {showBadge && (
+        isLoading ? (
+          <Badge variant="outline">Loading...</Badge>
+        ) : (
+          <Badge variant={getStatusVariant(syncStatus?.status)}>
+            <span className="flex items-center gap-1.5">
+              {getStatusIcon(syncStatus?.status)}
+              {syncStatus?.status || "NEVER"}
+            </span>
+          </Badge>
+        )
       )}
 
-      {/* Last sync info */}
+      {/* Last sync info - always show when available and not syncing */}
       {syncStatus?.completed_at && !isSyncing && (
         <span className="text-sm text-muted-foreground hidden sm:inline">
           Last sync: {formatDate(syncStatus.completed_at)}
         </span>
       )}
 
-      {/* Sync stats */}
-      {syncStatus?.assets_synced !== undefined && syncStatus.assets_synced > 0 && (
-        <span className="text-sm text-muted-foreground hidden sm:inline">
-          ({syncStatus.assets_synced} assets
-          {syncStatus.assets_failed > 0 && `, ${syncStatus.assets_failed} failed`})
-        </span>
-      )}
+      {/* Sync stats - only show for non-completed states with failures */}
+      {syncStatus?.status !== "COMPLETED" &&
+        syncStatus?.assets_failed !== undefined &&
+        syncStatus.assets_failed > 0 && (
+          <span className="text-sm text-muted-foreground hidden sm:inline">
+            ({syncStatus.assets_failed} failed)
+          </span>
+        )}
 
       {/* Sync button */}
       <Button

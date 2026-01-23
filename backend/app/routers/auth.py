@@ -14,13 +14,18 @@ Provides:
 - GET /auth/me - Get current user profile
 - GET /auth/google - Get Google OAuth URL
 - GET /auth/google/callback - Handle Google OAuth callback
+
+Security:
+- Refresh tokens are stored in httpOnly cookies to prevent XSS attacks
+- Access tokens are returned in the response body (short-lived, 15 min)
+- Token rotation on each refresh with replay attack detection
 """
 
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, Query, HTTPException, status
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Cookie, Depends, Request, Query, HTTPException, status
+from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -39,12 +44,12 @@ from app.models import User
 from app.schemas.auth import (
     UserRegisterRequest,
     UserLoginRequest,
-    TokenRefreshRequest,
     VerifyEmailRequest,
     ResendVerificationRequest,
     ForgotPasswordRequest,
     ResetPasswordRequest,
     LogoutRequest,
+    AccessTokenResponse,
     TokenResponse,
     UserResponse,
     MessageResponse,
@@ -53,14 +58,29 @@ from app.schemas.auth import (
 from app.services.auth import AuthService, GoogleOAuthService
 from app.services.auth.service import TokenPair
 from app.services.auth.oauth_google import get_oauth_state_store
+from app.services.exceptions import InvalidCredentialsError
 from app.dependencies import get_auth_service, get_current_user
+from app.utils.cookies import (
+    REFRESH_TOKEN_COOKIE,
+    set_refresh_token_cookie,
+    clear_refresh_token_cookie,
+)
 
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 
+def _token_pair_to_access_response(tokens: TokenPair) -> AccessTokenResponse:
+    """Convert TokenPair to AccessTokenResponse (without refresh token in body)."""
+    return AccessTokenResponse(
+        access_token=tokens.access_token,
+        token_type=tokens.token_type,
+        expires_in=tokens.expires_in,
+    )
+
+
 def _token_pair_to_response(tokens: TokenPair) -> TokenResponse:
-    """Convert TokenPair to TokenResponse."""
+    """Convert TokenPair to TokenResponse (legacy, includes refresh token)."""
     return TokenResponse(
         access_token=tokens.access_token,
         refresh_token=tokens.refresh_token,
@@ -70,13 +90,32 @@ def _token_pair_to_response(tokens: TokenPair) -> TokenResponse:
 
 
 def _get_client_info(request: Request) -> tuple[str | None, str | None]:
-    """Extract device info and IP address from request."""
+    """
+    Extract device info and IP address from request.
+
+    Only trusts X-Forwarded-For headers when the immediate client is a
+    trusted proxy to prevent IP spoofing attacks.
+
+    Args:
+        request: Starlette/FastAPI request object
+
+    Returns:
+        Tuple of (device_info, ip_address)
+    """
+    from app.config import settings
+
     device_info = request.headers.get("User-Agent")
     ip_address = request.client.host if request.client else None
-    # Handle X-Forwarded-For for proxied requests
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        ip_address = forwarded_for.split(",")[0].strip()
+
+    # Check if we should trust forwarded headers
+    is_trusted = settings.trust_proxy_headers or (ip_address in settings.trusted_proxy_ips)
+
+    # Only use X-Forwarded-For from trusted proxies
+    if is_trusted:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            ip_address = forwarded_for.split(",")[0].strip()
+
     return device_info, ip_address
 
 
@@ -111,9 +150,12 @@ def register(
 
 @router.post(
     "/login",
-    response_model=TokenResponse,
+    response_model=AccessTokenResponse,
     summary="Login with email and password",
-    description="Authenticate with email and password. Returns access and refresh tokens.",
+    description=(
+        "Authenticate with email and password. Returns access token in response body. "
+        "Refresh token is set as an httpOnly cookie for security."
+    ),
 )
 @limiter.limit(RATE_LIMIT_AUTH_LOGIN)
 def login(
@@ -121,7 +163,7 @@ def login(
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> TokenResponse:
+) -> JSONResponse:
     """Login with email and password."""
     device_info, ip_address = _get_client_info(request)
 
@@ -132,7 +174,15 @@ def login(
         device_info=device_info,
         ip_address=ip_address,
     )
-    return _token_pair_to_response(tokens)
+
+    # Create response with access token only
+    response_data = _token_pair_to_access_response(tokens)
+    response = JSONResponse(content=response_data.model_dump())
+
+    # Set refresh token as httpOnly cookie
+    set_refresh_token_cookie(response, tokens.refresh_token)
+
+    return response
 
 
 # =============================================================================
@@ -142,43 +192,73 @@ def login(
 
 @router.post(
     "/refresh",
-    response_model=TokenResponse,
+    response_model=AccessTokenResponse,
     summary="Refresh access token",
-    description="Get a new access token using a refresh token. The old refresh token is invalidated.",
+    description=(
+        "Get a new access token using the refresh token from the httpOnly cookie. "
+        "The old refresh token is invalidated and a new one is set in the cookie."
+    ),
 )
 @limiter.limit(RATE_LIMIT_AUTH_REFRESH)
 def refresh_token(
-    data: TokenRefreshRequest,
     request: Request,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> TokenResponse:
-    """Refresh access token using refresh token."""
+    refresh_token: Annotated[str | None, Cookie(alias=REFRESH_TOKEN_COOKIE)] = None,
+) -> JSONResponse:
+    """Refresh access token using refresh token from cookie."""
+    # Get refresh token from cookie
+    if not refresh_token:
+        raise InvalidCredentialsError("No refresh token provided")
+
     device_info, ip_address = _get_client_info(request)
 
     tokens = auth_service.refresh_tokens(
         db=db,
-        refresh_token=data.refresh_token,
+        refresh_token=refresh_token,
         device_info=device_info,
         ip_address=ip_address,
     )
-    return _token_pair_to_response(tokens)
+
+    # Create response with access token only
+    response_data = _token_pair_to_access_response(tokens)
+    response = JSONResponse(content=response_data.model_dump())
+
+    # Set new refresh token as httpOnly cookie (token rotation)
+    set_refresh_token_cookie(response, tokens.refresh_token)
+
+    return response
 
 
 @router.post(
     "/logout",
     response_model=MessageResponse,
     summary="Logout (revoke refresh token)",
-    description="Revoke the provided refresh token, ending the session.",
+    description="Revoke the refresh token from the cookie, ending the session.",
 )
 def logout(
-    data: LogoutRequest,
+    request: Request,
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> MessageResponse:
+    refresh_token: Annotated[str | None, Cookie(alias=REFRESH_TOKEN_COOKIE)] = None,
+    data: LogoutRequest | None = None,
+) -> JSONResponse:
     """Logout by revoking refresh token."""
-    auth_service.logout(db=db, refresh_token=data.refresh_token)
-    return MessageResponse(message="Successfully logged out")
+    # Try to get refresh token from cookie first, then from request body (backwards compat)
+    token_to_revoke = refresh_token
+    if not token_to_revoke and data and data.refresh_token:
+        token_to_revoke = data.refresh_token
+
+    if token_to_revoke:
+        auth_service.logout(db=db, refresh_token=token_to_revoke)
+
+    # Create response and clear the cookie
+    response = JSONResponse(
+        content=MessageResponse(message="Successfully logged out").model_dump()
+    )
+    clear_refresh_token_cookie(response)
+
+    return response
 
 
 @router.post(
@@ -191,10 +271,19 @@ def logout_all(
     db: Annotated[Session, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
     current_user: Annotated[User, Depends(get_current_user)],
-) -> MessageResponse:
+) -> JSONResponse:
     """Logout from all sessions."""
     count = auth_service.logout_all(db=db, user_id=current_user.id)
-    return MessageResponse(message=f"Logged out from {count} session(s)")
+
+    # Create response and clear the cookie
+    response = JSONResponse(
+        content=MessageResponse(
+            message=f"Logged out from {count} session(s)"
+        ).model_dump()
+    )
+    clear_refresh_token_cookie(response)
+
+    return response
 
 
 # =============================================================================
@@ -326,9 +415,12 @@ def get_google_auth_url() -> GoogleAuthUrlResponse:
 
 @router.get(
     "/google/callback",
-    response_model=TokenResponse,
+    response_model=AccessTokenResponse,
     summary="Google OAuth callback",
-    description="Handle the callback from Google OAuth. Exchange code for tokens and create/login user.",
+    description=(
+        "Handle the callback from Google OAuth. Exchange code for tokens and create/login user. "
+        "Returns access token in response body, refresh token is set as httpOnly cookie."
+    ),
 )
 async def google_callback(
     code: Annotated[str, Query(description="Authorization code from Google")],
@@ -336,7 +428,7 @@ async def google_callback(
     db: Annotated[Session, Depends(get_db)],
     request: Request,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> TokenResponse:
+) -> JSONResponse:
     """
     Handle Google OAuth callback.
 
@@ -345,7 +437,7 @@ async def google_callback(
     2. Exchanges the authorization code for tokens
     3. Retrieves user info from Google
     4. Creates user if they don't exist, or logs them in
-    5. Returns access and refresh tokens
+    5. Returns access token and sets refresh token as cookie
     """
     # Validate state parameter for CSRF protection
     # This will raise OAuthError if state is invalid or expired
@@ -434,4 +526,11 @@ async def google_callback(
         ip_address=ip_address,
     )
 
-    return _token_pair_to_response(tokens)
+    # Create response with access token only
+    response_data = _token_pair_to_access_response(tokens)
+    response = JSONResponse(content=response_data.model_dump())
+
+    # Set refresh token as httpOnly cookie
+    set_refresh_token_cookie(response, tokens.refresh_token)
+
+    return response

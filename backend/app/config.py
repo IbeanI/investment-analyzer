@@ -188,6 +188,18 @@ class Settings(BaseSettings):
     )
 
     # =========================================================================
+    # PROXY SETTINGS
+    # =========================================================================
+    trusted_proxy_ips: list[str] = Field(
+        default=["127.0.0.1", "::1"],
+        description="IP addresses of trusted reverse proxies that can set X-Forwarded-For header"
+    )
+    trust_proxy_headers: bool = Field(
+        default=False,
+        description="Whether to trust X-Forwarded-For headers from any source (use only if behind trusted load balancer)"
+    )
+
+    # =========================================================================
     # CORS
     # =========================================================================
     cors_origins: list[str] = Field(
@@ -199,11 +211,11 @@ class Settings(BaseSettings):
         description="Allow credentials in CORS requests"
     )
     cors_allow_methods: list[str] = Field(
-        default=["*"],
+        default=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
         description="Allowed HTTP methods for CORS"
     )
     cors_allow_headers: list[str] = Field(
-        default=["*"],
+        default=["Content-Type", "Authorization", "Accept", "Origin", "X-Requested-With"],
         description="Allowed HTTP headers for CORS"
     )
 

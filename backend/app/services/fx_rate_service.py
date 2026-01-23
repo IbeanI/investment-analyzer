@@ -208,13 +208,16 @@ class FXRateService:
         """
         Fetch and store FX rates for a currency pair and date range.
 
+        Also stores "no data" markers for dates that have no FX data
+        (holidays, weekends) to prevent repeated API calls.
+
         Args:
             db: Database session
             base_currency: Base currency code (e.g., "USD")
             quote_currency: Quote currency code (e.g., "EUR")
             start_date: Start of date range (inclusive)
             end_date: End of date range (inclusive)
-            force: If True, re-fetch all dates. If False, only fetch missing.
+            force: If True, re-fetch all dates (clears no-data markers first).
 
         Returns:
             FXSyncResult with sync statistics
@@ -239,8 +242,9 @@ class FXRateService:
 
         logger.info(f"Syncing FX rates: {base}/{quote} from {start_date} to {end_date}")
 
-        # Determine which dates to fetch
+        # For force sync, clear existing no-data markers to allow re-fetching
         if force:
+            self._clear_no_data_markers(db, base, quote, start_date, end_date)
             dates_to_fetch = get_business_days(start_date, end_date)
         else:
             existing_dates = self._get_existing_dates(db, base, quote, start_date, end_date)
@@ -252,6 +256,9 @@ class FXRateService:
             return result
 
         logger.info(f"Fetching {len(dates_to_fetch)} dates for {base}/{quote}")
+
+        # Track requested dates to identify dates with no data
+        requested_dates = set(dates_to_fetch)
 
         # Fetch from market data provider
         try:
@@ -266,18 +273,26 @@ class FXRateService:
             logger.error(f"Provider error: {e}")
             return result
 
-        if not rates:
-            result.errors.append(f"No rates returned for {base}/{quote}")
-            return result
+        # Store rates in database (even if empty, we'll store markers)
+        if rates:
+            inserted, updated = self._upsert_rates(db, base, quote, rates)
+            result.rates_inserted = inserted
+            result.rates_updated = updated
 
-        # Store in database
-        inserted, updated = self._upsert_rates(db, base, quote, rates)
-        result.rates_inserted = inserted
-        result.rates_updated = updated
+        # Identify dates that were requested but had no data returned
+        dates_with_data = set(rates.keys()) if rates else set()
+        dates_with_no_data = sorted(requested_dates - dates_with_data)
+
+        # Store "no data" markers to prevent re-fetching these dates
+        if dates_with_no_data:
+            self._store_no_data_markers(db, base, quote, dates_with_no_data)
+            logger.debug(
+                f"Marked {len(dates_with_no_data)} dates as no-data for {base}/{quote}"
+            )
 
         logger.info(
             f"Sync complete: {base}/{quote} - "
-            f"fetched={result.rates_fetched}, inserted={inserted}, updated={updated}"
+            f"fetched={result.rates_fetched}, no-data markers={len(dates_with_no_data)}"
         )
 
         return result
@@ -783,6 +798,7 @@ class FXRateService:
                     ExchangeRate.quote_currency == quote_currency,
                     func.date(ExchangeRate.date) >= extended_start,
                     func.date(ExchangeRate.date) <= end_date,
+                    ExchangeRate.no_data_available == False,  # Exclude no-data markers
                 )
             )
             .order_by(ExchangeRate.date)
@@ -839,6 +855,7 @@ class FXRateService:
                     ExchangeRate.base_currency == base_currency,
                     ExchangeRate.quote_currency == quote_currency,
                     func.date(ExchangeRate.date) == target_date,
+                    ExchangeRate.no_data_available == False,  # Exclude no-data markers
                 )
             )
         )
@@ -867,6 +884,7 @@ class FXRateService:
                     ExchangeRate.quote_currency == quote_currency,
                     func.date(ExchangeRate.date) >= min_date,
                     func.date(ExchangeRate.date) < target_date,
+                    ExchangeRate.no_data_available == False,  # Exclude no-data markers
                 )
             )
             .order_by(ExchangeRate.date.desc())
@@ -920,6 +938,112 @@ class FXRateService:
 
         # PostgreSQL doesn't easily distinguish inserts vs updates in upsert
         return len(rates), 0
+
+    def _store_no_data_markers(
+            self,
+            db: Session,
+            base_currency: str,
+            quote_currency: str,
+            dates_with_no_data: list[date],
+    ) -> int:
+        """
+        Store markers for dates where no FX rate data is available.
+
+        These markers prevent repeated API calls for holidays and weekends.
+
+        Args:
+            db: Database session
+            base_currency: Base currency code
+            quote_currency: Quote currency code
+            dates_with_no_data: Dates that had no data from API
+
+        Returns:
+            Number of markers stored
+        """
+        if not dates_with_no_data:
+            return 0
+
+        records = [
+            {
+                "base_currency": base_currency,
+                "quote_currency": quote_currency,
+                "date": d,
+                "rate": None,
+                "no_data_available": True,
+                "provider": self._provider.name,
+            }
+            for d in dates_with_no_data
+        ]
+
+        try:
+            stmt = pg_insert(ExchangeRate).values(records)
+            upsert_stmt = stmt.on_conflict_do_update(
+                constraint="uq_exchange_rate_pair_date",
+                set_={
+                    "no_data_available": True,
+                    "rate": None,
+                },
+            )
+            db.execute(upsert_stmt)
+            db.commit()
+
+            logger.debug(
+                f"Stored {len(records)} no-data markers for {base_currency}/{quote_currency}"
+            )
+            return len(records)
+
+        except Exception as e:
+            logger.error(f"Error storing FX no-data markers: {e}")
+            db.rollback()
+            return 0
+
+    def _clear_no_data_markers(
+            self,
+            db: Session,
+            base_currency: str,
+            quote_currency: str,
+            start_date: date,
+            end_date: date,
+    ) -> int:
+        """
+        Clear no-data markers for a currency pair to allow re-fetching.
+
+        Used during full re-sync.
+
+        Args:
+            db: Database session
+            base_currency: Base currency code
+            quote_currency: Quote currency code
+            start_date: Start of range to clear
+            end_date: End of range to clear
+
+        Returns:
+            Number of markers cleared
+        """
+        try:
+            result = db.execute(
+                ExchangeRate.__table__.delete().where(
+                    and_(
+                        ExchangeRate.base_currency == base_currency,
+                        ExchangeRate.quote_currency == quote_currency,
+                        ExchangeRate.date >= start_date,
+                        ExchangeRate.date <= end_date,
+                        ExchangeRate.no_data_available == True,
+                    )
+                )
+            )
+            db.commit()
+            deleted = result.rowcount
+            if deleted > 0:
+                logger.debug(
+                    f"Cleared {deleted} FX no-data markers for {base_currency}/{quote_currency}"
+                )
+            return deleted
+
+        except Exception as e:
+            logger.error(f"Error clearing FX no-data markers: {e}")
+            db.rollback()
+            return 0
 
     @staticmethod
     def _extract_date(dt: datetime | date | None) -> date | None:

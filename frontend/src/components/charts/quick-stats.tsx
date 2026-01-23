@@ -1,7 +1,13 @@
 "use client";
 
-import { TrendingUp, TrendingDown, Minus, Clock } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Clock, Info } from "lucide-react";
 import { cn, formatCurrency, formatPercentage } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface QuickStatsProps {
   currency: string;
@@ -21,9 +27,10 @@ interface StatItemProps {
   percentage?: string;
   trend: "up" | "down" | "neutral";
   isLoading?: boolean;
+  infoDescription?: React.ReactNode;
 }
 
-function StatItem({ label, value, percentage, trend, isLoading }: StatItemProps) {
+function StatItem({ label, value, percentage, trend, isLoading, infoDescription }: StatItemProps) {
   if (isLoading) {
     return (
       <div className="flex flex-col gap-1">
@@ -35,7 +42,23 @@ function StatItem({ label, value, percentage, trend, isLoading }: StatItemProps)
 
   return (
     <div className="flex flex-col gap-0.5">
-      <span className="text-xs text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-1">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        {infoDescription && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground transition-colors">
+                  <Info className="h-3 w-3" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[300px] p-3">
+                <div className="text-xs">{infoDescription}</div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+      </div>
       <div className="flex items-center gap-1.5">
         {trend === "up" && (
           <TrendingUp className="h-3.5 w-3.5 text-green-600 dark:text-green-500" />
@@ -91,7 +114,7 @@ export function QuickStats({
 }: QuickStatsProps) {
   const formatValue = (value: number | null | undefined) => {
     if (value === null || value === undefined) return "—";
-    const sign = value > 0 ? "+" : "";
+    const sign = value > 0 ? "+" : value < 0 ? "-" : "";
     return `${sign}${formatCurrency(Math.abs(value), currency)}`;
   };
 
@@ -103,7 +126,7 @@ export function QuickStats({
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3 py-3 px-4 bg-muted/30 rounded-lg border">
       <StatItem
-        label="Today"
+        label="Daily P/L"
         value={formatValue(todayChange)}
         percentage={formatPct(todayChangePercentage)}
         trend={getTrend(todayChange)}
@@ -111,19 +134,17 @@ export function QuickStats({
       />
       <div className="hidden sm:block h-8 w-px bg-border" />
       <StatItem
-        label="Total Return"
+        label="Total P/L"
         value={formatValue(totalReturn)}
         percentage={formatPct(totalReturnPercentage)}
         trend={getTrend(totalReturn)}
         isLoading={isLoading}
-      />
-      <div className="hidden sm:block h-8 w-px bg-border" />
-      <StatItem
-        label="Unrealized P&L"
-        value={formatValue(unrealizedPnl)}
-        percentage={formatPct(unrealizedPnlPercentage)}
-        trend={getTrend(unrealizedPnl)}
-        isLoading={isLoading}
+        infoDescription={
+          <>
+            <p className="font-medium mb-1">Total Profit/Loss</p>
+            <p>The cumulative financial outcome of your entire portfolio history. This value combines your <strong>Realized Profit/Loss</strong> (profits you have already secured) and your <strong>Unrealized Profit/Loss</strong> (paper profits on assets you still hold).</p>
+          </>
+        }
       />
       {lastUpdated && (
         <>
@@ -149,7 +170,7 @@ export function QuickStatsCompact({
 }: Omit<QuickStatsProps, "unrealizedPnl" | "unrealizedPnlPercentage" | "lastUpdated">) {
   const formatValue = (value: number | null | undefined) => {
     if (value === null || value === undefined) return "—";
-    const sign = value > 0 ? "+" : "";
+    const sign = value > 0 ? "+" : value < 0 ? "-" : "";
     return `${sign}${formatCurrency(Math.abs(value), currency)}`;
   };
 
@@ -161,18 +182,24 @@ export function QuickStatsCompact({
   return (
     <div className="flex items-center justify-between gap-4 py-2">
       <StatItem
-        label="Today"
+        label="Daily P/L"
         value={formatValue(todayChange)}
         percentage={formatPct(todayChangePercentage)}
         trend={getTrend(todayChange)}
         isLoading={isLoading}
       />
       <StatItem
-        label="Total Return"
+        label="Total P/L"
         value={formatValue(totalReturn)}
         percentage={formatPct(totalReturnPercentage)}
         trend={getTrend(totalReturn)}
         isLoading={isLoading}
+        infoDescription={
+          <>
+            <p className="font-medium mb-1">Total Profit/Loss</p>
+            <p>The cumulative financial outcome of your entire portfolio history. This value combines your <strong>Realized Profit/Loss</strong> (profits you have already secured) and your <strong>Unrealized Profit/Loss</strong> (paper profits on assets you still hold).</p>
+          </>
+        }
       />
     </div>
   );

@@ -226,18 +226,24 @@ export function AllocationChart({
           </div>
 
           {/* Legend */}
-          <div className="flex-1 w-full">
+          <div className="flex-1 w-full" role="list" aria-label="Chart legend">
             <div className="grid grid-cols-2 gap-2">
               {chartData.map((item, index) => (
                 <div
                   key={item.name}
-                  className="flex items-center gap-2 text-sm cursor-pointer hover:opacity-80"
+                  role="listitem"
+                  tabIndex={0}
+                  className="flex items-center gap-2 text-sm cursor-pointer hover:opacity-80 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1 rounded-sm"
                   onMouseEnter={() => setActiveIndex(index)}
                   onMouseLeave={() => setActiveIndex(undefined)}
+                  onFocus={() => setActiveIndex(index)}
+                  onBlur={() => setActiveIndex(undefined)}
+                  aria-label={`${item.name}: ${formatPercentage(item.percentage / 100, { showSign: false })}`}
                 >
                   <div
                     className="w-3 h-3 rounded-full shrink-0"
                     style={{ backgroundColor: item.color }}
+                    aria-hidden="true"
                   />
                   <span className="truncate flex-1">{item.name}</span>
                   <span className="text-muted-foreground">

@@ -65,6 +65,7 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini
       - ./backend/scripts:/app/scripts
+      - ./backend/tests:/app/tests
 
 volumes:
   postgres_data:

@@ -88,9 +88,23 @@ export interface ResetPasswordRequest {
 }
 
 export interface LogoutRequest {
-  refresh_token: string;
+  refresh_token?: string; // Optional - refresh token is now read from httpOnly cookie
 }
 
+/**
+ * Response containing only the access token.
+ * The refresh token is set as an httpOnly cookie by the server.
+ */
+export interface AccessTokenResponse {
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+/**
+ * @deprecated Use AccessTokenResponse instead.
+ * Kept for backwards compatibility.
+ */
 export interface TokenResponse {
   access_token: string;
   refresh_token: string;
@@ -370,6 +384,8 @@ export interface PortfolioValuationSummary {
   total_realized_pnl: string;
   total_pnl: string | null;
   total_pnl_percentage: string | null;
+  day_change: string | null;
+  day_change_percentage: string | null;
 }
 
 export interface PortfolioValuation {
@@ -598,9 +614,24 @@ export interface SyncStatusResponse {
   status: SyncStatus;
   started_at: string | null;
   completed_at: string | null;
+  last_full_sync: string | null;
   assets_synced: number;
   assets_failed: number;
   message: string | null;
+}
+
+export interface FullResyncResponse {
+  success: boolean;
+  portfolio_id: number;
+  status: string;
+  assets_synced: number;
+  assets_failed: number;
+  prices_fetched: number;
+  fx_pairs_synced: number;
+  fx_rates_fetched: number;
+  warnings: string[];
+  error: string | null;
+  next_full_resync_available: string | null;
 }
 
 export interface SyncTriggerResponse {

@@ -197,7 +197,7 @@ class TestLoginEndpoint:
     """Tests for POST /auth/login endpoint."""
 
     def test_login_success(self, client: TestClient, test_db: Session):
-        """Successful login should return tokens."""
+        """Successful login should return access token and set refresh token cookie."""
         create_user(test_db, email="test@example.com", password="password123")
 
         response = client.post(
@@ -211,9 +211,12 @@ class TestLoginEndpoint:
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
         assert data["token_type"] == "bearer"
         assert "expires_in" in data
+        # Refresh token should be in httpOnly cookie, not in response body
+        assert "refresh_token" not in data
+        # Check that refresh_token cookie is set
+        assert "refresh_token" in response.cookies
 
     def test_login_wrong_password(self, client: TestClient, test_db: Session):
         """Login with wrong password should return 401."""
@@ -290,35 +293,42 @@ class TestRefreshEndpoint:
     """Tests for POST /auth/refresh endpoint."""
 
     def test_refresh_success(self, client: TestClient, test_db: Session):
-        """Successful refresh should return new tokens."""
+        """Successful refresh should return new access token and rotate refresh cookie."""
         create_user(test_db, email="test@example.com", password="password123")
 
-        # Login first
+        # Login first - this sets the refresh_token cookie
         login_response = client.post(
             "/auth/login",
             json={"email": "test@example.com", "password": "password123"},
         )
-        refresh_token = login_response.json()["refresh_token"]
+        old_refresh_cookie = login_response.cookies.get("refresh_token")
 
-        # Refresh
-        response = client.post(
-            "/auth/refresh",
-            json={"refresh_token": refresh_token},
-        )
+        # Refresh - cookie is sent automatically by TestClient
+        response = client.post("/auth/refresh")
 
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
-        # New refresh token should be different (rotation)
-        assert data["refresh_token"] != refresh_token
+        assert "expires_in" in data
+        # Refresh token should be in cookie, not in response body
+        assert "refresh_token" not in data
+        # New refresh token cookie should be set (rotation)
+        new_refresh_cookie = response.cookies.get("refresh_token")
+        assert new_refresh_cookie is not None
+        assert new_refresh_cookie != old_refresh_cookie
 
-    def test_refresh_invalid_token(self, client: TestClient):
-        """Refresh with invalid token should return 401."""
-        response = client.post(
-            "/auth/refresh",
-            json={"refresh_token": "invalid-token"},
-        )
+    def test_refresh_no_cookie(self, client: TestClient):
+        """Refresh without cookie should return 401."""
+        # Clear any existing cookies
+        client.cookies.clear()
+        response = client.post("/auth/refresh")
+
+        assert response.status_code == 401
+
+    def test_refresh_invalid_cookie(self, client: TestClient):
+        """Refresh with invalid cookie should return 401."""
+        client.cookies.set("refresh_token", "invalid-token", path="/auth")
+        response = client.post("/auth/refresh")
 
         assert response.status_code == 401
 
@@ -326,21 +336,22 @@ class TestRefreshEndpoint:
         """Using already-used refresh token should return 401/403."""
         create_user(test_db, email="test@example.com", password="password123")
 
-        # Login
+        # Login - sets refresh_token cookie
         login_response = client.post(
             "/auth/login",
             json={"email": "test@example.com", "password": "password123"},
         )
-        refresh_token = login_response.json()["refresh_token"]
+        old_refresh_token = login_response.cookies.get("refresh_token")
 
-        # First refresh - success
-        client.post("/auth/refresh", json={"refresh_token": refresh_token})
+        # First refresh - success, rotates the token
+        first_refresh = client.post("/auth/refresh")
+        assert first_refresh.status_code == 200
 
-        # Second refresh with same token - should fail
-        response = client.post(
-            "/auth/refresh",
-            json={"refresh_token": refresh_token},
-        )
+        # Manually set back the OLD token (simulating replay attack)
+        client.cookies.set("refresh_token", old_refresh_token, path="/auth")
+
+        # Second refresh with same token - should fail (replay attack detection)
+        response = client.post("/auth/refresh")
 
         assert response.status_code in [401, 403]
 
@@ -354,44 +365,42 @@ class TestLogoutEndpoint:
     """Tests for POST /auth/logout endpoint."""
 
     def test_logout_success(self, client: TestClient, test_db: Session):
-        """Successful logout should return success message."""
+        """Successful logout should return success message and clear cookie."""
         create_user(test_db, email="test@example.com", password="password123")
 
-        # Login
-        login_response = client.post(
+        # Login - sets refresh_token cookie
+        client.post(
             "/auth/login",
             json={"email": "test@example.com", "password": "password123"},
         )
-        refresh_token = login_response.json()["refresh_token"]
 
-        # Logout
-        response = client.post(
-            "/auth/logout",
-            json={"refresh_token": refresh_token},
-        )
+        # Logout - reads token from cookie
+        response = client.post("/auth/logout")
 
         assert response.status_code == 200
         assert "message" in response.json()
+        # Cookie should be cleared (empty or deleted)
+        # Note: TestClient may show empty string or missing cookie after delete
 
     def test_logout_revokes_token(self, client: TestClient, test_db: Session):
         """After logout, refresh token should be invalid."""
         create_user(test_db, email="test@example.com", password="password123")
 
-        # Login
+        # Login - sets refresh_token cookie
         login_response = client.post(
             "/auth/login",
             json={"email": "test@example.com", "password": "password123"},
         )
-        refresh_token = login_response.json()["refresh_token"]
+        old_refresh_token = login_response.cookies.get("refresh_token")
 
-        # Logout
-        client.post("/auth/logout", json={"refresh_token": refresh_token})
+        # Logout - revokes token and clears cookie
+        client.post("/auth/logout")
 
-        # Try to use the token
-        response = client.post(
-            "/auth/refresh",
-            json={"refresh_token": refresh_token},
-        )
+        # Manually set back the OLD token to try to use it
+        client.cookies.set("refresh_token", old_refresh_token, path="/auth")
+
+        # Try to refresh with the revoked token
+        response = client.post("/auth/refresh")
 
         assert response.status_code in [401, 403]
 
@@ -415,15 +424,18 @@ class TestLogoutAllEndpoint:
         user = create_user(test_db, email="test@example.com", password="password123")
         headers = get_auth_headers(user)
 
-        # Create multiple sessions
+        # Create multiple sessions and store their refresh tokens
         login1 = client.post(
             "/auth/login",
             json={"email": "test@example.com", "password": "password123"},
         )
+        token1 = login1.cookies.get("refresh_token")
+
         login2 = client.post(
             "/auth/login",
             json={"email": "test@example.com", "password": "password123"},
         )
+        token2 = login2.cookies.get("refresh_token")
 
         # Logout all
         response = client.post("/auth/logout/all", headers=headers)
@@ -432,11 +444,9 @@ class TestLogoutAllEndpoint:
         assert "session" in response.json()["message"].lower()
 
         # Both refresh tokens should be revoked
-        for login_response in [login1, login2]:
-            refresh_response = client.post(
-                "/auth/refresh",
-                json={"refresh_token": login_response.json()["refresh_token"]},
-            )
+        for token in [token1, token2]:
+            client.cookies.set("refresh_token", token, path="/auth")
+            refresh_response = client.post("/auth/refresh")
             assert refresh_response.status_code in [401, 403]
 
 

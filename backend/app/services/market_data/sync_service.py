@@ -692,11 +692,14 @@ class MarketDataSyncService:
         Accumulates prices in the provided list for batch commit later.
         This is more efficient than committing after each asset.
 
+        Also stores "no data" markers for dates that have no market data
+        (holidays, weekends, etc.) to prevent repeated API calls.
+
         Args:
             db: Database session
             asset_info: Asset to sync
             end_date: End date for sync
-            force: If True, re-fetch all data
+            force: If True, re-fetch all data (clears no-data markers first)
             accumulated_prices: List to accumulate (asset_id, prices) tuples
 
         Returns:
@@ -711,8 +714,14 @@ class MarketDataSyncService:
         )
 
         try:
-            # Determine what dates need fetching
+            # For force sync, clear existing no-data markers to allow re-fetching
             if force:
+                self._clear_no_data_markers(
+                    db,
+                    asset_info.asset_id,
+                    asset_info.first_transaction_date,
+                    end_date,
+                )
                 date_ranges = [(asset_info.first_transaction_date, end_date)]
             else:
                 date_ranges = self._get_missing_date_ranges(
@@ -728,6 +737,11 @@ class MarketDataSyncService:
                 )
                 result.success = True
                 return result
+
+            # Track all requested dates to identify dates with no data
+            all_requested_dates: set[date] = set()
+            for start, end in date_ranges:
+                all_requested_dates.update(get_business_days(start, end))
 
             # Fetch prices for each missing range
             total_prices = 0
@@ -763,12 +777,24 @@ class MarketDataSyncService:
                     # Fallback: commit immediately if no accumulator
                     self._store_prices(db, asset_info.asset_id, all_prices)
 
+            # Identify dates that were requested but had no data returned
+            dates_with_data = {p.date for p in all_prices}
+            dates_with_no_data = sorted(all_requested_dates - dates_with_data)
+
+            # Store "no data" markers to prevent re-fetching these dates
+            if dates_with_no_data:
+                self._store_no_data_markers(db, asset_info.asset_id, dates_with_no_data)
+                logger.debug(
+                    f"Marked {len(dates_with_no_data)} dates as no-data for "
+                    f"{asset_info.ticker}/{asset_info.exchange}"
+                )
+
             result.prices_fetched = total_prices
             result.success = True
 
             logger.info(
                 f"Fetched {asset_info.ticker}/{asset_info.exchange}: "
-                f"{total_prices} prices"
+                f"{total_prices} prices, {len(dates_with_no_data)} no-data markers"
             )
 
             return result
@@ -867,6 +893,110 @@ class MarketDataSyncService:
             logger.error(f"Error batch storing prices: {e}")
             db.rollback()
             raise
+
+    def _store_no_data_markers(
+            self,
+            db: Session,
+            asset_id: int,
+            dates_with_no_data: list[date],
+    ) -> int:
+        """
+        Store markers for dates where no market data is available.
+
+        These markers prevent repeated API calls for holidays, weekends,
+        and dates where assets weren't trading.
+
+        Args:
+            db: Database session
+            asset_id: Asset ID
+            dates_with_no_data: Dates that had no data from API
+
+        Returns:
+            Number of markers stored
+        """
+        if not dates_with_no_data:
+            return 0
+
+        provider_name = getattr(self._provider, 'name', 'unknown')
+        if not isinstance(provider_name, str):
+            provider_name = str(provider_name) if provider_name else 'unknown'
+
+        records = [
+            {
+                "asset_id": asset_id,
+                "date": d,
+                "close_price": None,
+                "no_data_available": True,
+                "provider": provider_name,
+                "is_synthetic": False,
+            }
+            for d in dates_with_no_data
+        ]
+
+        try:
+            stmt = pg_insert(MarketData).values(records)
+            # On conflict, update to mark as no_data_available
+            # (in case a previous sync stored partial data)
+            upsert_stmt = stmt.on_conflict_do_update(
+                index_elements=["asset_id", "date"],
+                set_={
+                    "no_data_available": True,
+                    "close_price": None,
+                },
+            )
+            db.execute(upsert_stmt)
+            db.commit()
+
+            logger.debug(f"Stored {len(records)} no-data markers for asset {asset_id}")
+            return len(records)
+
+        except Exception as e:
+            logger.error(f"Error storing no-data markers: {e}")
+            db.rollback()
+            return 0
+
+    def _clear_no_data_markers(
+            self,
+            db: Session,
+            asset_id: int,
+            start_date: date,
+            end_date: date,
+    ) -> int:
+        """
+        Clear no-data markers for an asset to allow re-fetching.
+
+        Used during full re-sync to retry dates that previously had no data.
+
+        Args:
+            db: Database session
+            asset_id: Asset ID
+            start_date: Start of range to clear
+            end_date: End of range to clear
+
+        Returns:
+            Number of markers cleared
+        """
+        try:
+            result = db.execute(
+                MarketData.__table__.delete().where(
+                    and_(
+                        MarketData.asset_id == asset_id,
+                        MarketData.date >= start_date,
+                        MarketData.date <= end_date,
+                        MarketData.no_data_available == True,
+                    )
+                )
+            )
+            db.commit()
+            deleted = result.rowcount
+            if deleted > 0:
+                logger.debug(f"Cleared {deleted} no-data markers for asset {asset_id}")
+            return deleted
+
+        except Exception as e:
+            logger.error(f"Error clearing no-data markers: {e}")
+            db.rollback()
+            return 0
 
     def _sync_asset_prices(
             self,

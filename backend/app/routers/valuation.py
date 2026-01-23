@@ -11,7 +11,8 @@ Note: These endpoints are nested under /portfolios/{id} because valuations
 are always in the context of a specific portfolio.
 """
 
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -180,6 +181,31 @@ def get_portfolio_valuation(
         valuation_date=valuation_date,
     )
 
+    # Calculate day change by comparing to yesterday
+    day_change: Decimal | None = None
+    day_change_percentage: Decimal | None = None
+
+    if valuation.total_equity is not None:
+        # Use actual valuation date (which defaults to today if not specified)
+        actual_date = valuation.valuation_date
+        yesterday = actual_date - timedelta(days=1)
+        prev_valuation = service.get_valuation(
+            db=db,
+            portfolio_id=portfolio_id,
+            valuation_date=yesterday,
+        )
+
+        if prev_valuation.total_equity is not None:
+            day_change = valuation.total_equity - prev_valuation.total_equity
+            if prev_valuation.total_equity != Decimal("0"):
+                day_change_percentage = day_change / prev_valuation.total_equity
+            else:
+                day_change_percentage = Decimal("0")
+        else:
+            # No previous data found - return 0
+            day_change = Decimal("0")
+            day_change_percentage = Decimal("0")
+
     # Map to response schema
     return PortfolioValuationResponse(
         portfolio_id=valuation.portfolio_id,
@@ -195,6 +221,8 @@ def get_portfolio_valuation(
             total_realized_pnl=valuation.total_realized_pnl,
             total_pnl=valuation.total_pnl,
             total_pnl_percentage=valuation.total_pnl_percentage,
+            day_change=day_change,
+            day_change_percentage=day_change_percentage,
         ),
         holdings=[_map_holding(h) for h in valuation.holdings],
         tracks_cash=valuation.tracks_cash,

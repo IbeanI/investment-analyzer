@@ -1,7 +1,7 @@
 "use client";
 
 import { useTheme } from "next-themes";
-import { Menu, Moon, Sun, Bell } from "lucide-react";
+import { Menu, Moon, Sun } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -15,6 +15,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
 import { useAuth } from "@/providers";
 import { MobileMenu } from "./mobile-menu";
+import { NotificationDropdown } from "@/components/notifications/notification-dropdown";
 
 // -----------------------------------------------------------------------------
 // Header Component
@@ -85,12 +86,7 @@ export function Header({ title }: HeaderProps) {
           </Button>
 
           {/* Notifications */}
-          <Button variant="ghost" size="icon" className="relative">
-            <Bell className="h-5 w-5" />
-            <span className="sr-only">Notifications</span>
-            {/* Notification badge - uncomment when needed */}
-            {/* <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-destructive" /> */}
-          </Button>
+          <NotificationDropdown />
 
           {/* User menu */}
           <DropdownMenu>

@@ -172,6 +172,11 @@ class RefreshToken(Base):
     - If a revoked token is reused, all tokens in the family are revoked (replay attack detection)
     """
     __tablename__ = "refresh_tokens"
+    __table_args__ = (
+        # Compound index for efficient active token lookups
+        # Query pattern: WHERE user_id = ? AND revoked_at IS NULL
+        Index('ix_refresh_tokens_user_active', 'user_id', 'revoked_at'),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(
@@ -212,7 +217,7 @@ class Portfolio(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     currency: Mapped[str] = mapped_column(String(3), default="EUR")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -274,7 +279,7 @@ class Asset(Base):
     # NULL = standard asset (use its own data)
     # SET = use this asset's prices to backfill gaps
     proxy_asset_id: Mapped[int | None] = mapped_column(
-        ForeignKey("assets.id"), nullable=True, default=None, index=True
+        ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, default=None, index=True
     )  # Indexed for JOIN performance when loading proxy relationships
     proxy_notes: Mapped[str | None] = mapped_column(String, nullable=True, default=None)  # e.g., "Lyxor MSCI World Climate Change → Deka MSCI World Climate Change ESG"
 
@@ -300,8 +305,8 @@ class Transaction(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id"), index=True)
-    asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id"), nullable=True, index=True)
+    portfolio_id: Mapped[int] = mapped_column(ForeignKey("portfolios.id", ondelete="CASCADE"), index=True)
+    asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, index=True)
     transaction_type: Mapped[TransactionType] = mapped_column(Enum(TransactionType))
     date: Mapped[datetime] = mapped_column(DateTime, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))  # When it was recorded
@@ -344,7 +349,7 @@ class MarketData(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id"), index=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="CASCADE"), index=True)
     date: Mapped[date] = mapped_column(Date, index=True)  # Daily data - no time component
 
     # =========================================================================
@@ -356,7 +361,7 @@ class MarketData(Base):
     open_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     high_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
     low_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)
-    close_price: Mapped[Decimal] = mapped_column(Numeric(18, 8))  # Required - primary valuation price
+    close_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)  # Primary valuation price (NULL if no_data_available=True)
     adjusted_close: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)  # Adjusted for splits/dividends
     volume: Mapped[int | None] = mapped_column(BigInteger, nullable=True)  # Trading volume
 
@@ -378,8 +383,15 @@ class MarketData(Base):
 
     is_synthetic: Mapped[bool] = mapped_column(Boolean, default=False)
     proxy_source_id: Mapped[int | None] = mapped_column(
-        ForeignKey("assets.id"), nullable=True, default=None, index=True
+        ForeignKey("assets.id", ondelete="SET NULL"), nullable=True, default=None, index=True
     )  # Indexed for JOIN performance when tracing synthetic data lineage
+
+    # =========================================================================
+    # FETCH STATUS TRACKING
+    # =========================================================================
+    # Marks dates where we attempted to fetch data but none was available
+    # (e.g., holidays, weekends, delisted stocks). Prevents repeated API calls.
+    no_data_available: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # =========================================================================
     # RELATIONSHIPS
@@ -425,7 +437,7 @@ class ExchangeRate(Base):
     date: Mapped[date] = mapped_column(Date, index=True)
 
     # The exchange rate (Decimal for precision)
-    rate: Mapped[Decimal] = mapped_column(Numeric(18, 8))  # e.g., 0.92610000
+    rate: Mapped[Decimal | None] = mapped_column(Numeric(18, 8), nullable=True)  # e.g., 0.92610000 (NULL if no_data_available=True)
 
     # Metadata
     provider: Mapped[str] = mapped_column(String(50), default="yahoo")
@@ -433,6 +445,9 @@ class ExchangeRate(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(timezone.utc)
     )
+
+    # Fetch status tracking - marks dates where no FX data was available
+    no_data_available: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class SyncStatus(Base):
@@ -448,7 +463,7 @@ class SyncStatus(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     portfolio_id: Mapped[int] = mapped_column(
-        ForeignKey("portfolios.id"),
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
         unique=True,  # One status record per portfolio
         index=True
     )
@@ -462,6 +477,10 @@ class SyncStatus(Base):
         DateTime(timezone=True),
         nullable=True
     )
+    last_full_sync: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True
+    )  # Tracks when a full re-sync was last performed (rate limited to once/hour)
 
     # Sync status
     status: Mapped[SyncStatusEnum] = mapped_column(
@@ -510,7 +529,7 @@ class PortfolioSettings(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     portfolio_id: Mapped[int] = mapped_column(
-        ForeignKey("portfolios.id"),
+        ForeignKey("portfolios.id", ondelete="CASCADE"),
         unique=True,  # One settings record per portfolio
         index=True
     )

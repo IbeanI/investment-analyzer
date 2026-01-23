@@ -202,8 +202,11 @@ class TestGoogleCallback:
         assert response.status_code == 200
         data = response.json()
         assert "access_token" in data
-        assert "refresh_token" in data
         assert data["token_type"] == "bearer"
+        assert "expires_in" in data
+        # Refresh token should be in httpOnly cookie, not in response body
+        assert "refresh_token" not in data
+        assert "refresh_token" in response.cookies
 
         # Verify user was created
         user = test_db.query(User).filter(User.email == "newuser@gmail.com").first()

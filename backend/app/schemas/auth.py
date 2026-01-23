@@ -130,11 +130,17 @@ class ResetPasswordRequest(BaseModel):
 
 
 class LogoutRequest(BaseModel):
-    """Request body for logout."""
+    """
+    Request body for logout.
 
-    refresh_token: str = Field(
-        ...,
-        description="Refresh token to revoke",
+    Note: This is kept for backwards compatibility but the refresh_token
+    field is now optional since the token is primarily read from the
+    httpOnly cookie.
+    """
+
+    refresh_token: str | None = Field(
+        default=None,
+        description="Refresh token to revoke (optional, reads from cookie if not provided)",
     )
 
 
@@ -143,8 +149,35 @@ class LogoutRequest(BaseModel):
 # =============================================================================
 
 
+class AccessTokenResponse(BaseModel):
+    """
+    Response containing only the access token.
+
+    The refresh token is set as an httpOnly cookie for security,
+    so it's not included in the response body.
+    """
+
+    access_token: str = Field(
+        ...,
+        description="JWT access token",
+    )
+    token_type: str = Field(
+        default="bearer",
+        description="Token type (always 'bearer')",
+    )
+    expires_in: int = Field(
+        ...,
+        description="Access token expiration time in seconds",
+    )
+
+
 class TokenResponse(BaseModel):
-    """Response containing access and refresh tokens."""
+    """
+    Response containing access and refresh tokens.
+
+    DEPRECATED: Use AccessTokenResponse instead. This is kept for
+    backwards compatibility with existing API clients.
+    """
 
     access_token: str = Field(
         ...,

@@ -16,7 +16,7 @@ import type {
   PasswordChangeRequest,
   AccountDeleteRequest,
 } from "@/types/api";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useRouter } from "next/navigation";
 
 // -----------------------------------------------------------------------------

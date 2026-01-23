@@ -8,6 +8,7 @@ import {
   TrendingDown,
   AlertCircle,
   Plus,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -19,6 +20,12 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { HoldingsTable, SyncStatus } from "@/components/portfolio";
 import {
   ValueChart,
@@ -31,6 +38,7 @@ import {
   usePortfolio,
   usePortfolioValuation,
   usePortfolioHistory,
+  useSyncStatus,
 } from "@/hooks/use-portfolios";
 import { formatCurrency, formatPercentage, formatDate } from "@/lib/utils";
 
@@ -81,16 +89,37 @@ interface MetricCardProps {
   value: string;
   subValue?: string;
   trend?: "up" | "down" | "neutral";
+  infoDescription: React.ReactNode;
 }
 
-function MetricCard({ title, value, subValue, trend }: MetricCardProps) {
+function MetricCard({ title, value, subValue, trend, infoDescription }: MetricCardProps) {
+  const valueColorClass = trend === "up"
+    ? "text-green-600 dark:text-green-500"
+    : trend === "down"
+      ? "text-red-600 dark:text-red-500"
+      : "";
+
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardDescription>{title}</CardDescription>
+        <div className="flex items-center justify-between">
+          <CardDescription>{title}</CardDescription>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="text-muted-foreground hover:text-foreground transition-colors">
+                  <Info className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-[300px] p-3">
+                <div className="text-xs">{infoDescription}</div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold">{value}</div>
+        <div className={`text-2xl font-bold ${valueColorClass}`}>{value}</div>
         {subValue && (
           <p
             className={`text-sm flex items-center gap-1 ${
@@ -144,6 +173,8 @@ export default function PortfolioDetailPage({ params }: PageProps) {
     data: history,
     isLoading: historyLoading,
   } = usePortfolioHistory(portfolioId, fromDate, toDate);
+
+  const { data: syncStatus } = useSyncStatus(portfolioId);
 
   if (portfolioLoading) {
     return (
@@ -200,6 +231,13 @@ export default function PortfolioDetailPage({ params }: PageProps) {
     return "neutral";
   };
 
+  // Format P/L value with +/- sign
+  const formatPnlValue = (value: number | null, curr: string): string => {
+    if (value === null) return "—";
+    const sign = value > 0 ? "+" : value < 0 ? "-" : "";
+    return `${sign}${formatCurrency(Math.abs(value), curr)}`;
+  };
+
   // Parse summary values for QuickStats
   const totalPnl = summary?.total_pnl ? parseFloat(summary.total_pnl) : null;
   const totalPnlPct = summary?.total_pnl_percentage
@@ -207,6 +245,13 @@ export default function PortfolioDetailPage({ params }: PageProps) {
     : null;
   const unrealizedPnl = summary?.total_unrealized_pnl
     ? parseFloat(summary.total_unrealized_pnl)
+    : null;
+  const realizedPnl = summary?.total_realized_pnl
+    ? parseFloat(summary.total_realized_pnl)
+    : null;
+  const dayChange = summary?.day_change ? parseFloat(summary.day_change) : null;
+  const dayChangePercentage = summary?.day_change_percentage
+    ? parseFloat(summary.day_change_percentage)
     : null;
 
   return (
@@ -250,18 +295,24 @@ export default function PortfolioDetailPage({ params }: PageProps) {
       {summary && (
         <QuickStats
           currency={currency}
+          todayChange={dayChange}
+          todayChangePercentage={dayChangePercentage}
           totalReturn={totalPnl}
           totalReturnPercentage={totalPnlPct}
-          unrealizedPnl={unrealizedPnl}
           lastUpdated={
-            valuation?.valuation_date
-              ? formatDate(valuation.valuation_date, {
+            syncStatus?.completed_at
+              ? formatDate(syncStatus.completed_at, {
                   month: "short",
                   day: "numeric",
                   hour: "numeric",
                   minute: "numeric",
                 })
-              : undefined
+              : valuation?.valuation_date
+                ? formatDate(valuation.valuation_date, {
+                    month: "short",
+                    day: "numeric",
+                  })
+                : undefined
           }
           isLoading={valuationLoading}
         />
@@ -286,25 +337,39 @@ export default function PortfolioDetailPage({ params }: PageProps) {
           <MetricCard
             title="Total Value"
             value={formatCurrency(summary.total_value, currency)}
+            infoDescription="The sum of all your assets (stocks, ETFs, etc.) priced at today's market rate, plus any available cash in the account."
           />
           <MetricCard
-            title="Cost Basis"
+            title="Total Invested"
             value={formatCurrency(summary.total_cost_basis, currency)}
+            infoDescription="The total capital used to acquire your current holdings. This represents the original cost of your active assets."
           />
           <MetricCard
-            title="Total P&L"
-            value={formatCurrency(summary.total_pnl, currency)}
+            title="Unrealized P/L"
+            value={formatPnlValue(unrealizedPnl, currency)}
             subValue={
-              summary.total_pnl_percentage
-                ? formatPercentage(summary.total_pnl_percentage)
+              unrealizedPnl !== null && parseFloat(summary.total_cost_basis) > 0
+                ? formatPercentage(unrealizedPnl / parseFloat(summary.total_cost_basis))
                 : undefined
             }
-            trend={getTrend(summary.total_pnl)}
+            trend={getTrend(summary.total_unrealized_pnl)}
+            infoDescription={
+              <>
+                <p className="font-medium mb-1">Unrealized Profit/Loss</p>
+                <p>The potential profit or loss on positions you <strong>still own</strong>. It is calculated by comparing your purchase price to the current market price. This value changes constantly as the market moves.</p>
+              </>
+            }
           />
           <MetricCard
-            title="Unrealized P&L"
-            value={formatCurrency(summary.total_unrealized_pnl, currency)}
-            trend={getTrend(summary.total_unrealized_pnl)}
+            title="Realized P/L"
+            value={formatPnlValue(realizedPnl, currency)}
+            trend={getTrend(summary.total_realized_pnl)}
+            infoDescription={
+              <>
+                <p className="font-medium mb-1">Realized Profit/Loss</p>
+                <p>The actual profit or loss from positions you have <strong>already sold</strong>. It is called "realized" because the transaction is closed; the amount is final and will no longer fluctuate with the market.</p>
+              </>
+            }
           />
         </div>
       ) : (

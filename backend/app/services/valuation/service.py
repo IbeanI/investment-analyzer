@@ -209,11 +209,12 @@ class ValuationService:
         )
 
         # Step 5: Calculate holdings
-        positions = self._holdings_calc.calculate(
+        holdings_result = self._holdings_calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency=portfolio_currency,
         )
+        positions = holdings_result.positions
 
         # Step 5b: Batch fetch prices for all open positions (avoids N+1 queries)
         open_asset_ids = {p.asset_id for p in positions if p.quantity > Decimal("0")}
@@ -237,7 +238,7 @@ class ValuationService:
         total_unrealized_pnl = Decimal("0")
         total_realized_pnl = Decimal("0")
         all_complete = True
-        portfolio_warnings: list[str] = []
+        portfolio_warnings: list[str] = list(holdings_result.warnings)  # Start with holdings warnings
 
         for position in positions:
             # For closed positions (quantity=0), only count realized P&L
@@ -415,11 +416,14 @@ class ValuationService:
         )
 
         # Calculate and return holdings
-        return self._holdings_calc.calculate(
+        holdings_result = self._holdings_calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency=portfolio.currency,
         )
+        # Note: warnings are logged but not returned from this lightweight method
+        # Full warnings are available via get_valuation() which includes them in PortfolioValuation
+        return holdings_result.positions
 
     def get_history(
             self,
@@ -573,6 +577,7 @@ class ValuationService:
                     MarketData.asset_id.in_(asset_ids),
                     MarketData.date >= start_date,
                     MarketData.date <= target_date,
+                    MarketData.no_data_available == False,  # Exclude no-data markers
                 )
             )
         )

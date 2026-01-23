@@ -122,11 +122,12 @@ class TestHoldingsCalculator:
         transactions_by_asset = {1: transactions}
         assets = {1: aapl_asset}
 
-        positions = calc.calculate(
+        result = calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency="USD",
         )
+        positions = result.positions
 
         assert len(positions) == 1
         pos = positions[0]
@@ -166,11 +167,12 @@ class TestHoldingsCalculator:
         transactions_by_asset = {1: transactions}
         assets = {1: aapl_asset}
 
-        positions = calc.calculate(
+        result = calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency="USD",
         )
+        positions = result.positions
 
         assert len(positions) == 1
         pos = positions[0]
@@ -209,11 +211,12 @@ class TestHoldingsCalculator:
         transactions_by_asset = {1: transactions}
         assets = {1: aapl_asset}
 
-        positions = calc.calculate(
+        result = calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency="USD",
         )
+        positions = result.positions
 
         assert len(positions) == 1
         pos = positions[0]
@@ -258,11 +261,12 @@ class TestHoldingsCalculator:
         transactions_by_asset = {1: transactions}
         assets = {1: aapl_asset}
 
-        positions = calc.calculate(
+        result = calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency="USD",
         )
+        positions = result.positions
 
         # Position fully sold - NOW included for realized P&L calculation
         assert len(positions) == 1
@@ -296,11 +300,12 @@ class TestHoldingsCalculator:
         transactions_by_asset = {3: transactions}
         assets = {3: euro_asset}
 
-        positions = calc.calculate(
+        result = calc.calculate(
             transactions_by_asset=transactions_by_asset,
             assets=assets,
             portfolio_currency="USD",  # Portfolio in USD
         )
+        positions = result.positions
 
         pos = positions[0]
         # Local cost = 10 × €100 + €10 = €1010
@@ -468,7 +473,7 @@ class TestRealizedPnLCalculator:
         amount, percentage = calc.calculate(position)
 
         assert amount == Decimal("250.00")  # Profit
-        assert percentage == Decimal("50.00")  # 50%
+        assert percentage == Decimal("0.5000")  # 50% as decimal ratio
 
     def test_loss_sale(self, aapl_asset):
         """
@@ -495,7 +500,7 @@ class TestRealizedPnLCalculator:
         amount, percentage = calc.calculate(position)
 
         assert amount == Decimal("-100.00")  # Loss
-        assert percentage == Decimal("-20.00")  # -20%
+        assert percentage == Decimal("-0.2000")  # -20% as decimal ratio
 
     def test_full_sell_realized_pnl(self, aapl_asset):
         """
@@ -520,7 +525,7 @@ class TestRealizedPnLCalculator:
         amount, percentage = calc.calculate(position)
 
         assert amount == Decimal("400.00")
-        assert percentage == Decimal("20.00")
+        assert percentage == Decimal("0.2000")  # 20% as decimal ratio
 
 
 # =============================================================================

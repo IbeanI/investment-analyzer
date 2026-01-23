@@ -10,7 +10,7 @@ import {
   AmbiguousDateFormatException,
 } from "@/lib/api/transactions";
 import type { TransactionCreate, TransactionUpdate, UploadDateFormat } from "@/types/api";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { portfolioKeys } from "./use-portfolios";
 
 // -----------------------------------------------------------------------------

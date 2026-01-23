@@ -11,13 +11,14 @@ import {
   getPortfolioHistory,
   getPortfolioAnalytics,
   triggerSync,
+  triggerFullResync,
   getSyncStatus,
 } from "@/lib/api/portfolios";
 import type {
   PortfolioCreate,
   PortfolioUpdate,
 } from "@/types/api";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 // -----------------------------------------------------------------------------
 // Query Keys
@@ -29,11 +30,25 @@ export const portfolioKeys = {
   list: (filters: string) => [...portfolioKeys.lists(), { filters }] as const,
   details: () => [...portfolioKeys.all, "detail"] as const,
   detail: (id: number) => [...portfolioKeys.details(), id] as const,
-  valuation: (id: number) => [...portfolioKeys.detail(id), "valuation"] as const,
+  valuation: (id: number, date?: string) =>
+    [...portfolioKeys.detail(id), "valuation", date ?? "latest"] as const,
   history: (id: number, from: string, to: string, interval: string) =>
     [...portfolioKeys.detail(id), "history", from, to, interval] as const,
-  analytics: (id: number, from: string, to: string) =>
-    [...portfolioKeys.detail(id), "analytics", from, to] as const,
+  analytics: (
+    id: number,
+    from: string,
+    to: string,
+    benchmark?: string,
+    riskFreeRate?: string
+  ) =>
+    [
+      ...portfolioKeys.detail(id),
+      "analytics",
+      from,
+      to,
+      benchmark ?? "none",
+      riskFreeRate ?? "default",
+    ] as const,
   syncStatus: (id: number) => [...portfolioKeys.detail(id), "sync-status"] as const,
 };
 
@@ -67,7 +82,7 @@ export function usePortfolio(id: number) {
  */
 export function usePortfolioValuation(id: number, date?: string) {
   return useQuery({
-    queryKey: portfolioKeys.valuation(id),
+    queryKey: portfolioKeys.valuation(id, date),
     queryFn: () => getPortfolioValuation(id, date),
     enabled: !!id,
   });
@@ -100,7 +115,13 @@ export function usePortfolioAnalytics(
   riskFreeRate?: string
 ) {
   return useQuery({
-    queryKey: portfolioKeys.analytics(id, fromDate, toDate),
+    queryKey: portfolioKeys.analytics(
+      id,
+      fromDate,
+      toDate,
+      benchmarkSymbol,
+      riskFreeRate
+    ),
     queryFn: () =>
       getPortfolioAnalytics(id, fromDate, toDate, benchmarkSymbol, riskFreeRate),
     enabled: !!id && !!fromDate && !!toDate,
@@ -197,6 +218,26 @@ export function useTriggerSync() {
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to start sync");
+    },
+  });
+}
+
+/**
+ * Hook to trigger full re-sync (rate limited to once per hour)
+ */
+export function useFullResync() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (id: number) => triggerFullResync(id),
+    onSuccess: (data, id) => {
+      // Invalidate all portfolio-related queries since prices may have changed
+      queryClient.invalidateQueries({ queryKey: portfolioKeys.syncStatus(id) });
+      queryClient.invalidateQueries({ queryKey: portfolioKeys.detail(id) });
+      toast.success(`Full re-sync completed: ${data.prices_fetched} prices fetched`);
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to perform full re-sync");
     },
   });
 }

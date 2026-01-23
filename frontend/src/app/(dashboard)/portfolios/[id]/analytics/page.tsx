@@ -41,6 +41,7 @@ import {
 } from "@/hooks/use-portfolios";
 import { useEarliestTransactionDate } from "@/hooks/use-transactions";
 import { formatPercentage, formatCurrency, formatDate, cn } from "@/lib/utils";
+import { useUIStore } from "@/stores";
 
 // -----------------------------------------------------------------------------
 // Date Helpers
@@ -177,7 +178,7 @@ interface PageProps {
 export default function AnalyticsPage({ params }: PageProps) {
   const { id } = use(params);
   const portfolioId = parseInt(id, 10);
-  const [period, setPeriod] = useState<Period>("1Y");
+  const { period, setPeriod } = useUIStore();
   const [activeTab, setActiveTab] = useState("performance");
 
   const { data: portfolio, isLoading: portfolioLoading } =

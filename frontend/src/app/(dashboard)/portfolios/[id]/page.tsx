@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { use, useMemo } from "react";
 import Link from "next/link";
 import {
   ArrowLeft,
@@ -41,6 +41,7 @@ import {
 } from "@/hooks/use-portfolios";
 import { useEarliestTransactionDate } from "@/hooks/use-transactions";
 import { formatCurrency, formatPercentage, formatDate } from "@/lib/utils";
+import { useUIStore } from "@/stores";
 
 // -----------------------------------------------------------------------------
 // Date Helpers
@@ -170,7 +171,7 @@ interface PageProps {
 export default function PortfolioDetailPage({ params }: PageProps) {
   const { id } = use(params);
   const portfolioId = parseInt(id, 10);
-  const [period, setPeriod] = useState<Period>("1Y");
+  const { period, setPeriod } = useUIStore();
 
   const {
     data: portfolio,

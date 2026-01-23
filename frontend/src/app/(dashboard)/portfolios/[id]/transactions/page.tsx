@@ -31,6 +31,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
 import { TransactionForm, TransactionList, CsvUpload } from "@/components/forms";
+import { PortfolioNav } from "@/components/portfolio";
 import { usePortfolio } from "@/hooks/use-portfolios";
 import { useInfiniteTransactions } from "@/hooks/use-transactions";
 import type { Transaction } from "@/types/api";
@@ -104,8 +105,8 @@ export default function TransactionsPage({ params }: PageProps) {
             </Link>
           </Button>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Transactions</h1>
-            <p className="text-muted-foreground">{portfolio.name}</p>
+            <h1 className="text-2xl font-bold tracking-tight">{portfolio.name}</h1>
+            <p className="text-muted-foreground">Transactions</p>
           </div>
         </div>
 
@@ -182,6 +183,9 @@ export default function TransactionsPage({ params }: PageProps) {
           )}
         </SheetContent>
       </Sheet>
+
+      {/* Navigation */}
+      <PortfolioNav portfolioId={portfolioId} />
 
       {/* Content */}
       <Card>

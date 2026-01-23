@@ -92,6 +92,7 @@ def _map_holding(holding) -> HoldingValuation:
         ticker=holding.ticker,
         exchange=holding.exchange,
         asset_name=holding.asset_name,
+        asset_class=holding.asset_class,
         asset_currency=holding.asset_currency,
         quantity=holding.quantity,
         cost_basis=_map_cost_basis(holding.cost_basis),

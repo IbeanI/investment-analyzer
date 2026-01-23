@@ -355,6 +355,7 @@ export interface HoldingValuation {
   ticker: string;
   exchange: string;
   asset_name: string | null;
+  asset_class: AssetClass;
   asset_currency: string;
   quantity: string;
   cost_basis: CostBasisDetail;

@@ -721,6 +721,7 @@ class ValuationService:
             ticker=position.asset.ticker,
             exchange=position.asset.exchange,
             asset_name=position.asset.name,
+            asset_class=position.asset.asset_class.value,
             asset_currency=position.asset.currency,
             quantity=position.quantity,
             cost_basis=cost_basis,

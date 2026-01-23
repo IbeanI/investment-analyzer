@@ -45,6 +45,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PortfolioNav } from "@/components/portfolio";
 import {
   usePortfolio,
   useUpdatePortfolio,
@@ -162,7 +163,7 @@ export default function SettingsPage({ params }: PageProps) {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" asChild className="-ml-2">
@@ -171,13 +172,18 @@ export default function SettingsPage({ params }: PageProps) {
           </Link>
         </Button>
         <div>
-          <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-          <p className="text-muted-foreground">{portfolio.name}</p>
+          <h1 className="text-2xl font-bold tracking-tight">{portfolio.name}</h1>
+          <p className="text-muted-foreground">Settings</p>
         </div>
       </div>
 
-      {/* General Settings */}
-      <Card>
+      {/* Navigation */}
+      <PortfolioNav portfolioId={portfolioId} />
+
+      {/* Settings Content */}
+      <div className="max-w-2xl space-y-6">
+        {/* General Settings */}
+        <Card>
         <CardHeader>
           <CardTitle>General</CardTitle>
           <CardDescription>
@@ -380,6 +386,7 @@ export default function SettingsPage({ params }: PageProps) {
           </div>
         </CardContent>
       </Card>
+      </div>
     </div>
   );
 }

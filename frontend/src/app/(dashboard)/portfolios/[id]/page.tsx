@@ -7,7 +7,6 @@ import {
   TrendingUp,
   TrendingDown,
   AlertCircle,
-  Plus,
   Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -26,7 +25,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { HoldingsTable, SyncStatus } from "@/components/portfolio";
+import { PortfolioNav, SyncStatus } from "@/components/portfolio";
 import {
   ValueChart,
   PeriodSelector,
@@ -127,7 +126,7 @@ function MetricCard({ title, value, subValue, trend, infoDescription }: MetricCa
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button className="text-muted-foreground hover:text-foreground transition-colors">
+                <button className="text-muted-foreground hover:text-foreground transition-colors cursor-help">
                   <Info className="h-4 w-4" />
                 </button>
               </TooltipTrigger>
@@ -302,6 +301,9 @@ export default function PortfolioDetailPage({ params }: PageProps) {
         <SyncStatus portfolioId={portfolioId} />
       </div>
 
+      {/* Navigation */}
+      <PortfolioNav portfolioId={portfolioId} />
+
       {/* Warnings */}
       {valuation?.warnings && valuation.warnings.length > 0 && (
         <Alert>
@@ -431,49 +433,11 @@ export default function PortfolioDetailPage({ params }: PageProps) {
           <AllocationChart
             holdings={holdings}
             currency={currency}
-            groupBy="ticker"
+            groupBy="asset_class"
             isLoading={valuationLoading}
             title="Allocation"
           />
         </div>
-      </div>
-
-      {/* Holdings */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <div>
-            <CardTitle>Holdings</CardTitle>
-            <CardDescription>
-              {valuation?.valuation_date
-                ? `As of ${formatDate(valuation.valuation_date)}`
-                : "Add transactions and sync to see holdings"}
-            </CardDescription>
-          </div>
-          <Button size="sm" asChild>
-            <Link href={`/portfolios/${portfolioId}/transactions`}>
-              <Plus className="mr-2 h-4 w-4" />
-              Add
-            </Link>
-          </Button>
-        </CardHeader>
-        <CardContent>
-          <HoldingsTable holdings={holdings} currency={currency} />
-        </CardContent>
-      </Card>
-
-      {/* Quick Actions */}
-      <div className="flex flex-wrap gap-2">
-        <Button asChild>
-          <Link href={`/portfolios/${portfolioId}/transactions`}>
-            Transactions
-          </Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href={`/portfolios/${portfolioId}/analytics`}>Analytics</Link>
-        </Button>
-        <Button variant="outline" asChild>
-          <Link href={`/portfolios/${portfolioId}/settings`}>Settings</Link>
-        </Button>
       </div>
     </div>
   );

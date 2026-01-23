@@ -33,6 +33,7 @@ import {
   type Period,
 } from "@/components/charts";
 import { MetricExplainer } from "@/components/analytics";
+import { PortfolioNav } from "@/components/portfolio";
 import {
   usePortfolio,
   usePortfolioAnalytics,
@@ -249,16 +250,19 @@ export default function AnalyticsPage({ params }: PageProps) {
             </Link>
           </Button>
           <div>
-            <h1 className="text-2xl font-bold tracking-tight">Analytics</h1>
-            <p className="text-sm text-muted-foreground">
+            <h1 className="text-2xl font-bold tracking-tight">
               {portfolio?.name || "Loading..."}
-            </p>
+            </h1>
+            <p className="text-sm text-muted-foreground">Analytics</p>
           </div>
         </div>
         <PeriodSelector value={period} onChange={setPeriod} />
       </div>
 
-      {/* Tabs */}
+      {/* Navigation */}
+      <PortfolioNav portfolioId={portfolioId} />
+
+      {/* Analytics Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="performance" className="flex items-center gap-2">
@@ -547,13 +551,6 @@ export default function AnalyticsPage({ params }: PageProps) {
           )}
         </TabsContent>
       </Tabs>
-
-      {/* Back to Portfolio */}
-      <div className="flex gap-2">
-        <Button variant="outline" asChild>
-          <Link href={`/portfolios/${portfolioId}`}>Back to Portfolio</Link>
-        </Button>
-      </div>
     </div>
   );
 }

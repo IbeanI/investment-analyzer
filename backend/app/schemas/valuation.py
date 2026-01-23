@@ -140,6 +140,7 @@ class HoldingValuation(BaseModel):
     ticker: str
     exchange: str
     asset_name: str | None = None
+    asset_class: str = Field(default="OTHER", description="Asset class (STOCK, ETF, BOND, etc.)")
     asset_currency: str = Field(..., description="Currency the asset trades in")
 
     # Position size

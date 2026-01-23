@@ -48,7 +48,7 @@ function StatItem({ label, value, percentage, trend, isLoading, infoDescription 
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <button className="text-muted-foreground hover:text-foreground transition-colors">
+                <button className="text-muted-foreground hover:text-foreground transition-colors cursor-help">
                   <Info className="h-3 w-3" />
                 </button>
               </TooltipTrigger>

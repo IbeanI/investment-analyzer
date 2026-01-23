@@ -274,6 +274,7 @@ class HoldingValuation:
         ticker: Trading symbol (e.g., "AAPL")
         exchange: Exchange code (e.g., "NASDAQ")
         asset_name: Full name (e.g., "Apple Inc.")
+        asset_class: Asset class (e.g., "STOCK", "ETF", "BOND")
         asset_currency: Currency the asset trades in
         quantity: Number of shares/units held
         cost_basis: Cost basis calculation result
@@ -292,6 +293,7 @@ class HoldingValuation:
     ticker: str
     exchange: str
     asset_name: str | None
+    asset_class: str
     asset_currency: str
     quantity: Decimal
     cost_basis: CostBasisResult

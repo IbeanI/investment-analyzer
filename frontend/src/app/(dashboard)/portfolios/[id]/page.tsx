@@ -422,6 +422,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
             isLoading={chartLoading}
             title=""
             showCostBasis
+            period={period}
           />
         </div>
 

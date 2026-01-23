@@ -146,7 +146,7 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
         ) : (
           <>
             <RefreshCw className="mr-2 h-4 w-4" />
-            Sync
+            Sync Market Data
           </>
         )}
       </Button>

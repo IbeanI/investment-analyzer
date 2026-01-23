@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatDate, cn } from "@/lib/utils";
 import type { ValuationHistoryPoint } from "@/types/api";
+import type { Period } from "./period-selector";
 
 type ChartMode = "value" | "pnl";
 
@@ -24,6 +25,7 @@ interface ValueChartProps {
   isLoading?: boolean;
   title?: string;
   showCostBasis?: boolean;
+  period?: Period;
 }
 
 interface ChartDataPoint {
@@ -41,11 +43,13 @@ export function ValueChart({
   isLoading,
   title = "Portfolio Value",
   showCostBasis = false,
+  period,
 }: ValueChartProps) {
   const [mode, setMode] = useState<ChartMode>("pnl");
 
   const chartData = useMemo<ChartDataPoint[]>(() => {
-    return data.map((point) => {
+    // First pass: convert raw data
+    const rawData = data.map((point) => {
       // Backend returns pnl_percentage as decimal ratio (0.1735 = 17.35%), convert to percentage
       const pnlPct = point.pnl_percentage ? parseFloat(point.pnl_percentage) * 100 : null;
       return {
@@ -57,7 +61,19 @@ export function ValueChart({
         pnlPercentage: pnlPct,
       };
     });
-  }, [data]);
+
+    // For non-ALL periods: normalize pnlPercentage to be period-relative (start at 0%)
+    // For ALL period: keep absolute values to match Total P/L
+    if (period !== "ALL" && rawData.length > 0) {
+      const firstPnlPct = rawData[0].pnlPercentage ?? 0;
+      return rawData.map((point) => ({
+        ...point,
+        pnlPercentage: point.pnlPercentage !== null ? point.pnlPercentage - firstPnlPct : null,
+      }));
+    }
+
+    return rawData;
+  }, [data, period]);
 
   // Calculate nice Y axis domain and ticks
   const { yDomain, yTicks, zeroPosition } = useMemo(() => {
@@ -155,20 +171,31 @@ export function ValueChart({
     const last = chartData[chartData.length - 1];
 
     if (mode === "pnl") {
-      // Show the CHANGE in P&L percentage during the period
-      const firstPnlPct = first?.pnlPercentage ?? 0;
-      const lastPnlPct = last?.pnlPercentage ?? 0;
-      const periodChange = lastPnlPct - firstPnlPct;
+      if (period === "ALL") {
+        // For ALL period, show absolute total P&L% (matches Total P/L card)
+        const totalPnlPct = last?.pnlPercentage ?? 0;
+        return { isPositive: totalPnlPct >= 0, change: totalPnlPct, changePercent: totalPnlPct };
+      }
+      // For other periods, chartData is already normalized (first = 0)
+      const periodChange = last?.pnlPercentage ?? 0;
       return { isPositive: periodChange >= 0, change: periodChange, changePercent: periodChange };
     }
 
-    // For value mode, show the change in portfolio value during the period
+    // Value mode
+    if (period === "ALL") {
+      // For "ALL" period, show total portfolio value (matching main card)
+      const totalValue = last?.value ?? 0;
+      const firstValue = first?.value ?? 0;
+      const changePercent = firstValue !== 0 ? ((totalValue - firstValue) / firstValue) * 100 : 0;
+      return { isPositive: totalValue >= 0, change: totalValue, changePercent };
+    }
+    // For other periods, show value change during period
     const firstValue = first?.value ?? 0;
     const lastValue = last?.value ?? 0;
     const valueChange = lastValue - firstValue;
     const changePercent = firstValue !== 0 ? (valueChange / firstValue) * 100 : 0;
     return { isPositive: valueChange >= 0, change: valueChange, changePercent };
-  }, [chartData, mode]);
+  }, [chartData, mode, period]);
 
   const { isPositive, change, changePercent } = performanceInfo;
 
@@ -359,12 +386,12 @@ export function ValueChart({
                               className="text-sm font-medium"
                               style={{ color: data.pnlPercentage >= 0 ? chartColors.positive : chartColors.negative }}
                             >
-                              P&L: {data.pnlPercentage >= 0 ? "+" : ""}{data.pnlPercentage.toFixed(2)}%
+                              Performance: {data.pnlPercentage >= 0 ? "+" : ""}{data.pnlPercentage.toFixed(2)}%
                             </p>
                           )}
                           {data.pnl !== null && (
                             <p className="text-sm text-muted-foreground">
-                              {data.pnl >= 0 ? "+" : ""}{formatCurrency(data.pnl, currency)}
+                              Total P/L: {data.pnl >= 0 ? "+" : ""}{formatCurrency(data.pnl, currency)}
                             </p>
                           )}
                         </>

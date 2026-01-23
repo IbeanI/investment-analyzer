@@ -636,8 +636,16 @@ export interface FullResyncResponse {
 }
 
 export interface SyncTriggerResponse {
-  message: string;
-  status: SyncStatus;
+  success: boolean;
+  portfolio_id: number;
+  status: string;  // lowercase: "completed", "partial", or "failed"
+  assets_synced: number;
+  assets_failed: number;
+  prices_fetched: number;
+  fx_pairs_synced: number;
+  fx_rates_fetched: number;
+  warnings: string[];
+  error: string | null;
 }
 
 // -----------------------------------------------------------------------------

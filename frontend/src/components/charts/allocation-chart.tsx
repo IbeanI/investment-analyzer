@@ -253,6 +253,10 @@ export function AllocationChart({
                   onMouseEnter={(_, index) => setActiveIndex(index)}
                   onMouseLeave={() => setActiveIndex(undefined)}
                   {...({ activeIndex } as Record<string, unknown>)}
+                  isAnimationActive={true}
+                  animationBegin={0}
+                  animationDuration={900}
+                  animationEasing="ease-out"
                 >
                   {chartData.map((entry, index) => (
                     <Cell

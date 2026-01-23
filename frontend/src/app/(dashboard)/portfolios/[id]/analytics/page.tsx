@@ -235,6 +235,17 @@ export default function AnalyticsPage({ params }: PageProps) {
     return num > 0 ? "up" : "down";
   };
 
+  // Format P/L currency value with +/- sign (for consistency with other pages)
+  const formatPnlCurrency = (
+    value: string | number | null | undefined
+  ): string | null => {
+    if (value === null || value === undefined) return null;
+    const num = typeof value === "string" ? parseFloat(value) : value;
+    if (isNaN(num)) return null;
+    const sign = num > 0 ? "+" : num < 0 ? "-" : "";
+    return `${sign}${formatCurrency(Math.abs(num), analytics?.portfolio_currency || "EUR")}`;
+  };
+
   const performance = analytics?.performance;
   const risk = analytics?.risk;
   const benchmark = analytics?.benchmark;
@@ -299,7 +310,7 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="XIRR"
               value={formatMetric(performance?.xirr)}
-              description="Extended Internal Rate of Return accounts for the timing and size of all cash flows."
+              description="Annualized return accounting for the timing and size of all cash flows. Requires at least one transaction (buy/sell or deposit/withdrawal) in the selected period."
               trend={getTrend(performance?.xirr)}
               isLoading={isLoading}
             />
@@ -315,22 +326,23 @@ export default function AnalyticsPage({ params }: PageProps) {
           {/* Additional Performance Metrics */}
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             <MetricCard
-              title="Total Gain"
-              value={formatMetric(performance?.total_gain, "currency")}
-              description="Total monetary gain or loss in portfolio currency."
+              title="Total P/L"
+              value={formatPnlCurrency(performance?.total_gain)}
+              description="Total monetary profit or loss in portfolio currency."
               trend={getTrend(performance?.total_gain)}
               isLoading={isLoading}
             />
             <MetricCard
-              title="Beginning Value"
-              value={formatMetric(performance?.start_value, "currency")}
-              description={`Portfolio value at the beginning of the period (${formatDate(fromDate)}).`}
+              title="TWR Annualized"
+              value={formatMetric(performance?.twr_annualized)}
+              description="Time-Weighted Return expressed as an annual rate for easy comparison across different time periods."
+              trend={getTrend(performance?.twr_annualized)}
               isLoading={isLoading}
             />
             <MetricCard
-              title="Ending Value"
+              title="Total Value"
               value={formatMetric(performance?.end_value, "currency")}
-              description={`Portfolio value at the end of the period (${formatDate(toDate)}).`}
+              description="Current portfolio value at the end of the selected period."
               isLoading={isLoading}
             />
             <MetricCard

@@ -432,6 +432,7 @@ export function ValueChart({
                   dot={false}
                   activeDot={false}
                   isAnimationActive={true}
+                  animationBegin={0}
                   animationDuration={900}
                   animationEasing="ease-out"
                 />
@@ -444,6 +445,7 @@ export function ValueChart({
                 fill={mode === "pnl" ? "url(#splitFillGradient)" : "url(#valueGradient)"}
                 dot={false}
                 isAnimationActive={true}
+                animationBegin={0}
                 animationDuration={900}
                 animationEasing="ease-out"
                 activeDot={(props) => {

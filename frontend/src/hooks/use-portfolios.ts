@@ -211,13 +211,30 @@ export function useTriggerSync() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (id: number) => triggerSync(id),
-    onSuccess: (_, id) => {
+    mutationFn: (id: number) => {
+      // Show loading toast when sync starts
+      const toastId = toast.loading("Syncing market data...");
+      return triggerSync(id).finally(() => {
+        // Dismiss loading toast when done (success or error)
+        toast.dismiss(toastId);
+      });
+    },
+    onSuccess: (data, id) => {
       queryClient.invalidateQueries({ queryKey: portfolioKeys.syncStatus(id) });
-      toast.success("Market data sync started");
+      queryClient.invalidateQueries({ queryKey: portfolioKeys.valuation(id) });
+      queryClient.invalidateQueries({ queryKey: portfolioKeys.detail(id) });
+
+      // Show toast based on response status (backend returns lowercase)
+      if (data.status === "completed") {
+        toast.success("Market data synced successfully");
+      } else if (data.status === "partial") {
+        toast.warning("Market data sync completed with some failures");
+      } else if (data.status === "failed") {
+        toast.error("Market data sync failed");
+      }
     },
     onError: (error: Error) => {
-      toast.error(error.message || "Failed to start sync");
+      toast.error(error.message || "Failed to sync market data");
     },
   });
 }

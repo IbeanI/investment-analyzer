@@ -541,43 +541,58 @@ class ReturnsCalculator:
         # SIMPLE RETURN CALCULATION
         # =====================================================================
         #
-        # For portfolios WITH cash tracking (has DEPOSIT/WITHDRAWAL):
-        #   - start_value is meaningful (initial cash balance)
-        #   - total_gain = end_value - start_value - net_cash_flows
-        #   - simple_return = total_gain / start_value
+        # Simple Return measures the return on capital during the period.
         #
-        # For portfolios WITHOUT cash tracking (only BUY/SELL):
-        #   - start_value is just the first transaction value (not meaningful)
-        #   - We should use cost_basis as the denominator
-        #   - simple_return = (end_value - cost_basis) / cost_basis
-        #   - This equals: unrealized_pnl / cost_basis
+        # Two cases:
+        # 1. "All" / inception period (start_value is small, most capital came from deposits):
+        #    Use cost_basis as denominator for consistency with Overview page
+        #    simple_return = total_pnl / cost_basis
         #
-        # We detect which case we're in by checking if cost_basis is provided
-        # and if it differs significantly from the start_value approach.
+        # 2. Shorter periods (1M, 3M, YTD, 1Y) where start_value is meaningful:
+        #    Use period-based formula with start_value as base
+        #    simple_return = (end_value - start_value - net_cash_flows) / start_value
+        #
+        # Note: net_invested always shows cost_basis (actual money invested by user),
+        # regardless of which formula is used for Simple Return.
         # =====================================================================
 
+        # Store cost_basis and realized_pnl
         if cost_basis is not None and cost_basis > 0:
-            # Unrealized P&L = end_value - cost_basis
-            unrealized_pnl = result.end_value - cost_basis
+            result.cost_basis = cost_basis
+            result.total_realized_pnl = realized_pnl if realized_pnl is not None else Decimal("0")
 
-            # Total gain includes both unrealized and realized P&L
-            # Realized P&L comes from closed positions (sales)
+        # Determine if this is an "inception" period (start_value is small relative to deposits)
+        # This happens when the period starts before/at the first investment
+        is_inception_period = (
+            result.start_value < result.total_deposits * Decimal("0.5")
+            if result.total_deposits > 0
+            else result.start_value == 0
+        )
+
+        # Net invested = money invested during the selected period
+        # - For inception/"All" period: use cost_basis (total money ever invested)
+        # - For shorter periods: use deposits - withdrawals during that period
+        if is_inception_period and cost_basis is not None and cost_basis > 0:
+            result.net_invested = cost_basis
+        else:
+            result.net_invested = result.total_deposits - result.total_withdrawals
+
+        if is_inception_period and cost_basis is not None and cost_basis > 0:
+            # Use cost_basis formula (matches Overview page calculation)
+            # total_pnl = unrealized_pnl + realized_pnl
+            # unrealized_pnl = end_value - cost_basis
+            unrealized_pnl = result.end_value - cost_basis
             total_realized = realized_pnl if realized_pnl is not None else Decimal("0")
             result.total_gain = unrealized_pnl + total_realized
-            result.total_realized_pnl = total_realized
-
             result.simple_return = result.total_gain / cost_basis
-            result.cost_basis = cost_basis
-            result.net_invested = cost_basis  # Actual capital invested by user
         else:
-            # Fallback: traditional calculation using start_value
-            # This works for portfolios with explicit cash tracking
+            # Use period-based formula for shorter periods
+            # Formula: (end_value - start_value - net_cash_flows) / start_value
             net_cash_flow = result.total_deposits - result.total_withdrawals
             result.total_gain = result.end_value - result.start_value - net_cash_flow
 
             if result.start_value > 0:
                 result.simple_return = result.total_gain / result.start_value
-                result.net_invested = result.start_value  # For cash-tracked portfolios
             else:
                 result.simple_return = None
 

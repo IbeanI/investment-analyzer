@@ -57,6 +57,10 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
   const isSyncing =
     syncStatus?.status === "IN_PROGRESS" || syncStatus?.status === "PENDING";
 
+  const handleSync = () => {
+    triggerSync.mutate(portfolioId);
+  };
+
   if (compact) {
     return (
       <TooltipProvider>
@@ -65,7 +69,7 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
             <Button
               variant="outline"
               size="icon"
-              onClick={() => triggerSync.mutate(portfolioId)}
+              onClick={handleSync}
               disabled={isSyncing || triggerSync.isPending}
             >
               {isSyncing || triggerSync.isPending ? (
@@ -135,7 +139,7 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
       <Button
         variant="outline"
         size="sm"
-        onClick={() => triggerSync.mutate(portfolioId)}
+        onClick={handleSync}
         disabled={isSyncing || triggerSync.isPending}
       >
         {isSyncing || triggerSync.isPending ? (

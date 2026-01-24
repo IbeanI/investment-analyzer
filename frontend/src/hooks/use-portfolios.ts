@@ -13,10 +13,13 @@ import {
   triggerSync,
   triggerFullResync,
   getSyncStatus,
+  getPortfolioSettings,
+  updatePortfolioSettings,
 } from "@/lib/api/portfolios";
 import type {
   PortfolioCreate,
   PortfolioUpdate,
+  PortfolioSettingsUpdate,
 } from "@/types/api";
 import { toast } from "@/lib/toast";
 
@@ -50,6 +53,7 @@ export const portfolioKeys = {
       riskFreeRate ?? "default",
     ] as const,
   syncStatus: (id: number) => [...portfolioKeys.detail(id), "sync-status"] as const,
+  settings: (id: number) => [...portfolioKeys.detail(id), "settings"] as const,
 };
 
 // -----------------------------------------------------------------------------
@@ -270,6 +274,41 @@ export function useFullResync() {
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to perform full re-sync");
+    },
+  });
+}
+
+/**
+ * Hook to fetch portfolio settings
+ */
+export function usePortfolioSettings(id: number) {
+  return useQuery({
+    queryKey: portfolioKeys.settings(id),
+    queryFn: () => getPortfolioSettings(id),
+    enabled: !!id,
+  });
+}
+
+/**
+ * Hook to update portfolio settings
+ */
+export function useUpdatePortfolioSettings() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: number; data: PortfolioSettingsUpdate }) =>
+      updatePortfolioSettings(id, data),
+    onSuccess: (response, { id }) => {
+      queryClient.invalidateQueries({ queryKey: portfolioKeys.settings(id) });
+      toast.success("Settings updated successfully");
+
+      // Show warning if any
+      if (response.warning) {
+        toast.warning(response.warning, { duration: 5000 });
+      }
+    },
+    onError: (error: Error) => {
+      toast.error(error.message || "Failed to update settings");
     },
   });
 }

@@ -518,7 +518,8 @@ class PortfolioSettings(Base):
     User preferences for a portfolio.
 
     Currently stores:
-    - enable_proxy_backcasting: Whether to use synthetic data for gaps (Beta)
+    - enable_proxy_backcasting: Whether to use synthetic data for gaps (Beta) - DEPRECATED
+    - backcasting_method: Fine-grained control over backcasting behavior
 
     Future settings could include:
     - Reporting preferences
@@ -534,8 +535,15 @@ class PortfolioSettings(Base):
         index=True
     )
 
-    # Proxy backcasting opt-in (Beta feature)
+    # Proxy backcasting opt-in (Beta feature) - DEPRECATED, use backcasting_method instead
     enable_proxy_backcasting: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Backcasting method preference
+    # Options: "proxy_preferred", "cost_carry_only", "disabled"
+    backcasting_method: Mapped[str] = mapped_column(
+        String(20),
+        default="proxy_preferred"
+    )
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

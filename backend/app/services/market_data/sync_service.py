@@ -58,6 +58,7 @@ from app.services.market_data.base import (
 )
 from app.services.market_data.yahoo import YahooFinanceProvider
 from app.services.portfolio_settings_service import PortfolioSettingsService
+from app.schemas.portfolio_settings import BackcastingMethod
 from app.services.proxy_mapping_service import ProxyMappingService, ProxyMappingResult
 from app.services.constants import DEFAULT_STALENESS_HOURS
 from app.utils.date_utils import get_business_days
@@ -280,13 +281,14 @@ class MarketDataSyncService:
             result.to_date = analysis.latest_date
 
             # 2b. Check backcasting setting
-            backcasting_enabled = self._settings_service.is_backcasting_enabled(
+            backcasting_method = self._settings_service.get_backcasting_method(
                 db, portfolio_id
             )
-            result.backcasting_enabled = backcasting_enabled
+            # For backwards compatibility with result field
+            result.backcasting_enabled = backcasting_method != BackcastingMethod.DISABLED
 
-            # 2c. Apply proxy mappings if backcasting enabled
-            if backcasting_enabled:
+            # 2c. Apply proxy mappings if backcasting is proxy_preferred
+            if backcasting_method == BackcastingMethod.PROXY_PREFERRED:
                 logger.info(f"Applying proxy mappings for portfolio {portfolio_id}")
                 # Batch fetch all assets (avoid N+1 queries)
                 asset_ids = [a.asset_id for a in analysis.assets]
@@ -360,8 +362,12 @@ class MarketDataSyncService:
             # - force=True (full re-sync requested)
             # - OR any asset has a gap (first_transaction_date < first_real_price_date)
             # This detects assets needing historical data even after prices are fetched
+            # Respects backcasting_method setting:
+            # - DISABLED: skip entirely
+            # - COST_CARRY_ONLY: only run cost-carry
+            # - PROXY_PREFERRED: run proxy backcasting first, then cost-carry fallback
             should_backcast = False
-            if backcasting_enabled:
+            if backcasting_method != BackcastingMethod.DISABLED:
                 if force:
                     # Full re-sync always runs backcast
                     should_backcast = True
@@ -403,7 +409,8 @@ class MarketDataSyncService:
 
             if should_backcast:
                 backcast_result = self._backcast_assets_batch(
-                    db, analysis.assets, portfolio_id=portfolio_id
+                    db, analysis.assets, portfolio_id=portfolio_id,
+                    backcasting_method=backcasting_method
                 )
                 result.synthetic_prices_created = backcast_result["total_synthetic"]
                 result.assets_backcast = backcast_result["assets_backcast_count"]
@@ -1463,6 +1470,7 @@ class MarketDataSyncService:
             db: Session,
             assets: list[AssetSyncInfo],
             portfolio_id: int | None = None,
+            backcasting_method: BackcastingMethod = BackcastingMethod.PROXY_PREFERRED,
     ) -> dict:
         """
         Batch backcast multiple assets using a fallback chain:
@@ -1474,10 +1482,16 @@ class MarketDataSyncService:
         - Proxy backcasting provides market-like movement for correlated assets
         - Cost-carry is legally safe when no correlation assumption is valid
 
+        Respects backcasting_method setting:
+        - PROXY_PREFERRED: Try proxy first, then cost-carry fallback
+        - COST_CARRY_ONLY: Skip proxy backcasting, only use cost-carry
+        - DISABLED: Should not reach this method (handled by caller)
+
         Args:
             db: Database session
             assets: List of asset sync info
             portfolio_id: Portfolio ID (needed for cost-carry to find transactions)
+            backcasting_method: User preference for backcasting approach
 
         Returns:
             Dict with total_synthetic, assets_backcast_count, and cost_carry_count
@@ -1501,6 +1515,7 @@ class MarketDataSyncService:
         asset_lookup = {a.id: a for a in refreshed_assets}
 
         # Step 2: Separate assets with and without proxies
+        # If backcasting_method is COST_CARRY_ONLY, treat all assets as "without proxies"
         assets_with_proxies = []
         assets_without_proxies = []
 
@@ -1508,7 +1523,8 @@ class MarketDataSyncService:
             asset = asset_lookup.get(asset_info.asset_id)
             if not asset:
                 continue
-            if asset.proxy_asset_id:
+            # Only use proxy if method is PROXY_PREFERRED and proxy is configured
+            if backcasting_method == BackcastingMethod.PROXY_PREFERRED and asset.proxy_asset_id:
                 assets_with_proxies.append((asset_info, asset))
             else:
                 assets_without_proxies.append((asset_info, asset))

@@ -30,6 +30,7 @@ from app.schemas.portfolio_settings import (
     PortfolioSettingsResponse,
     PortfolioSettingsUpdate,
     PortfolioSettingsUpdateResponse,
+    BackcastingMethod,
 )
 from app.services.portfolio_settings_service import PortfolioSettingsService
 from app.dependencies import get_current_user, get_portfolio_with_owner_check
@@ -108,10 +109,17 @@ def get_portfolio_settings(
     # Domain exceptions (PortfolioNotFoundError) propagate to global handlers
     settings = service.get_or_create_default(db, portfolio_id)
 
+    # Convert string to enum
+    try:
+        backcasting_method = BackcastingMethod(settings.backcasting_method)
+    except ValueError:
+        backcasting_method = BackcastingMethod.PROXY_PREFERRED
+
     return PortfolioSettingsResponse(
         id=settings.id,
         portfolio_id=settings.portfolio_id,
         enable_proxy_backcasting=settings.enable_proxy_backcasting,
+        backcasting_method=backcasting_method,
         created_at=settings.created_at,
         updated_at=settings.updated_at,
     )
@@ -153,11 +161,18 @@ def update_portfolio_settings(
 
     | Setting | Type | Description |
     |---------|------|-------------|
-    | `enable_proxy_backcasting` | boolean | Enable/disable synthetic price generation for assets with data gaps |
+    | `enable_proxy_backcasting` | boolean | (DEPRECATED) Use backcasting_method instead |
+    | `backcasting_method` | string | Backcasting preference: proxy_preferred, cost_carry_only, or disabled |
 
-    **Proxy Backcasting (Beta Feature):**
+    **Backcasting Methods:**
 
-    When enabled (default), the system will:
+    - `proxy_preferred`: Use proxy backcasting when available, fall back to cost carry (default)
+    - `cost_carry_only`: Always use cost carry, never use proxy data
+    - `disabled`: No backcasting, leave historical gaps unfilled
+
+    **Proxy Backcasting:**
+
+    When enabled (proxy_preferred), the system will:
     1. Detect assets with missing historical price data
     2. Use similar proxy assets to generate synthetic prices
     3. Fill gaps in valuation history for more complete analytics
@@ -167,7 +182,7 @@ def update_portfolio_settings(
     - Existing synthetic prices are **not** removed
     - Historical valuations may show gaps or missing data
 
-    **Warning:** Disabling proxy backcasting may result in incomplete
+    **Warning:** Disabling backcasting may result in incomplete
     performance metrics for assets with limited price history.
 
     Raises **401** if not authenticated.
@@ -185,12 +200,20 @@ def update_portfolio_settings(
         db=db,
         portfolio_id=portfolio_id,
         enable_proxy_backcasting=settings_update.enable_proxy_backcasting,
+        backcasting_method=settings_update.backcasting_method,
     )
+
+    # Convert string to enum
+    try:
+        backcasting_method = BackcastingMethod(result.settings.backcasting_method)
+    except ValueError:
+        backcasting_method = BackcastingMethod.PROXY_PREFERRED
 
     return PortfolioSettingsUpdateResponse(
         id=result.settings.id,
         portfolio_id=result.settings.portfolio_id,
         enable_proxy_backcasting=result.settings.enable_proxy_backcasting,
+        backcasting_method=backcasting_method,
         created_at=result.settings.created_at,
         updated_at=result.settings.updated_at,
         warning=result.warning,

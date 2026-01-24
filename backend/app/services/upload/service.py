@@ -44,6 +44,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Transaction, Portfolio, TransactionType
 from app.services.asset_resolution import AssetResolutionService, BatchResolutionResult
+from app.services.exceptions import RateLimitError
 from app.services.upload.parsers import (
     get_parser,
     ParsedTransactionRow,
@@ -261,6 +262,15 @@ class UploadService:
 
         try:
             resolution_result = self._asset_service.resolve_assets_batch(db, asset_requests)
+        except RateLimitError as e:
+            logger.warning(f"Rate limit hit during asset resolution: {e}")
+            result.add_error(
+                0,
+                "asset_resolution",
+                "rate_limit",
+                "Market data provider rate limit exceeded. Please wait 15-30 minutes and try again."
+            )
+            return result
         except Exception as e:
             logger.error(f"Resolution failed: {e}", exc_info=True)
             result.add_error(0, "asset_resolution", "resolution_error", str(e))

@@ -47,6 +47,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import PortfolioSettings, Portfolio
+from app.schemas.portfolio_settings import BackcastingMethod
 from app.services.constants import DEFAULT_ENABLE_PROXY_BACKCASTING
 from app.services.exceptions import PortfolioNotFoundError
 
@@ -165,12 +166,14 @@ class PortfolioSettingsService:
         # Create with defaults
         logger.info(
             f"Creating default settings for portfolio {portfolio_id} "
-            f"(enable_proxy_backcasting={DEFAULT_ENABLE_PROXY_BACKCASTING})"
+            f"(enable_proxy_backcasting={DEFAULT_ENABLE_PROXY_BACKCASTING}, "
+            f"backcasting_method=proxy_preferred)"
         )
 
         settings = PortfolioSettings(
             portfolio_id=portfolio_id,
             enable_proxy_backcasting=DEFAULT_ENABLE_PROXY_BACKCASTING,
+            backcasting_method=BackcastingMethod.PROXY_PREFERRED.value,
         )
         db.add(settings)
         db.commit()
@@ -183,6 +186,7 @@ class PortfolioSettingsService:
             db: Session,
             portfolio_id: int,
             enable_proxy_backcasting: bool | None = None,
+            backcasting_method: BackcastingMethod | None = None,
     ) -> SettingsUpdateResult:
         """
         Update settings for a portfolio.
@@ -193,7 +197,8 @@ class PortfolioSettingsService:
         Args:
             db: Database session
             portfolio_id: Portfolio to update settings for
-            enable_proxy_backcasting: New value for backcasting flag (None = no change)
+            enable_proxy_backcasting: New value for backcasting flag (None = no change) - DEPRECATED
+            backcasting_method: New value for backcasting method (None = no change)
 
         Returns:
             SettingsUpdateResult with updated settings and any warnings
@@ -207,7 +212,7 @@ class PortfolioSettingsService:
         changed_fields: list[str] = []
         warning: str | None = None
 
-        # Apply changes
+        # Apply changes for enable_proxy_backcasting (DEPRECATED)
         if enable_proxy_backcasting is not None:
             old_value = settings.enable_proxy_backcasting
             if old_value != enable_proxy_backcasting:
@@ -224,6 +229,30 @@ class PortfolioSettingsService:
                     )
                     logger.warning(
                         f"Portfolio {portfolio_id}: Backcasting disabled by user"
+                    )
+
+        # Apply changes for backcasting_method
+        if backcasting_method is not None:
+            old_method = settings.backcasting_method
+            new_method = backcasting_method.value if isinstance(backcasting_method, BackcastingMethod) else backcasting_method
+            if old_method != new_method:
+                settings.backcasting_method = new_method
+                changed_fields.append("backcasting_method")
+
+                # Generate warning when disabling backcasting
+                if new_method == BackcastingMethod.DISABLED.value:
+                    warning = (
+                        "Backcasting disabled. Historical valuations may be "
+                        "incomplete for assets with limited price history (e.g., "
+                        "delisted ETFs, merged funds). Existing synthetic prices "
+                        "will NOT be removed."
+                    )
+                    logger.warning(
+                        f"Portfolio {portfolio_id}: Backcasting method set to disabled"
+                    )
+                elif new_method == BackcastingMethod.COST_CARRY_ONLY.value:
+                    logger.info(
+                        f"Portfolio {portfolio_id}: Backcasting method set to cost_carry_only"
                     )
 
         # Commit if changes were made
@@ -253,6 +282,8 @@ class PortfolioSettingsService:
         Convenience method that returns the default (True) if no
         settings exist yet.
 
+        NOTE: This method is DEPRECATED. Use get_backcasting_method() instead.
+
         Args:
             db: Database session
             portfolio_id: Portfolio to check
@@ -267,6 +298,38 @@ class PortfolioSettingsService:
             return DEFAULT_ENABLE_PROXY_BACKCASTING
 
         return settings.enable_proxy_backcasting
+
+    def get_backcasting_method(
+            self,
+            db: Session,
+            portfolio_id: int,
+    ) -> BackcastingMethod:
+        """
+        Get the backcasting method preference for a portfolio.
+
+        Args:
+            db: Database session
+            portfolio_id: Portfolio to check
+
+        Returns:
+            BackcastingMethod enum value (defaults to PROXY_PREFERRED)
+        """
+        settings = self.get_settings(db, portfolio_id)
+
+        if settings is None:
+            # No settings = use default
+            return BackcastingMethod.PROXY_PREFERRED
+
+        # Convert string to enum
+        try:
+            return BackcastingMethod(settings.backcasting_method)
+        except ValueError:
+            # Invalid value in DB, return default
+            logger.warning(
+                f"Invalid backcasting_method '{settings.backcasting_method}' "
+                f"for portfolio {portfolio_id}, using default"
+            )
+            return BackcastingMethod.PROXY_PREFERRED
 
     def ensure_settings_exist(
             self,

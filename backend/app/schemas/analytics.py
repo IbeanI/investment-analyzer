@@ -431,6 +431,10 @@ class SyntheticAssetDetailResponse(BaseModel):
     synthetic_days: int = Field(..., description="Number of days with synthetic prices")
     total_days_held: int = Field(..., description="Total days asset was in portfolio")
     percentage: Decimal = Field(..., description="Percentage of holding period with synthetic data")
+    synthetic_method: str = Field(
+        default="proxy_backcast",
+        description="Method used: 'proxy_backcast' or 'cost_carry'"
+    )
 
 
 class AnalyticsResponse(BaseModel):

@@ -9,10 +9,9 @@ import {
   type ColumnDef,
   type SortingState,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
+import { ArrowUpDown, ArrowUp, ArrowDown, Info, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Tooltip,
@@ -47,9 +46,14 @@ export function HoldingsTable({ holdings, currency }: HoldingsTableProps) {
           <div className="font-medium flex items-center gap-2">
             {row.original.ticker}
             {row.original.price_is_synthetic && (
-              <Badge variant="outline" className="text-xs">
-                Proxy
-              </Badge>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <AlertTriangle className="h-4 w-4 text-amber-500 cursor-help" />
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Synthetic data</p>
+                </TooltipContent>
+              </Tooltip>
             )}
           </div>
           <div className="text-sm text-muted-foreground">
@@ -369,9 +373,14 @@ export function HoldingsTable({ holdings, currency }: HoldingsTableProps) {
                     <div className="font-medium flex items-center gap-2">
                       {holding.ticker}
                       {holding.price_is_synthetic && (
-                        <Badge variant="outline" className="text-xs">
-                          Proxy
-                        </Badge>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <AlertTriangle className="h-4 w-4 text-amber-500 cursor-help" />
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Synthetic data</p>
+                          </TooltipContent>
+                        </Tooltip>
                       )}
                     </div>
                     <div className="text-sm text-muted-foreground">

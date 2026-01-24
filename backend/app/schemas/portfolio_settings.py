@@ -7,8 +7,26 @@ including the proxy backcasting opt-in.
 """
 
 from datetime import datetime
+from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# =============================================================================
+# ENUMS
+# =============================================================================
+
+class BackcastingMethod(str, Enum):
+    """
+    Backcasting method preference for portfolio synthetic data.
+
+    - PROXY_PREFERRED: Use proxy backcasting when available, fall back to cost carry
+    - COST_CARRY_ONLY: Always use cost carry, never use proxy data
+    - DISABLED: No backcasting, leave historical gaps unfilled
+    """
+    PROXY_PREFERRED = "proxy_preferred"
+    COST_CARRY_ONLY = "cost_carry_only"
+    DISABLED = "disabled"
 
 
 # =============================================================================
@@ -22,7 +40,11 @@ class PortfolioSettingsResponse(BaseModel):
     portfolio_id: int
     enable_proxy_backcasting: bool = Field(
         ...,
-        description="Whether proxy backcasting is enabled (Beta feature)"
+        description="Whether proxy backcasting is enabled (Beta feature) - DEPRECATED"
+    )
+    backcasting_method: BackcastingMethod = Field(
+        default=BackcastingMethod.PROXY_PREFERRED,
+        description="Backcasting method preference: proxy_preferred, cost_carry_only, or disabled"
     )
     created_at: datetime
     updated_at: datetime
@@ -43,7 +65,11 @@ class PortfolioSettingsUpdate(BaseModel):
 
     enable_proxy_backcasting: bool | None = Field(
         default=None,
-        description="Enable/disable proxy backcasting (Beta feature)"
+        description="Enable/disable proxy backcasting (Beta feature) - DEPRECATED, use backcasting_method"
+    )
+    backcasting_method: BackcastingMethod | None = Field(
+        default=None,
+        description="Backcasting method preference: proxy_preferred, cost_carry_only, or disabled"
     )
 
 

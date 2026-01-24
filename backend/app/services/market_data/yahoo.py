@@ -381,9 +381,22 @@ class YahooFinanceProvider(MarketDataProvider):
                     )
 
                 except Exception as e:
+                    error_str = str(e).lower()
+                    # Re-raise rate limit errors
+                    if "rate limit" in error_str or "too many requests" in error_str:
+                        raise RateLimitError(provider=self.name)
                     result.failed[key] = e
 
+        except RateLimitError:
+            # Re-raise rate limit errors directly
+            raise
         except Exception as e:
+            error_str = str(e).lower()
+            # Check for rate limit errors from the API
+            if "rate limit" in error_str or "too many requests" in error_str:
+                logger.warning(f"Rate limit hit during batch fetch: {e}")
+                raise RateLimitError(provider=self.name)
+
             logger.error(f"Batch fetch failed: {e}")
             for yahoo_symbol in symbols:
                 ticker, exchange = ticker_map[yahoo_symbol]

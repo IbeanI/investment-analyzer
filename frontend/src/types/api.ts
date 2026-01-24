@@ -37,6 +37,11 @@ export type SyncStatus =
   | "FAILED"
   | "PENDING";
 
+export type BackcastingMethod =
+  | "proxy_preferred"
+  | "cost_carry_only"
+  | "disabled";
+
 // -----------------------------------------------------------------------------
 // Pagination
 // -----------------------------------------------------------------------------
@@ -636,6 +641,28 @@ export interface FullResyncResponse {
   warnings: string[];
   error: string | null;
   next_full_resync_available: string | null;
+}
+
+// -----------------------------------------------------------------------------
+// Portfolio Settings Types
+// -----------------------------------------------------------------------------
+
+export interface PortfolioSettings {
+  id: number;
+  portfolio_id: number;
+  enable_proxy_backcasting: boolean;
+  backcasting_method: BackcastingMethod;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PortfolioSettingsUpdate {
+  enable_proxy_backcasting?: boolean | null;
+  backcasting_method?: BackcastingMethod | null;
+}
+
+export interface PortfolioSettingsResponse extends PortfolioSettings {
+  warning?: string | null;
 }
 
 export interface SyncTriggerResponse {

@@ -9,6 +9,8 @@ import {
   Shield,
   Target,
   Info,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -248,6 +250,7 @@ export default function AnalyticsPage({ params }: PageProps) {
   const portfolioId = parseInt(id, 10);
   const { period, setPeriod } = useUIStore();
   const [activeTab, setActiveTab] = useState("performance");
+  const [syntheticWarningExpanded, setSyntheticWarningExpanded] = useState(false);
 
   const { data: portfolio, isLoading: portfolioLoading } =
     usePortfolio(portfolioId);
@@ -344,69 +347,93 @@ export default function AnalyticsPage({ params }: PageProps) {
 
       {/* Synthetic Data Disclaimer */}
       {analytics?.has_synthetic_data && analytics?.synthetic_details && (() => {
-        const proxyBackcastAssets = Object.entries(analytics.synthetic_details)
-          .filter(([, detail]) => detail.synthetic_method === "proxy_backcast");
-        const costCarryAssets = Object.entries(analytics.synthetic_details)
-          .filter(([, detail]) => detail.synthetic_method === "cost_carry");
+        const syntheticAssets = Object.entries(analytics.synthetic_details);
+        const hasProxyBackcast = syntheticAssets.some(([, d]) => d.synthetic_method === "proxy_backcast");
+        const hasCostCarry = syntheticAssets.some(([, d]) => d.synthetic_method === "cost_carry");
 
         return (
           <Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950">
             <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <AlertTitle className="text-amber-800 dark:text-amber-200">
-              Modeled Historical Data
-            </AlertTitle>
-            <AlertDescription className="text-amber-700 dark:text-amber-300">
-              <p className="mb-2">
-                Some historical performance data is estimated due to limited market data availability:
-              </p>
+            <div className="flex-1">
+              <div
+                className="flex items-center justify-between cursor-pointer"
+                onClick={() => setSyntheticWarningExpanded(!syntheticWarningExpanded)}
+              >
+                <AlertTitle className="text-amber-800 dark:text-amber-200 mb-0">
+                  Modeled Historical Data
+                </AlertTitle>
+                <button
+                  type="button"
+                  className="text-amber-600 dark:text-amber-400 hover:text-amber-800 dark:hover:text-amber-200 flex items-center gap-1 text-xs"
+                >
+                  {syntheticWarningExpanded ? (
+                    <>
+                      Show less
+                      <ChevronUp className="h-4 w-4" />
+                    </>
+                  ) : (
+                    <>
+                      Show more
+                      <ChevronDown className="h-4 w-4" />
+                    </>
+                  )}
+                </button>
+              </div>
 
-              {/* Proxy Backcast Assets */}
-              {proxyBackcastAssets.length > 0 && (
-                <>
-                  <p className="text-xs font-semibold mt-2 mb-1">Modeled using proxy assets:</p>
-                  <ul className="list-disc list-inside space-y-1 text-sm">
-                    {proxyBackcastAssets.map(([ticker, detail]) => (
-                      <li key={ticker}>
-                        <span className="font-medium">{ticker}</span>: Modeled using{" "}
-                        <span className="font-medium">{detail.proxy_ticker}</span> from{" "}
-                        {formatDate(detail.first_synthetic_date)} to {formatDate(detail.last_synthetic_date)}
-                        {" "}({detail.synthetic_days} days)
-                      </li>
-                    ))}
-                  </ul>
-                </>
+              {syntheticWarningExpanded && (
+                <AlertDescription className="text-amber-700 dark:text-amber-300 mt-2">
+                  <p className="mb-3">
+                    Some historical performance data is estimated due to limited market data availability:
+                  </p>
+
+                  {/* Table display */}
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-amber-300 dark:border-amber-700">
+                          <th className="text-left py-2 pr-4 font-semibold">Asset</th>
+                          <th className="text-left py-2 pr-4 font-semibold">Method</th>
+                          <th className="text-left py-2 pr-4 font-semibold">Date Range</th>
+                          <th className="text-left py-2 pr-4 font-semibold">Proxy Used</th>
+                          <th className="text-right py-2 font-semibold">Days</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {syntheticAssets.map(([ticker, detail]) => (
+                          <tr key={ticker} className="border-b border-amber-200 dark:border-amber-800 last:border-0">
+                            <td className="py-2 pr-4 font-medium">{ticker}</td>
+                            <td className="py-2 pr-4">
+                              {detail.synthetic_method === "proxy_backcast" ? "Proxy Backcast" : "Cost Carry"}
+                            </td>
+                            <td className="py-2 pr-4">
+                              {formatDate(detail.first_synthetic_date)} – {formatDate(detail.last_synthetic_date)}
+                            </td>
+                            <td className="py-2 pr-4">
+                              {detail.proxy_ticker || "—"}
+                            </td>
+                            <td className="py-2 text-right">{detail.synthetic_days}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <p className="mt-3 text-xs">
+                    {hasProxyBackcast && (
+                      <>
+                        <strong>Proxy backcasting:</strong> Prices scaled from a correlated asset based on the ratio at the first available real price.{" "}
+                      </>
+                    )}
+                    {hasCostCarry && (
+                      <>
+                        <strong>Cost carry:</strong> Asset valued at purchase price when no market data or proxy is available.{" "}
+                      </>
+                    )}
+                    Actual historical performance may have differed.
+                  </p>
+                </AlertDescription>
               )}
-
-              {/* Cost Carry Assets */}
-              {costCarryAssets.length > 0 && (
-                <>
-                  <p className="text-xs font-semibold mt-2 mb-1">Valued at cost basis:</p>
-                  <ul className="list-disc list-inside space-y-1 text-sm">
-                    {costCarryAssets.map(([ticker, detail]) => (
-                      <li key={ticker}>
-                        <span className="font-medium">{ticker}</span>: Valued at purchase price from{" "}
-                        {formatDate(detail.first_synthetic_date)} to {formatDate(detail.last_synthetic_date)}
-                        {" "}({detail.synthetic_days} days)
-                      </li>
-                    ))}
-                  </ul>
-                </>
-              )}
-
-              <p className="mt-3 text-xs">
-                {proxyBackcastAssets.length > 0 && (
-                  <>
-                    <strong>Proxy backcasting:</strong> Prices scaled from a correlated asset based on the ratio at the first available real price.{" "}
-                  </>
-                )}
-                {costCarryAssets.length > 0 && (
-                  <>
-                    <strong>Cost carry:</strong> Asset valued at purchase price when no market data or proxy is available.{" "}
-                  </>
-                )}
-                Actual historical performance may have differed.
-              </p>
-            </AlertDescription>
+            </div>
           </Alert>
         );
       })()}

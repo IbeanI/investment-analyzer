@@ -52,7 +52,10 @@ import {
   useDeletePortfolio,
   useSyncStatus,
   useFullResync,
+  usePortfolioSettings,
+  useUpdatePortfolioSettings,
 } from "@/hooks/use-portfolios";
+import type { BackcastingMethod } from "@/types/api";
 import { formatDate } from "@/lib/utils";
 import { getPortfolioHistory } from "@/lib/api/portfolios";
 
@@ -99,12 +102,21 @@ export default function SettingsPage({ params }: PageProps) {
 
   const { data: portfolio, isLoading } = usePortfolio(portfolioId);
   const { data: syncStatus } = useSyncStatus(portfolioId);
+  const { data: portfolioSettings } = usePortfolioSettings(portfolioId);
   const updatePortfolio = useUpdatePortfolio();
   const deletePortfolio = useDeletePortfolio();
   const fullResync = useFullResync();
+  const updateSettings = useUpdatePortfolioSettings();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showResyncDialog, setShowResyncDialog] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+
+  const handleBackcastingMethodChange = (value: string) => {
+    updateSettings.mutate({
+      id: portfolioId,
+      data: { backcasting_method: value as BackcastingMethod },
+    });
+  };
 
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
@@ -336,107 +348,151 @@ export default function SettingsPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
-      {/* Data Management */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Data Management</CardTitle>
-          <CardDescription>
-            Manage market data synchronization for this portfolio
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <p className="font-medium">Full Re-sync</p>
-              <p className="text-sm text-muted-foreground">
-                Re-fetch all historical market data from scratch. Use if you suspect
-                missing or incorrect prices.
-              </p>
-              {syncStatus?.last_full_sync && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Last full re-sync: {formatDate(syncStatus.last_full_sync)}
-                </p>
-              )}
-            </div>
-            <AlertDialog open={showResyncDialog} onOpenChange={setShowResyncDialog}>
-              <AlertDialogTrigger asChild>
-                <Button variant="outline" disabled={fullResync.isPending}>
-                  {fullResync.isPending ? (
-                    <>
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      Re-syncing...
-                    </>
-                  ) : (
-                    <>
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      Full Re-sync
-                    </>
-                  )}
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Perform Full Re-sync?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    This will re-fetch all historical market data for this portfolio.
-                    This operation may take several minutes and can only be performed
-                    once per hour.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={() => {
-                      fullResync.mutate(portfolioId);
-                      setShowResyncDialog(false);
-                    }}
-                  >
-                    Start Re-sync
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-        </CardContent>
-      </Card>
+      {/* Advanced Section */}
+      <div className="space-y-4">
+        <h2 className="text-lg font-semibold">Advanced</h2>
 
-      {/* Download Data */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Download Data</CardTitle>
-          <CardDescription>
-            Export your portfolio data for backup or analysis
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-            <div>
-              <p className="font-medium">Portfolio History</p>
-              <p className="text-sm text-muted-foreground">
-                Download daily portfolio history as a CSV file (up to 20 years).
-                Includes value, cash, equity, cost basis, and P/L data.
-              </p>
+        {/* Backcasting Method */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Backcasting Method</CardTitle>
+            <CardDescription>
+              Control how historical price gaps are filled for assets with limited market data
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div className="flex-1">
+                <p className="text-sm text-muted-foreground">
+                  When historical price data is unavailable (e.g., for delisted ETFs or merged funds),
+                  synthetic prices can be generated using one of these methods:
+                </p>
+              </div>
+              <Select
+                value={portfolioSettings?.backcasting_method || "proxy_preferred"}
+                onValueChange={handleBackcastingMethodChange}
+                disabled={updateSettings.isPending}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Select method" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="proxy_preferred">Proxy Preferred</SelectItem>
+                  <SelectItem value="cost_carry_only">Cost Carry Only</SelectItem>
+                  <SelectItem value="disabled">Disabled</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <Button
-              variant="outline"
-              onClick={handleDownloadHistory}
-              disabled={isDownloading}
-            >
-              {isDownloading ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Downloading...
-                </>
-              ) : (
-                <>
-                  <Download className="mr-2 h-4 w-4" />
-                  Download CSV
-                </>
-              )}
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+            <div className="text-xs text-muted-foreground space-y-1">
+              <p><strong>Proxy Preferred:</strong> Use proxy backcasting when available, fall back to cost carry.</p>
+              <p><strong>Cost Carry Only:</strong> Always value at purchase price, never use proxy data.</p>
+              <p><strong>Disabled:</strong> No backcasting, leave historical gaps unfilled.</p>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Data Management */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Data Management</CardTitle>
+            <CardDescription>
+              Manage market data synchronization for this portfolio
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <p className="font-medium">Full Re-sync</p>
+                <p className="text-sm text-muted-foreground">
+                  Re-fetch all historical market data from scratch. Use if you suspect
+                  missing or incorrect prices.
+                </p>
+                {syncStatus?.last_full_sync && (
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Last full re-sync: {formatDate(syncStatus.last_full_sync)}
+                  </p>
+                )}
+              </div>
+              <AlertDialog open={showResyncDialog} onOpenChange={setShowResyncDialog}>
+                <AlertDialogTrigger asChild>
+                  <Button variant="outline" disabled={fullResync.isPending}>
+                    {fullResync.isPending ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Re-syncing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        Full Re-sync
+                      </>
+                    )}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Perform Full Re-sync?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will re-fetch all historical market data for this portfolio.
+                      This operation may take several minutes and can only be performed
+                      once per hour.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      onClick={() => {
+                        fullResync.mutate(portfolioId);
+                        setShowResyncDialog(false);
+                      }}
+                    >
+                      Start Re-sync
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Download Data */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Download Data</CardTitle>
+            <CardDescription>
+              Export your portfolio data for backup or analysis
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+              <div>
+                <p className="font-medium">Portfolio History</p>
+                <p className="text-sm text-muted-foreground">
+                  Download daily portfolio history as a CSV file (up to 20 years).
+                  Includes value, cash, equity, cost basis, and P/L data.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={handleDownloadHistory}
+                disabled={isDownloading}
+              >
+                {isDownloading ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Downloading...
+                  </>
+                ) : (
+                  <>
+                    <Download className="mr-2 h-4 w-4" />
+                    Download CSV
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Danger Zone */}
       <Card className="border-destructive/50">

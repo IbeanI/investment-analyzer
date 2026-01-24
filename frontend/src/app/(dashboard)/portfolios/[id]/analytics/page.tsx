@@ -101,7 +101,7 @@ function getPeriodDates(period: Period, earliestTransactionDate?: string | null)
 }
 
 // -----------------------------------------------------------------------------
-// Metric Card Component
+// Metric Card Components
 // -----------------------------------------------------------------------------
 
 interface MetricCardProps {
@@ -166,6 +166,74 @@ function MetricCard({
     </Card>
   );
 }
+
+interface HeroMetricCardProps {
+  title: string;
+  subtitle: string;
+  value: string | null;
+  description: string;
+  trend?: "up" | "down" | "neutral";
+  isLoading?: boolean;
+}
+
+function HeroMetricCard({
+  title,
+  subtitle,
+  value,
+  description,
+  trend,
+  isLoading,
+}: HeroMetricCardProps) {
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <Skeleton className="h-4 w-32" />
+            <Skeleton className="h-4 w-4 rounded-full" />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-1">
+          <Skeleton className="h-9 w-24" />
+          <Skeleton className="h-3 w-20" />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between">
+          <CardDescription>{title}</CardDescription>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Info className="h-4 w-4 text-muted-foreground cursor-help" />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <p className="text-sm">{description}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-1">
+        <div
+          className={cn(
+            "text-3xl font-bold",
+            trend === "up" && "text-green-600 dark:text-green-500",
+            trend === "down" && "text-red-600 dark:text-red-500"
+          )}
+        >
+          {value ?? "—"}
+        </div>
+        <p className="text-xs text-muted-foreground">{subtitle}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
 
 // -----------------------------------------------------------------------------
 // Analytics Page
@@ -292,54 +360,9 @@ export default function AnalyticsPage({ params }: PageProps) {
         </TabsList>
 
         {/* Performance Tab */}
-        <TabsContent value="performance" className="space-y-6">
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <MetricCard
-              title="Simple Return"
-              value={formatMetric(performance?.simple_return)}
-              description="Total percentage gain or loss from your initial investment."
-              trend={getTrend(performance?.simple_return)}
-              isLoading={isLoading}
-            />
-            <MetricCard
-              title="TWR"
-              value={formatMetric(performance?.twr)}
-              description="Time-Weighted Return measures investment performance excluding the impact of deposits and withdrawals."
-              trend={getTrend(performance?.twr)}
-              isLoading={isLoading}
-            />
-            <MetricCard
-              title="XIRR"
-              value={formatMetric(performance?.xirr)}
-              description="Annualized return accounting for the timing and size of all cash flows. Requires at least one transaction (buy/sell or deposit/withdrawal) in the selected period."
-              trend={getTrend(performance?.xirr)}
-              isLoading={isLoading}
-            />
-            <MetricCard
-              title="CAGR"
-              value={formatMetric(performance?.cagr)}
-              description="Compound Annual Growth Rate shows the smoothed annual return over time."
-              trend={getTrend(performance?.cagr)}
-              isLoading={isLoading}
-            />
-          </div>
-
-          {/* Additional Performance Metrics */}
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-            <MetricCard
-              title="Total P/L"
-              value={formatPnlCurrency(performance?.total_gain)}
-              description="Total monetary profit or loss in portfolio currency."
-              trend={getTrend(performance?.total_gain)}
-              isLoading={isLoading}
-            />
-            <MetricCard
-              title="TWR Annualized"
-              value={formatMetric(performance?.twr_annualized)}
-              description="Time-Weighted Return expressed as an annual rate for easy comparison across different time periods."
-              trend={getTrend(performance?.twr_annualized)}
-              isLoading={isLoading}
-            />
+        <TabsContent value="performance" className="space-y-4">
+          {/* Row 1: Bottom Line (Context) */}
+          <div className="grid gap-4 grid-cols-3">
             <MetricCard
               title="Total Value"
               value={formatMetric(performance?.end_value, "currency")}
@@ -350,6 +373,59 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="Net Invested"
               value={formatMetric(performance?.net_invested, "currency")}
               description="Total deposits minus withdrawals during the period."
+              isLoading={isLoading}
+            />
+            <MetricCard
+              title="Total P/L"
+              value={formatPnlCurrency(performance?.total_gain)}
+              description="Total monetary profit or loss in portfolio currency."
+              trend={getTrend(performance?.total_gain)}
+              isLoading={isLoading}
+            />
+          </div>
+
+          {/* Row 2: Hero Section (Institutional Performance) */}
+          <div className="grid gap-4 grid-cols-3">
+            <HeroMetricCard
+              title="TWR (Cumulative)"
+              subtitle="Strategy Growth"
+              value={formatMetric(performance?.twr)}
+              description="Time-Weighted Return measures investment performance excluding the impact of deposits and withdrawals."
+              trend={getTrend(performance?.twr)}
+              isLoading={isLoading}
+            />
+            <HeroMetricCard
+              title="TWR Annualized"
+              subtitle="Yearly Avg"
+              value={formatMetric(performance?.twr_annualized)}
+              description="Time-Weighted Return expressed as an annual rate for easy comparison across different time periods."
+              trend={getTrend(performance?.twr_annualized)}
+              isLoading={isLoading}
+            />
+            <HeroMetricCard
+              title="XIRR"
+              subtitle="Personal ROI"
+              value={formatMetric(performance?.xirr)}
+              description="Annualized return accounting for the timing and size of all cash flows. Requires at least one transaction (buy/sell or deposit/withdrawal) in the selected period."
+              trend={getTrend(performance?.xirr)}
+              isLoading={isLoading}
+            />
+          </div>
+
+          {/* Row 3: Secondary Metrics */}
+          <div className="grid gap-4 grid-cols-2 max-w-md">
+            <MetricCard
+              title="Simple Return"
+              value={formatMetric(performance?.simple_return)}
+              description="Total percentage gain or loss from your initial investment."
+              trend={getTrend(performance?.simple_return)}
+              isLoading={isLoading}
+            />
+            <MetricCard
+              title="CAGR"
+              value={formatMetric(performance?.cagr)}
+              description="Compound Annual Growth Rate shows the smoothed annual return over time."
+              trend={getTrend(performance?.cagr)}
               isLoading={isLoading}
             />
           </div>

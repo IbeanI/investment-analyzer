@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowLeft, Loader2, AlertCircle, Trash2, RefreshCw } from "lucide-react";
+import { ArrowLeft, Loader2, AlertCircle, Trash2, RefreshCw, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -54,6 +54,7 @@ import {
   useFullResync,
 } from "@/hooks/use-portfolios";
 import { formatDate } from "@/lib/utils";
+import { getPortfolioHistory } from "@/lib/api/portfolios";
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -103,6 +104,7 @@ export default function SettingsPage({ params }: PageProps) {
   const fullResync = useFullResync();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showResyncDialog, setShowResyncDialog] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const form = useForm<SettingsFormData>({
     resolver: zodResolver(settingsSchema),
@@ -129,6 +131,71 @@ export default function SettingsPage({ params }: PageProps) {
       router.push("/portfolios");
     } catch {
       // Error handled by mutation
+    }
+  };
+
+  const handleDownloadHistory = async () => {
+    setIsDownloading(true);
+    try {
+      // Fetch full history (max 5 years per API limit)
+      const today = new Date();
+      const fiveYearsAgo = new Date();
+      fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
+      fiveYearsAgo.setDate(fiveYearsAgo.getDate() + 1); // Stay within limit
+      const fromDate = fiveYearsAgo.toISOString().split("T")[0];
+      const toDate = today.toISOString().split("T")[0];
+      const history = await getPortfolioHistory(portfolioId, fromDate, toDate, "daily");
+
+      if (!history.data || history.data.length === 0) {
+        alert("No history data available to download.");
+        return;
+      }
+
+      // Convert to CSV
+      const headers = [
+        "Date",
+        "Total Value",
+        "Cash",
+        "Equity",
+        "Cost Basis",
+        "Unrealized P/L",
+        "Realized P/L",
+        "Total P/L",
+        "P/L %",
+      ];
+
+      const rows = history.data.map((point) => [
+        point.date,
+        point.value ?? "",
+        point.cash ?? "",
+        point.equity ?? "",
+        point.cost_basis ?? "",
+        point.unrealized_pnl ?? "",
+        point.realized_pnl ?? "",
+        point.total_pnl ?? "",
+        point.pnl_percentage ?? "",
+      ]);
+
+      const csvContent = [
+        headers.join(","),
+        ...rows.map((row) => row.join(",")),
+      ].join("\n");
+
+      // Trigger download
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${portfolio?.name || "portfolio"}-history-${toDate}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error("Failed to download history:", error);
+      alert("Failed to download history. Please try again.");
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -329,6 +396,44 @@ export default function SettingsPage({ params }: PageProps) {
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Download Data */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Download Data</CardTitle>
+          <CardDescription>
+            Export your portfolio data for backup or analysis
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <p className="font-medium">Portfolio History</p>
+              <p className="text-sm text-muted-foreground">
+                Download daily portfolio history as a CSV file (up to 5 years).
+                Includes value, cash, equity, cost basis, and P/L data.
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              onClick={handleDownloadHistory}
+              disabled={isDownloading}
+            >
+              {isDownloading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Downloading...
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  Download CSV
+                </>
+              )}
+            </Button>
           </div>
         </CardContent>
       </Card>

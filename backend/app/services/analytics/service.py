@@ -343,8 +343,16 @@ class AnalyticsService:
         # Get cash flows for XIRR calculation
         cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)
 
-        # Add final value as negative cash flow (money out)
         if daily_values:
+            # Add start value as positive cash flow (capital already invested at period start)
+            # This is essential for XIRR when the portfolio had value before the period began
+            if daily_values[0].value > 0:
+                cash_flows.insert(0, CashFlow(
+                    date=daily_values[0].date,
+                    amount=daily_values[0].value,  # Positive = money in
+                ))
+
+            # Add end value as negative cash flow (money out)
             cash_flows.append(CashFlow(
                 date=daily_values[-1].date,
                 amount=-daily_values[-1].value,  # Negative = outflow
@@ -1044,12 +1052,22 @@ class AnalyticsService:
             scope: str,
     ) -> PerformanceMetrics:
         """Calculate performance metrics with cash flow adjustments."""
-        # Get cash flows
+        # Get cash flows during the period
         cash_flows = self._get_cash_flows(db, portfolio_id, start_date, end_date)
+
         if daily_values:
+            # Add start value as positive cash flow (capital already invested at period start)
+            # This is essential for XIRR when the portfolio had value before the period began
+            if daily_values[0].value > 0:
+                cash_flows.insert(0, CashFlow(
+                    date=daily_values[0].date,
+                    amount=daily_values[0].value,  # Positive = money in
+                ))
+
+            # Add end value as negative cash flow (what you'd get if you sold everything)
             cash_flows.append(CashFlow(
                 date=daily_values[-1].date,
-                amount=-daily_values[-1].value,
+                amount=-daily_values[-1].value,  # Negative = money out
             ))
 
         # Filter to active periods (GIPS-compliant)

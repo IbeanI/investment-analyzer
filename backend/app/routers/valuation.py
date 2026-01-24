@@ -125,6 +125,7 @@ def _map_history_point(point) -> ValuationHistoryPoint:
         cash=point.cash,
         equity=point.equity,
         cost_basis=point.cost_basis,
+        net_invested=point.net_invested,
         unrealized_pnl=point.unrealized_pnl,
         realized_pnl=point.realized_pnl,
         total_pnl=point.total_pnl,
@@ -215,6 +216,7 @@ def get_portfolio_valuation(
         valuation_date=valuation.valuation_date,
         summary=PortfolioValuationSummary(
             total_cost_basis=valuation.total_cost_basis,
+            total_net_invested=valuation.total_net_invested,
             total_value=valuation.total_value,
             total_cash=valuation.total_cash,
             total_equity=valuation.total_equity,

@@ -377,6 +377,7 @@ class PortfolioValuation:
     tracks_cash: bool
     cash_balances: list[CashBalance]
     total_cost_basis: Decimal
+    total_net_invested: Decimal  # Deposits - Withdrawals (or BUYs - SELLs)
     total_value: Decimal | None
     total_cash: Decimal | None
     total_equity: Decimal | None
@@ -392,10 +393,12 @@ class PortfolioValuation:
 
     @property
     def total_pnl_percentage(self) -> Decimal | None:
-        """Total P&L as decimal ratio of cost basis (0.1735 = 17.35%)."""
-        if self.total_pnl is None or self.total_cost_basis == Decimal("0"):
+        """Total P&L as percentage of net invested capital."""
+        if self.total_pnl is None:
             return None
-        return (self.total_pnl / self.total_cost_basis).quantize(
+        if self.total_net_invested <= Decimal("0"):
+            return None  # Cannot calculate when net invested is zero or negative
+        return (self.total_pnl / self.total_net_invested).quantize(
             Decimal("0.0001")
         )
 
@@ -409,16 +412,20 @@ class SyntheticAssetDetail:
     """
     Per-asset synthetic data details for transparency.
 
-    Tracks when and how synthetic (proxy-backcast) prices were used
-    for a specific asset.
+    Tracks when and how synthetic prices were used for a specific asset.
+
+    Synthetic methods:
+    - "proxy_backcast": Prices modeled using a correlated proxy asset
+    - "cost_carry": Prices valued at purchase cost (no proxy available)
 
     Attributes:
         ticker: Asset ticker symbol
-        proxy_ticker: Ticker of the proxy asset used for backcasting
+        proxy_ticker: Ticker of the proxy asset used (None for cost_carry)
         first_synthetic_date: First date synthetic price was used
         last_synthetic_date: Last date synthetic price was used
         synthetic_days: Number of days with synthetic prices
         total_days_held: Total days this asset was in the portfolio
+        synthetic_method: Method used ("proxy_backcast" or "cost_carry")
         percentage: Percentage of holding period using synthetic data
     """
     ticker: str
@@ -427,6 +434,7 @@ class SyntheticAssetDetail:
     last_synthetic_date: date
     synthetic_days: int
     total_days_held: int
+    synthetic_method: str = "proxy_backcast"  # "proxy_backcast" or "cost_carry"
 
     @property
     def percentage(self) -> Decimal:
@@ -469,6 +477,7 @@ class HistoryPoint:
     cash: Decimal | None
     equity: Decimal | None
     cost_basis: Decimal
+    net_invested: Decimal  # Cumulative net invested as of this date
     unrealized_pnl: Decimal | None
     realized_pnl: Decimal
     total_pnl: Decimal | None
@@ -479,10 +488,12 @@ class HistoryPoint:
 
     @property
     def pnl_percentage(self) -> Decimal | None:
-        """P&L as decimal ratio of cost basis (0.1735 = 17.35%)."""
-        if self.total_pnl is None or self.cost_basis == Decimal("0"):
+        """P&L as percentage of net invested capital."""
+        if self.total_pnl is None:
             return None
-        return (self.total_pnl / self.cost_basis).quantize(
+        if self.net_invested <= Decimal("0"):
+            return None  # Cannot calculate when net invested is zero or negative
+        return (self.total_pnl / self.net_invested).quantize(
             Decimal("0.0001")
         )
 

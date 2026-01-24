@@ -137,12 +137,12 @@ export default function SettingsPage({ params }: PageProps) {
   const handleDownloadHistory = async () => {
     setIsDownloading(true);
     try {
-      // Fetch full history (max 5 years per API limit)
+      // Fetch full history (max 20 years per API limit)
       const today = new Date();
-      const fiveYearsAgo = new Date();
-      fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
-      fiveYearsAgo.setDate(fiveYearsAgo.getDate() + 1); // Stay within limit
-      const fromDate = fiveYearsAgo.toISOString().split("T")[0];
+      const twentyYearsAgo = new Date();
+      twentyYearsAgo.setFullYear(twentyYearsAgo.getFullYear() - 20);
+      twentyYearsAgo.setDate(twentyYearsAgo.getDate() + 1); // Stay within limit
+      const fromDate = twentyYearsAgo.toISOString().split("T")[0];
       const toDate = today.toISOString().split("T")[0];
       const history = await getPortfolioHistory(portfolioId, fromDate, toDate, "daily");
 
@@ -413,7 +413,7 @@ export default function SettingsPage({ params }: PageProps) {
             <div>
               <p className="font-medium">Portfolio History</p>
               <p className="text-sm text-muted-foreground">
-                Download daily portfolio history as a CSV file (up to 5 years).
+                Download daily portfolio history as a CSV file (up to 20 years).
                 Includes value, cash, equity, cost basis, and P/L data.
               </p>
             </div>

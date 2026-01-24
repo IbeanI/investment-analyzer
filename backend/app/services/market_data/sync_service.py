@@ -45,6 +45,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Asset,
     Transaction,
+    TransactionType,
     Portfolio,
     MarketData,
     SyncStatus,
@@ -354,18 +355,74 @@ class MarketDataSyncService:
                             f"{fx_result.errors}"
                         )
 
-            # 4b. Backcast with proxies if enabled
+            # 4b. Backcast with proxies if enabled, with cost-carry fallback
+            # Only run backcasting when:
+            # - force=True (full re-sync requested)
+            # - OR any asset has a gap (first_transaction_date < first_real_price_date)
+            # This detects assets needing historical data even after prices are fetched
+            should_backcast = False
             if backcasting_enabled:
+                if force:
+                    # Full re-sync always runs backcast
+                    should_backcast = True
+                    logger.info("Running backcast (force=True)")
+                else:
+                    # Check if any asset has a gap that needs backcasting
+                    # A gap exists when first_transaction_date < first_real_price_date
+                    asset_ids = [a.asset_id for a in analysis.assets]
+
+                    # Get first REAL (non-synthetic) price date for each asset
+                    # Must also exclude no_data_available records (Yahoo placeholders with no actual prices)
+                    first_price_query = db.execute(
+                        select(
+                            MarketData.asset_id,
+                            func.min(MarketData.date).label('first_price_date')
+                        )
+                        .where(
+                            MarketData.asset_id.in_(asset_ids),
+                            MarketData.is_synthetic == False,
+                            MarketData.no_data_available == False,  # Exclude placeholder records
+                        )
+                        .group_by(MarketData.asset_id)
+                    ).all()
+
+                    first_price_map = {row.asset_id: row.first_price_date for row in first_price_query}
+
+                    # Check if any asset has a gap
+                    for asset_info in analysis.assets:
+                        first_price = first_price_map.get(asset_info.asset_id)
+                        # Gap exists if: no price at all, OR first price is after first transaction
+                        if first_price is None or first_price > asset_info.first_transaction_date:
+                            should_backcast = True
+                            logger.info(
+                                f"Running backcast (gap detected: {asset_info.ticker} "
+                                f"first_txn={asset_info.first_transaction_date}, "
+                                f"first_price={first_price})"
+                            )
+                            break
+
+            if should_backcast:
                 backcast_result = self._backcast_assets_batch(
-                    db, analysis.assets
+                    db, analysis.assets, portfolio_id=portfolio_id
                 )
                 result.synthetic_prices_created = backcast_result["total_synthetic"]
                 result.assets_backcast = backcast_result["assets_backcast_count"]
 
                 if backcast_result["total_synthetic"] > 0:
+                    # Build descriptive warning message
+                    parts = []
+                    if backcast_result["assets_backcast_count"] > 0:
+                        parts.append(
+                            f"{backcast_result['assets_backcast_count']} asset(s) using proxy backcasting"
+                        )
+                    if backcast_result.get("cost_carry_count", 0) > 0:
+                        parts.append(
+                            f"{backcast_result['cost_carry_count']} asset(s) valued at cost"
+                        )
+
                     result.warnings.append(
                         f"Generated {backcast_result['total_synthetic']} synthetic prices for "
-                        f"{backcast_result['assets_backcast_count']} asset(s) using proxy backcasting"
+                        + " and ".join(parts)
                     )
 
             # 5. Determine final status  (was step 5, now renumbered)
@@ -1084,12 +1141,13 @@ class MarketDataSyncService:
 
             asset = db.get(Asset, asset_info.asset_id)
             if asset and asset.proxy_asset_id:
-                # Find the first real price date
+                # Find the first real price date (exclude no_data_available placeholders)
                 first_real = db.execute(
                     select(func.min(MarketData.date))
                     .where(
                         MarketData.asset_id == asset_info.asset_id,
                         MarketData.is_synthetic == False,
+                        MarketData.no_data_available == False,
                     )
                 ).scalar()
 
@@ -1147,7 +1205,7 @@ class MarketDataSyncService:
         Returns:
             List of (start, end) date ranges to fetch
         """
-        # Get existing dates
+        # Get existing dates (exclude no_data_available placeholders)
         query = (
             select(MarketData.date)
             .where(
@@ -1155,6 +1213,7 @@ class MarketDataSyncService:
                     MarketData.asset_id == asset_id,
                     MarketData.date >= start_date,
                     MarketData.date <= end_date,
+                    MarketData.no_data_available == False,  # Exclude placeholders
                 )
             )
         )
@@ -1403,29 +1462,36 @@ class MarketDataSyncService:
             self,
             db: Session,
             assets: list[AssetSyncInfo],
+            portfolio_id: int | None = None,
     ) -> dict:
         """
-        Batch backcast multiple assets with proxies to eliminate N+1 queries.
+        Batch backcast multiple assets using a fallback chain:
 
-        Instead of detecting gaps and fetching proxy data one asset at a time,
-        this method:
-        1. Batch fetches all assets with their proxy relationships
-        2. Batch detects price gaps using a single query
-        3. Batch ensures proxy data is available
-        4. Processes backcasting for all assets
+        1. Proxy Backcasting (if proxy configured): Use similar asset to model prices
+        2. Cost-Carry Fallback (if no proxy or proxy fails): Value at purchase price
+
+        This two-tier approach prioritizes accuracy over completeness:
+        - Proxy backcasting provides market-like movement for correlated assets
+        - Cost-carry is legally safe when no correlation assumption is valid
 
         Args:
             db: Database session
             assets: List of asset sync info
+            portfolio_id: Portfolio ID (needed for cost-carry to find transactions)
 
         Returns:
-            Dict with total_synthetic and assets_backcast_count
+            Dict with total_synthetic, assets_backcast_count, and cost_carry_count
         """
         total_synthetic = 0
         assets_backcast_count = 0
+        cost_carry_count = 0
 
         if not assets:
-            return {"total_synthetic": 0, "assets_backcast_count": 0}
+            return {
+                "total_synthetic": 0,
+                "assets_backcast_count": 0,
+                "cost_carry_count": 0,
+            }
 
         # Step 1: Batch fetch all assets with proxy relationships
         asset_ids = [a.asset_id for a in assets]
@@ -1434,20 +1500,21 @@ class MarketDataSyncService:
         ).all()
         asset_lookup = {a.id: a for a in refreshed_assets}
 
-        # Step 2: Identify assets that have proxies
-        assets_with_proxies = [
-            (asset_info, asset_lookup.get(asset_info.asset_id))
-            for asset_info in assets
-            if asset_lookup.get(asset_info.asset_id)
-            and asset_lookup.get(asset_info.asset_id).proxy_asset_id
-        ]
+        # Step 2: Separate assets with and without proxies
+        assets_with_proxies = []
+        assets_without_proxies = []
 
-        if not assets_with_proxies:
-            return {"total_synthetic": 0, "assets_backcast_count": 0}
+        for asset_info in assets:
+            asset = asset_lookup.get(asset_info.asset_id)
+            if not asset:
+                continue
+            if asset.proxy_asset_id:
+                assets_with_proxies.append((asset_info, asset))
+            else:
+                assets_without_proxies.append((asset_info, asset))
 
-        # Step 3: Batch detect price gaps using a single query
-        # Get the minimum non-synthetic price date for each asset
-        asset_ids_with_proxies = [a.asset_id for a, _ in assets_with_proxies]
+        # Step 3: Batch detect price gaps for ALL assets (with and without proxies)
+        all_asset_ids = [a.asset_id for a in assets]
 
         # Query: Get first real (non-synthetic) price date for each asset
         min_real_dates = db.execute(
@@ -1456,16 +1523,17 @@ class MarketDataSyncService:
                 func.min(MarketData.date).label('first_real_date')
             )
             .where(
-                MarketData.asset_id.in_(asset_ids_with_proxies),
+                MarketData.asset_id.in_(all_asset_ids),
                 MarketData.is_synthetic == False,
+                MarketData.no_data_available == False,
             )
             .group_by(MarketData.asset_id)
         ).all()
 
         first_real_date_map = {row.asset_id: row.first_real_date for row in min_real_dates}
 
-        # Step 4: Identify which assets need backcasting and collect proxy IDs
-        backcast_requirements = []  # List of (asset_info, asset, gap_start, gap_end)
+        # Step 4: Identify which assets with proxies need backcasting
+        proxy_backcast_requirements = []  # List of (asset_info, asset, gap_start, gap_end)
         proxy_ids_needed = set()
 
         for asset_info, asset in assets_with_proxies:
@@ -1483,14 +1551,10 @@ class MarketDataSyncService:
                 # No gap
                 continue
 
-            backcast_requirements.append((asset_info, asset, gap_start, gap_end))
+            proxy_backcast_requirements.append((asset_info, asset, gap_start, gap_end))
             proxy_ids_needed.add(asset.proxy_asset_id)
 
-        if not backcast_requirements:
-            return {"total_synthetic": 0, "assets_backcast_count": 0}
-
         # Step 5: Batch ensure proxy data is available
-        # First, check existing proxy coverage
         if proxy_ids_needed:
             proxy_coverage = db.execute(
                 select(
@@ -1498,7 +1562,10 @@ class MarketDataSyncService:
                     func.min(MarketData.date).label('min_date'),
                     func.max(MarketData.date).label('max_date')
                 )
-                .where(MarketData.asset_id.in_(proxy_ids_needed))
+                .where(
+                    MarketData.asset_id.in_(proxy_ids_needed),
+                    MarketData.no_data_available == False,
+                )
                 .group_by(MarketData.asset_id)
             ).all()
             proxy_coverage_map = {
@@ -1514,36 +1581,40 @@ class MarketDataSyncService:
             }
 
             # Determine overall date range needed for proxies
-            overall_start = min(req[2] for req in backcast_requirements)
-            overall_end = max(req[3] for req in backcast_requirements)
+            if proxy_backcast_requirements:
+                overall_start = min(req[2] for req in proxy_backcast_requirements)
+                overall_end = max(req[3] for req in proxy_backcast_requirements)
 
-            # Fetch missing proxy data
-            for proxy_id in proxy_ids_needed:
-                coverage = proxy_coverage_map.get(proxy_id)
-                proxy_asset = proxy_assets.get(proxy_id)
+                # Fetch missing proxy data
+                for proxy_id in proxy_ids_needed:
+                    coverage = proxy_coverage_map.get(proxy_id)
+                    proxy_asset = proxy_assets.get(proxy_id)
 
-                if not proxy_asset:
-                    continue
+                    if not proxy_asset:
+                        continue
 
-                needs_fetch = False
-                if coverage is None:
-                    needs_fetch = True
-                elif coverage[0] is None or coverage[0] > overall_start:
-                    needs_fetch = True
+                    needs_fetch = False
+                    if coverage is None:
+                        needs_fetch = True
+                    elif coverage[0] is None or coverage[0] > overall_start:
+                        needs_fetch = True
 
-                if needs_fetch:
-                    logger.info(f"Fetching proxy data for {proxy_asset.ticker}/{proxy_asset.exchange}")
-                    result = self._provider.get_historical_prices(
-                        ticker=proxy_asset.ticker,
-                        exchange=proxy_asset.exchange,
-                        start_date=overall_start,
-                        end_date=overall_end,
-                    )
-                    if result.success and result.prices:
-                        self._store_prices(db, proxy_id, result.prices)
+                    if needs_fetch:
+                        logger.info(f"Fetching proxy data for {proxy_asset.ticker}/{proxy_asset.exchange}")
+                        result = self._provider.get_historical_prices(
+                            ticker=proxy_asset.ticker,
+                            exchange=proxy_asset.exchange,
+                            start_date=overall_start,
+                            end_date=overall_end,
+                        )
+                        if result.success and result.prices:
+                            self._store_prices(db, proxy_id, result.prices)
 
-        # Step 6: Process backcasting for all assets
-        for asset_info, asset, gap_start, gap_end in backcast_requirements:
+        # Step 6: Process proxy backcasting for assets with proxies
+        # Track which assets fail proxy backcasting (for cost-carry fallback)
+        failed_proxy_backcast = []
+
+        for asset_info, asset, gap_start, gap_end in proxy_backcast_requirements:
             created = self._backcast_with_proxy(
                 db, asset.id, asset.proxy_asset_id,
                 gap_start, gap_end
@@ -1555,10 +1626,61 @@ class MarketDataSyncService:
                     f"Backcast {asset.ticker}: {created} synthetic prices "
                     f"({gap_start} to {gap_end})"
                 )
+            else:
+                # Proxy backcasting failed - add to cost-carry fallback list
+                logger.warning(
+                    f"Proxy backcasting failed for {asset.ticker}, "
+                    f"falling back to cost-carry"
+                )
+                failed_proxy_backcast.append((asset_info, asset, gap_start, gap_end))
+
+        # Step 7: Process cost-carry for assets WITHOUT proxies
+        cost_carry_requirements = []
+
+        for asset_info, asset in assets_without_proxies:
+            first_real_date = first_real_date_map.get(asset.id)
+
+            if first_real_date is None:
+                # No prices at all - gap is entire history
+                gap_start = asset_info.first_transaction_date
+                gap_end = date.today()
+            elif first_real_date > asset_info.first_transaction_date:
+                # Gap exists
+                gap_start = asset_info.first_transaction_date
+                gap_end = first_real_date - timedelta(days=1)
+            else:
+                # No gap
+                continue
+
+            cost_carry_requirements.append((asset_info, asset, gap_start, gap_end))
+
+        # Add failed proxy backcasts to cost-carry list
+        cost_carry_requirements.extend(failed_proxy_backcast)
+
+        # Step 8: Process cost-carry fallback (requires portfolio_id)
+        if cost_carry_requirements and portfolio_id:
+            for asset_info, asset, gap_start, gap_end in cost_carry_requirements:
+                created = self._carry_at_cost(
+                    db, asset.id, portfolio_id,
+                    gap_start, gap_end
+                )
+                if created > 0:
+                    total_synthetic += created
+                    cost_carry_count += 1
+                    logger.info(
+                        f"Cost-carry {asset.ticker}: {created} synthetic prices "
+                        f"({gap_start} to {gap_end})"
+                    )
+        elif cost_carry_requirements and not portfolio_id:
+            logger.warning(
+                f"Cannot apply cost-carry fallback: portfolio_id not provided. "
+                f"{len(cost_carry_requirements)} assets have gaps without proxies."
+            )
 
         return {
             "total_synthetic": total_synthetic,
-            "assets_backcast_count": assets_backcast_count
+            "assets_backcast_count": assets_backcast_count,
+            "cost_carry_count": cost_carry_count,
         }
 
     def _backcast_with_proxy(
@@ -1609,23 +1731,26 @@ class MarketDataSyncService:
         from decimal import Decimal, ROUND_HALF_UP
 
         # Get anchor price (first real price for the asset)
+        # Must exclude no_data_available placeholders (Yahoo creates these with close_price=None)
         anchor = db.execute(
             select(MarketData)
             .where(
                 MarketData.asset_id == asset_id,
                 MarketData.date == backcast_end,
                 MarketData.is_synthetic == False,
+                MarketData.no_data_available == False,
             )
         ).scalar()
 
         if not anchor:
-            # Try to find closest real price
+            # Try to find closest real price (excluding placeholders)
             anchor = db.execute(
                 select(MarketData)
                 .where(
                     MarketData.asset_id == asset_id,
                     MarketData.date >= backcast_end,
                     MarketData.is_synthetic == False,
+                    MarketData.no_data_available == False,
                 )
                 .order_by(MarketData.date)
                 .limit(1)
@@ -1694,16 +1819,36 @@ class MarketDataSyncService:
             logger.debug(f"No proxy prices found for backcast period {backcast_start} to {backcast_end}")
             return 0
 
-        # Batch fetch existing dates for this asset to avoid N+1 queries
+        # Batch fetch existing dates that already have real prices for this asset
+        # (We want to skip dates that have actual price data, but replace no_data_available markers)
         proxy_dates = [p.date for p in proxy_prices]
         existing_dates_query = (
             select(MarketData.date)
             .where(
                 MarketData.asset_id == asset_id,
                 MarketData.date.in_(proxy_dates),
+                MarketData.close_price.isnot(None),  # Only skip if has actual price
+                MarketData.no_data_available == False,  # Don't skip no_data markers
             )
         )
         existing_dates = set(db.scalars(existing_dates_query).all())
+
+        # Delete no_data_available markers for dates we're about to backcast
+        # This allows us to replace them with synthetic prices
+        from sqlalchemy import delete
+        dates_to_backcast = [d for d in proxy_dates if d not in existing_dates]
+        if dates_to_backcast:
+            delete_stmt = (
+                delete(MarketData)
+                .where(
+                    MarketData.asset_id == asset_id,
+                    MarketData.date.in_(dates_to_backcast),
+                    MarketData.no_data_available == True,
+                )
+            )
+            deleted = db.execute(delete_stmt)
+            if deleted.rowcount > 0:
+                logger.debug(f"Deleted {deleted.rowcount} no_data markers for backcast")
 
         # Helper function to scale values with proper precision
         def scale(val):
@@ -1727,7 +1872,7 @@ class MarketDataSyncService:
                 "low_price": scale(proxy_price.low_price),
                 "close_price": scale(proxy_price.close_price),
                 "adjusted_close": scale(proxy_price.adjusted_close),
-                "volume": proxy_price.volume,
+                "volume": None,  # Volume is unknown for synthetic data
                 "provider": "proxy_backcast",
                 "is_synthetic": True,
                 "proxy_source_id": proxy_asset_id,
@@ -1774,10 +1919,13 @@ class MarketDataSyncService:
 
         Returns True if proxy has sufficient data.
         """
-        # Check existing coverage
+        # Check existing coverage (exclude no_data_available placeholders)
         existing = db.execute(
             select(func.min(MarketData.date), func.max(MarketData.date))
-            .where(MarketData.asset_id == proxy_asset_id)
+            .where(
+                MarketData.asset_id == proxy_asset_id,
+                MarketData.no_data_available == False,
+            )
         ).fetchone()
 
         min_date, max_date = existing
@@ -1819,12 +1967,13 @@ class MarketDataSyncService:
         Returns:
             Tuple of (gap_start, gap_end) or (None, None) if no gap
         """
-        # Find earliest price we have
+        # Find earliest price we have (exclude no_data_available placeholders)
         earliest_price = db.execute(
             select(func.min(MarketData.date))
             .where(
                 MarketData.asset_id == asset_id,
                 MarketData.is_synthetic == False,  # Only real prices
+                MarketData.no_data_available == False,  # Exclude placeholders
             )
         ).scalar()
 
@@ -1838,3 +1987,185 @@ class MarketDataSyncService:
 
         # No gap
         return None, None
+
+    def _carry_at_cost(
+            self,
+            db: Session,
+            asset_id: int,
+            portfolio_id: int,
+            gap_start: date,
+            gap_end: date,
+    ) -> int:
+        """
+        Fallback: Value asset at cost basis when no proxy or market data is available.
+
+        This is the "last resort" synthetic data method. When:
+        1. No specific proxy is configured for the asset
+        2. OR proxy backcasting fails (no proxy data available)
+
+        We fill the gap by valuing the asset at its purchase price.
+        This is financially conservative and legally safe.
+
+        Implementation Details:
+        - Only creates prices for dates AFTER the first BUY transaction
+        - Price = average cost per share at each point in time
+        - Volume = None (no trading data to infer)
+        - Clearly marked as synthetic with provider="cost_carry"
+
+        Args:
+            db: Database session
+            asset_id: Asset needing synthetic data
+            portfolio_id: Portfolio ID (needed to find transactions)
+            gap_start: Start of period needing synthetic data
+            gap_end: End of period (exclusive - first real price date)
+
+        Returns:
+            Number of synthetic prices created
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+        from sqlalchemy import delete
+
+        # Get all BUY transactions for this asset in this portfolio, sorted by date
+        buy_transactions = db.execute(
+            select(Transaction)
+            .where(
+                Transaction.portfolio_id == portfolio_id,
+                Transaction.asset_id == asset_id,
+                Transaction.transaction_type == TransactionType.BUY,
+            )
+            .order_by(Transaction.date)
+        ).scalars().all()
+
+        if not buy_transactions:
+            logger.debug(f"No BUY transactions for asset {asset_id} in portfolio {portfolio_id}")
+            return 0
+
+        # Find the first buy date - we only create synthetic prices from this date
+        first_buy = buy_transactions[0]
+        first_buy_date = first_buy.date.date() if hasattr(first_buy.date, 'date') else first_buy.date
+
+        # Adjust gap_start to not be before first buy
+        effective_start = max(gap_start, first_buy_date)
+
+        if effective_start > gap_end:
+            # No gap to fill (first buy is after the gap period)
+            return 0
+
+        # Calculate running average cost at each transaction point
+        # We'll use the cost at the last transaction before each date
+        cost_timeline = []
+        running_shares = Decimal("0")
+        running_cost = Decimal("0")
+
+        for txn in buy_transactions:
+            txn_date = txn.date.date() if hasattr(txn.date, 'date') else txn.date
+            running_shares += txn.quantity
+            running_cost += txn.total_amount
+
+            if running_shares > Decimal("0"):
+                avg_cost = running_cost / running_shares
+                cost_timeline.append((txn_date, avg_cost))
+
+        if not cost_timeline:
+            return 0
+
+        # Build dates to fill (only trading days would be ideal, but we'll create
+        # for all dates and let the history calculator handle weekend gaps)
+        # Actually, let's only create for dates where we'd need a price
+        # For simplicity, create for all dates in the gap period
+
+        # Get existing dates that have real prices (to avoid overwriting)
+        existing_dates_query = (
+            select(MarketData.date)
+            .where(
+                MarketData.asset_id == asset_id,
+                MarketData.date >= effective_start,
+                MarketData.date <= gap_end,
+                MarketData.close_price.isnot(None),
+                MarketData.no_data_available == False,
+            )
+        )
+        existing_dates = set(db.scalars(existing_dates_query).all())
+
+        # Delete no_data_available markers in the gap period
+        dates_in_range = []
+        current_date = effective_start
+        while current_date <= gap_end:
+            if current_date not in existing_dates:
+                dates_in_range.append(current_date)
+            current_date += timedelta(days=1)
+
+        if dates_in_range:
+            delete_stmt = (
+                delete(MarketData)
+                .where(
+                    MarketData.asset_id == asset_id,
+                    MarketData.date.in_(dates_in_range),
+                    MarketData.no_data_available == True,
+                )
+            )
+            deleted = db.execute(delete_stmt)
+            if deleted.rowcount > 0:
+                logger.debug(f"Deleted {deleted.rowcount} no_data markers for cost-carry")
+
+        # Helper to find the applicable cost for a given date
+        def get_cost_for_date(d: date) -> Decimal | None:
+            """Get the average cost that was applicable on a given date."""
+            applicable_cost = None
+            for txn_date, cost in cost_timeline:
+                if txn_date <= d:
+                    applicable_cost = cost
+                else:
+                    break
+            return applicable_cost
+
+        # Build records for bulk insert
+        records = []
+        for d in dates_in_range:
+            cost = get_cost_for_date(d)
+            if cost is None:
+                continue  # This date is before first buy
+
+            # Round to 4 decimal places for price precision
+            price = cost.quantize(Decimal('0.0001'), ROUND_HALF_UP)
+
+            records.append({
+                "asset_id": asset_id,
+                "date": d,
+                "open_price": price,
+                "high_price": price,
+                "low_price": price,
+                "close_price": price,
+                "adjusted_close": price,
+                "volume": None,  # No volume data for cost-carry
+                "provider": "cost_carry",
+                "is_synthetic": True,
+                "proxy_source_id": None,  # No proxy used
+            })
+
+        if not records:
+            return 0
+
+        # Bulk upsert with ON CONFLICT DO NOTHING
+        try:
+            stmt = pg_insert(MarketData).values(records)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["asset_id", "date"]
+            )
+            result = db.execute(stmt)
+            db.commit()
+
+            created = result.rowcount if result.rowcount >= 0 else len(records)
+
+            if created > 0:
+                logger.info(
+                    f"Created {created} cost-carry prices for asset {asset_id} "
+                    f"({effective_start} to {gap_end})"
+                )
+
+            return created
+
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error creating cost-carry prices for asset {asset_id}: {e}")
+            raise

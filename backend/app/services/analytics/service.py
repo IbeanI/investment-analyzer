@@ -946,11 +946,12 @@ class AnalyticsService:
                 )
             )
 
-        # Get market data
+        # Get market data (exclude no_data_available placeholders)
         stmt = select(MarketData).where(
             MarketData.asset_id == asset.id,
             MarketData.date >= start_date,
             MarketData.date <= end_date,
+            MarketData.no_data_available == False,
         ).order_by(MarketData.date)
 
         market_data = db.execute(stmt).scalars().all()
@@ -1170,6 +1171,7 @@ class AnalyticsService:
                 "synthetic_days": detail.synthetic_days,
                 "total_days_held": detail.total_days_held,
                 "percentage": detail.percentage,
+                "synthetic_method": detail.synthetic_method,
             }
             for ticker, detail in history.synthetic_details.items()
         }

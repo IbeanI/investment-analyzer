@@ -35,6 +35,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Asset,
     Transaction,
+    TransactionType,
     MarketData,
     ExchangeRate,
     Portfolio,
@@ -294,13 +295,20 @@ class HistoryCalculator:
 
         for ticker, tracking in asset_tracking.items():
             if tracking["synthetic_dates"]:
+                # Determine synthetic method:
+                # - If proxy_ticker is None, it's cost-carry (valued at purchase price)
+                # - If proxy_ticker is set, it's proxy-backcast (modeled from correlated asset)
+                proxy = tracking["proxy"]
+                method = "cost_carry" if proxy is None else "proxy_backcast"
+
                 synthetic_details[ticker] = SyntheticAssetDetail(
                     ticker=ticker,
-                    proxy_ticker=tracking["proxy"],
+                    proxy_ticker=proxy,
                     first_synthetic_date=min(tracking["synthetic_dates"]),
                     last_synthetic_date=max(tracking["synthetic_dates"]),
                     synthetic_days=len(tracking["synthetic_dates"]),
                     total_days_held=len(tracking["synthetic_dates"]),  # Only synthetic days known
+                    synthetic_method=method,
                 )
 
         return PortfolioHistory(
@@ -400,6 +408,7 @@ class HistoryCalculator:
         # Rolling state - maintained across chunks
         holdings_state: dict[int, dict] = {}
         cash_state: dict[str, Decimal] = {}
+        net_invested_state: dict[str, Decimal] = {"total": Decimal("0")}
         txn_index = 0
 
         # Initialize cash calculator if tracking cash
@@ -435,16 +444,18 @@ class HistoryCalculator:
 
             # Process dates in this chunk
             for target_date in chunk_dates:
-                # Apply transactions up to this date (modifies holdings_state, cash_state)
+                # Apply transactions up to this date (modifies holdings_state, cash_state, net_invested_state)
                 txn_index = self._apply_transactions_until_date(
                     transactions, txn_index, target_date,
-                    holdings_state, cash_state, assets, cash_calc, tracks_cash,
+                    holdings_state, cash_state, net_invested_state, assets, cash_calc, tracks_cash,
+                    portfolio_currency,
                 )
 
                 # Snapshot current state using chunk's price/FX data
                 point = self._snapshot_state(
                     holdings_state=holdings_state,
                     cash_state=cash_state if tracks_cash else {},
+                    net_invested=net_invested_state["total"],
                     portfolio_currency=portfolio_currency,
                     target_date=target_date,
                     price_map=chunk_prices,
@@ -503,13 +514,20 @@ class HistoryCalculator:
 
         for ticker, tracking in asset_tracking.items():
             if tracking["synthetic_dates"]:
+                # Determine synthetic method:
+                # - If proxy_ticker is None, it's cost-carry (valued at purchase price)
+                # - If proxy_ticker is set, it's proxy-backcast (modeled from correlated asset)
+                proxy = tracking["proxy"]
+                method = "cost_carry" if proxy is None else "proxy_backcast"
+
                 synthetic_details[ticker] = SyntheticAssetDetail(
                     ticker=ticker,
-                    proxy_ticker=tracking["proxy"],
+                    proxy_ticker=proxy,
                     first_synthetic_date=min(tracking["synthetic_dates"]),
                     last_synthetic_date=max(tracking["synthetic_dates"]),
                     synthetic_days=len(tracking["synthetic_dates"]),
                     total_days_held=len(tracking["synthetic_dates"]),
+                    synthetic_method=method,
                 )
 
         warnings.append(
@@ -584,14 +602,16 @@ class HistoryCalculator:
             target_date: date,
             holdings_state: dict[int, dict],
             cash_state: dict[str, Decimal],
+            net_invested_state: dict[str, Decimal],
             assets: dict[int, Asset],
             cash_calc,
             tracks_cash: bool,
+            portfolio_currency: str,
     ) -> int:
         """
         Apply all transactions up to and including target_date.
 
-        Mutates holdings_state and cash_state in place.
+        Mutates holdings_state, cash_state, and net_invested_state in place.
 
         Args:
             transactions: ALL transactions, sorted by date
@@ -599,9 +619,11 @@ class HistoryCalculator:
             target_date: Apply transactions up to this date (inclusive)
             holdings_state: Current holdings (mutated)
             cash_state: Current cash balances (mutated)
+            net_invested_state: Net invested tracker {"total": Decimal} (mutated)
             assets: Asset lookup dict
             cash_calc: CashCalculator instance (or None if not tracking cash)
             tracks_cash: True if portfolio tracks cash
+            portfolio_currency: Portfolio's base currency
 
         Returns:
             Updated txn_index pointing to next unprocessed transaction
@@ -626,6 +648,23 @@ class HistoryCalculator:
             # Apply transaction to cash state (only if tracking)
             if tracks_cash and cash_calc is not None:
                 cash_calc.calculate_with_state(cash_state, txn)
+
+            # Track net invested
+            exchange_rate = txn.exchange_rate or Decimal("1")
+            if tracks_cash:
+                # For cash-tracking: DEPOSIT adds, WITHDRAWAL subtracts
+                if txn.transaction_type == TransactionType.DEPOSIT:
+                    net_invested_state["total"] += txn.quantity / exchange_rate
+                elif txn.transaction_type == TransactionType.WITHDRAWAL:
+                    net_invested_state["total"] -= txn.quantity / exchange_rate
+            else:
+                # For non-cash tracking: BUY adds cost, SELL subtracts proceeds
+                if txn.transaction_type == TransactionType.BUY:
+                    cost = (txn.quantity * txn.price_per_share + (txn.fee or Decimal("0"))) / exchange_rate
+                    net_invested_state["total"] += cost
+                elif txn.transaction_type == TransactionType.SELL:
+                    proceeds = (txn.quantity * txn.price_per_share - (txn.fee or Decimal("0"))) / exchange_rate
+                    net_invested_state["total"] -= proceeds
 
             txn_index += 1
 
@@ -665,6 +704,7 @@ class HistoryCalculator:
         # Rolling state - mutated as we process transactions
         holdings_state: dict[int, dict] = {}
         cash_state: dict[str, Decimal] = {}
+        net_invested_state: dict[str, Decimal] = {"total": Decimal("0")}
 
         # Transaction iterator
         txn_index = 0
@@ -679,13 +719,15 @@ class HistoryCalculator:
             # Apply all transactions up to this date
             txn_index = self._apply_transactions_until_date(
                 transactions, txn_index, target_date,
-                holdings_state, cash_state, assets, cash_calc, tracks_cash,
+                holdings_state, cash_state, net_invested_state, assets, cash_calc, tracks_cash,
+                portfolio_currency,
             )
 
             # Snapshot current state
             point = self._snapshot_state(
                 holdings_state=holdings_state,
                 cash_state=cash_state if tracks_cash else {},
+                net_invested=net_invested_state["total"],
                 portfolio_currency=portfolio_currency,
                 target_date=target_date,
                 price_map=price_map,
@@ -701,6 +743,7 @@ class HistoryCalculator:
             self,
             holdings_state: dict[int, dict],
             cash_state: dict[str, Decimal],
+            net_invested: Decimal,
             portfolio_currency: str,
             target_date: date,
             price_map: dict[tuple[int, date], tuple[Decimal, bool, int | None]],
@@ -714,6 +757,7 @@ class HistoryCalculator:
         Args:
             holdings_state: Current holdings state
             cash_state: Current cash balances by currency (empty if not tracking)
+            net_invested: Cumulative net invested amount
             portfolio_currency: Portfolio's base currency
             target_date: Date for this snapshot
             price_map: Batch-fetched prices
@@ -734,6 +778,7 @@ class HistoryCalculator:
                 cash=Decimal("0") if tracks_cash else None,
                 equity=Decimal("0"),
                 cost_basis=Decimal("0"),
+                net_invested=net_invested.quantize(Decimal("0.01")),
                 unrealized_pnl=Decimal("0"),
                 realized_pnl=Decimal("0"),
                 total_pnl=Decimal("0"),
@@ -853,6 +898,7 @@ class HistoryCalculator:
             cash=final_cash.quantize(Decimal("0.01")) if final_cash is not None else None,
             equity=final_equity.quantize(Decimal("0.01")) if final_equity is not None else None,
             cost_basis=total_cost.quantize(Decimal("0.01")),
+            net_invested=net_invested.quantize(Decimal("0.01")),
             unrealized_pnl=unrealized.quantize(Decimal("0.01")) if unrealized is not None else None,
             realized_pnl=total_realized.quantize(Decimal("0.01")),
             total_pnl=total_pnl.quantize(Decimal("0.01")) if total_pnl is not None else None,

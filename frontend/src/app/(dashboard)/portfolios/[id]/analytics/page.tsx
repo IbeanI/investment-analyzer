@@ -51,11 +51,11 @@ function getPeriodDates(period: Period, earliestTransactionDate?: string | null)
   const today = new Date();
   const to = today.toISOString().split("T")[0];
 
-  // API limit: max 5 years of history
-  const fiveYearsAgo = new Date();
-  fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
-  fiveYearsAgo.setDate(fiveYearsAgo.getDate() + 1); // Add 1 day buffer
-  const maxHistoryDateStr = fiveYearsAgo.toISOString().split("T")[0];
+  // API limit: max 20 years of history
+  const twentyYearsAgo = new Date();
+  twentyYearsAgo.setFullYear(twentyYearsAgo.getFullYear() - 20);
+  twentyYearsAgo.setDate(twentyYearsAgo.getDate() + 1); // Add 1 day buffer
+  const maxHistoryDateStr = twentyYearsAgo.toISOString().split("T")[0];
 
   let from: string;
   switch (period) {
@@ -342,6 +342,75 @@ export default function AnalyticsPage({ params }: PageProps) {
       {/* Navigation */}
       <PortfolioNav portfolioId={portfolioId} />
 
+      {/* Synthetic Data Disclaimer */}
+      {analytics?.has_synthetic_data && analytics?.synthetic_details && (() => {
+        const proxyBackcastAssets = Object.entries(analytics.synthetic_details)
+          .filter(([, detail]) => detail.synthetic_method === "proxy_backcast");
+        const costCarryAssets = Object.entries(analytics.synthetic_details)
+          .filter(([, detail]) => detail.synthetic_method === "cost_carry");
+
+        return (
+          <Alert variant="default" className="border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950">
+            <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <AlertTitle className="text-amber-800 dark:text-amber-200">
+              Modeled Historical Data
+            </AlertTitle>
+            <AlertDescription className="text-amber-700 dark:text-amber-300">
+              <p className="mb-2">
+                Some historical performance data is estimated due to limited market data availability:
+              </p>
+
+              {/* Proxy Backcast Assets */}
+              {proxyBackcastAssets.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold mt-2 mb-1">Modeled using proxy assets:</p>
+                  <ul className="list-disc list-inside space-y-1 text-sm">
+                    {proxyBackcastAssets.map(([ticker, detail]) => (
+                      <li key={ticker}>
+                        <span className="font-medium">{ticker}</span>: Modeled using{" "}
+                        <span className="font-medium">{detail.proxy_ticker}</span> from{" "}
+                        {formatDate(detail.first_synthetic_date)} to {formatDate(detail.last_synthetic_date)}
+                        {" "}({detail.synthetic_days} days)
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+
+              {/* Cost Carry Assets */}
+              {costCarryAssets.length > 0 && (
+                <>
+                  <p className="text-xs font-semibold mt-2 mb-1">Valued at cost basis:</p>
+                  <ul className="list-disc list-inside space-y-1 text-sm">
+                    {costCarryAssets.map(([ticker, detail]) => (
+                      <li key={ticker}>
+                        <span className="font-medium">{ticker}</span>: Valued at purchase price from{" "}
+                        {formatDate(detail.first_synthetic_date)} to {formatDate(detail.last_synthetic_date)}
+                        {" "}({detail.synthetic_days} days)
+                      </li>
+                    ))}
+                  </ul>
+                </>
+              )}
+
+              <p className="mt-3 text-xs">
+                {proxyBackcastAssets.length > 0 && (
+                  <>
+                    <strong>Proxy backcasting:</strong> Prices scaled from a correlated asset based on the ratio at the first available real price.{" "}
+                  </>
+                )}
+                {costCarryAssets.length > 0 && (
+                  <>
+                    <strong>Cost carry:</strong> Asset valued at purchase price when no market data or proxy is available.{" "}
+                  </>
+                )}
+                Actual historical performance may have differed.
+              </p>
+            </AlertDescription>
+          </Alert>
+        );
+      })()}
+
       {/* Analytics Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
         <TabsList className="grid w-full grid-cols-3">
@@ -372,7 +441,7 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="Net Invested"
               value={formatMetric(performance?.net_invested, "currency")}
-              description="Total deposits minus withdrawals during the period."
+              description="The total cumulative cash flow into the portfolio (Deposits/Buys minus Withdrawals/Sales). This represents your principal contribution."
               isLoading={isLoading}
             />
             <MetricCard

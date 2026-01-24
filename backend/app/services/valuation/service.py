@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session
 from app.models import (
     Asset,
     Transaction,
+    TransactionType,
     Portfolio,
     MarketData,
 )
@@ -184,6 +185,7 @@ class ValuationService:
                 tracks_cash=False,
                 cash_balances=[],
                 total_cost_basis=Decimal("0"),
+                total_net_invested=Decimal("0"),
                 total_value=Decimal("0"),
                 total_cash=None,
                 total_equity=Decimal("0"),
@@ -196,6 +198,20 @@ class ValuationService:
 
         # Step 3: Detect if portfolio tracks cash (has DEPOSIT/WITHDRAWAL)
         tracks_cash = CashCalculator.has_cash_transactions(all_transactions)
+
+        # Step 3b: Calculate total_net_invested
+        total_net_invested = Decimal("0")
+
+        if tracks_cash:
+            # For cash-tracking portfolios: DEPOSIT - WITHDRAWAL
+            for txn in all_transactions:
+                exchange_rate = txn.exchange_rate or Decimal("1")
+                if txn.transaction_type == TransactionType.DEPOSIT:
+                    total_net_invested += txn.quantity / exchange_rate
+                elif txn.transaction_type == TransactionType.WITHDRAWAL:
+                    total_net_invested -= txn.quantity / exchange_rate
+        # Note: For non-cash tracking, total_net_invested will be calculated
+        # from positions after holdings calculation
 
         # Step 4: Calculate cash balances (only if tracking)
         if tracks_cash:
@@ -215,6 +231,12 @@ class ValuationService:
             portfolio_currency=portfolio_currency,
         )
         positions = holdings_result.positions
+
+        # Step 5a: Calculate total_net_invested for non-cash tracking portfolios
+        if not tracks_cash:
+            for position in positions:
+                total_net_invested += position.total_bought_cost_portfolio
+                total_net_invested -= position.total_sold_proceeds_portfolio
 
         # Step 5b: Batch fetch prices for all open positions (avoids N+1 queries)
         open_asset_ids = {p.asset_id for p in positions if p.quantity > Decimal("0")}
@@ -351,6 +373,7 @@ class ValuationService:
             tracks_cash=tracks_cash,
             cash_balances=cash_balances,
             total_cost_basis=total_cost_basis.quantize(Decimal("0.01")),
+            total_net_invested=total_net_invested.quantize(Decimal("0.01")),
             total_value=(
                 total_value.quantize(Decimal("0.01"))
                 if total_value is not None else None

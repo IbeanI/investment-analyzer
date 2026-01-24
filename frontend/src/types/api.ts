@@ -378,6 +378,7 @@ export interface CashBalanceDetail {
 
 export interface PortfolioValuationSummary {
   total_cost_basis: string;
+  total_net_invested: string;
   total_value: string | null;
   total_cash: string | null;
   total_equity: string | null;
@@ -410,6 +411,7 @@ export interface ValuationHistoryPoint {
   cash: string | null;
   equity: string | null;
   cost_basis: string;
+  net_invested: string;
   unrealized_pnl: string | null;
   realized_pnl: string;
   total_pnl: string | null;
@@ -580,6 +582,7 @@ export interface SyntheticAssetDetail {
   synthetic_days: number;
   total_days_held: number;
   percentage: string;
+  synthetic_method: "proxy_backcast" | "cost_carry";
 }
 
 export interface AnalyticsResponse {

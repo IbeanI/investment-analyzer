@@ -210,6 +210,10 @@ class PortfolioValuationSummary(BaseModel):
         ...,
         description="Total cost basis in portfolio currency"
     )
+    total_net_invested: Decimal = Field(
+        ...,
+        description="Total net invested capital (deposits minus withdrawals)"
+    )
     total_value: Decimal | None = Field(
         ...,
         description="Total securities value in portfolio currency (None if incomplete)"
@@ -321,6 +325,10 @@ class ValuationHistoryPoint(BaseModel):
         description="Total equity (value + cash, None if incomplete)"
     )
     cost_basis: Decimal
+    net_invested: Decimal = Field(
+        ...,
+        description="Cumulative net invested as of this date"
+    )
     unrealized_pnl: Decimal | None = Field(
         ...,
         description="Unrealized P&L (None if value unknown)"

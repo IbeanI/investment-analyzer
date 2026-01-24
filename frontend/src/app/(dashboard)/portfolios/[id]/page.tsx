@@ -51,11 +51,11 @@ function getPeriodDates(period: Period, earliestTransactionDate?: string | null)
   const today = new Date();
   const to = today.toISOString().split("T")[0];
 
-  // API limit: max 5 years of history
-  const fiveYearsAgo = new Date();
-  fiveYearsAgo.setFullYear(fiveYearsAgo.getFullYear() - 5);
-  fiveYearsAgo.setDate(fiveYearsAgo.getDate() + 1); // Add 1 day buffer
-  const maxHistoryDateStr = fiveYearsAgo.toISOString().split("T")[0];
+  // API limit: max 20 years of history
+  const twentyYearsAgo = new Date();
+  twentyYearsAgo.setFullYear(twentyYearsAgo.getFullYear() - 20);
+  twentyYearsAgo.setDate(twentyYearsAgo.getDate() + 1); // Add 1 day buffer
+  const maxHistoryDateStr = twentyYearsAgo.toISOString().split("T")[0];
 
   let from: string;
   switch (period) {
@@ -364,14 +364,14 @@ export default function PortfolioDetailPage({ params }: PageProps) {
       ) : summary ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <MetricCard
-            title="Total Value"
-            value={formatCurrency(summary.total_value, currency)}
-            infoDescription="The sum of all your assets (stocks, ETFs, etc.) priced at today's market rate, plus any available cash in the portfolio."
+            title="Current Portfolio Value"
+            value={formatCurrency(summary.total_equity ?? summary.total_value, currency)}
+            infoDescription="The current market value of your securities plus any available cash in the portfolio."
           />
           <MetricCard
-            title="Total Invested"
-            value={formatCurrency(summary.total_cost_basis, currency)}
-            infoDescription="The total capital used to acquire your current holdings. This represents the original cost of your active assets."
+            title="Total Net Invested"
+            value={formatCurrency(summary.total_net_invested, currency)}
+            infoDescription="The total cumulative cash flow into the portfolio (Deposits/Buys minus Withdrawals/Sales). This represents your principal contribution."
           />
           <MetricCard
             title="Unrealized P/L"

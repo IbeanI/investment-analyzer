@@ -232,6 +232,13 @@ export function useTriggerSync() {
       } else if (data.status === "failed") {
         toast.error("Market data sync failed");
       }
+
+      // Show warnings if any (e.g., synthetic prices created)
+      if (data.warnings && data.warnings.length > 0) {
+        data.warnings.forEach((warning: string) => {
+          toast.info(warning, { duration: 5000 });
+        });
+      }
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to sync market data");
@@ -251,7 +258,15 @@ export function useFullResync() {
       // Invalidate all portfolio-related queries since prices may have changed
       queryClient.invalidateQueries({ queryKey: portfolioKeys.syncStatus(id) });
       queryClient.invalidateQueries({ queryKey: portfolioKeys.detail(id) });
+      queryClient.invalidateQueries({ queryKey: portfolioKeys.valuation(id) });
       toast.success(`Full re-sync completed: ${data.prices_fetched} prices fetched`);
+
+      // Show warnings if any (e.g., synthetic prices created)
+      if (data.warnings && data.warnings.length > 0) {
+        data.warnings.forEach((warning: string) => {
+          toast.info(warning, { duration: 5000 });
+        });
+      }
     },
     onError: (error: Error) => {
       toast.error(error.message || "Failed to perform full re-sync");

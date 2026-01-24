@@ -332,8 +332,8 @@ MAX_BATCH_SIZE: int = 500
 MAX_UPLOAD_ROWS: int = 10000
 
 # Maximum date range for history endpoints (days)
-# 5 years of daily data = ~1,825 data points, reasonable for charts
-MAX_HISTORY_DAYS: int = 365 * 5  # 5 years
+# 20 years of daily data = ~7,305 data points (accounting for leap years)
+MAX_HISTORY_DAYS: int = 365 * 20 + 5  # 20 years with leap year buffer
 
 # Maximum number of items returned in a single list response
 # Used as upper bound for pagination limit parameter

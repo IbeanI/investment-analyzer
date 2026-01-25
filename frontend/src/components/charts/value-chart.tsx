@@ -403,7 +403,7 @@ export function ValueChart({
                   const data = payload[0].payload as ChartDataPoint;
                   // Use simpleReturn for non-ALL periods, pnlPercentage for ALL
                   const perfValue = period === "ALL" ? data.pnlPercentage : data.simpleReturn;
-                  const perfLabel = period === "ALL" ? "Total P/L" : "Return";
+                  const perfLabel = "Return";
                   return (
                     <div className="rounded-lg border bg-background p-3 shadow-md">
                       <p className="text-sm text-muted-foreground mb-1">

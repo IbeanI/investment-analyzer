@@ -360,7 +360,7 @@ class AnalyticsService:
 
         # Get cost_basis and realized_pnl from valuation for accurate simple_return calculation
         # This is crucial for portfolios without cash tracking (no DEPOSIT/WITHDRAWAL)
-        cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
+        cost_basis, realized_pnl, net_invested = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Calculate all return metrics
         result = ReturnsCalculator.calculate_all(
@@ -368,6 +368,7 @@ class AnalyticsService:
             cash_flows,
             cost_basis=cost_basis,
             realized_pnl=realized_pnl,
+            net_invested=net_invested,
         )
 
         return result
@@ -377,12 +378,12 @@ class AnalyticsService:
             db: Session,
             portfolio_id: int,
             valuation_date: date,
-    ) -> tuple[Decimal | None, Decimal | None]:
+    ) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
         """
-        Get cost basis and realized P&L from valuation service.
+        Get cost basis, realized P&L, and net invested from valuation service.
 
         Returns:
-            Tuple of (cost_basis, realized_pnl) - both can be None if error
+            Tuple of (cost_basis, realized_pnl, net_invested) - all can be None if error
         """
         try:
             valuation = self._valuation_service.get_valuation(
@@ -390,10 +391,14 @@ class AnalyticsService:
                 portfolio_id=portfolio_id,
                 valuation_date=valuation_date,
             )
-            return valuation.total_cost_basis, valuation.total_realized_pnl
+            return (
+                valuation.total_cost_basis,
+                valuation.total_realized_pnl,
+                valuation.total_net_invested,
+            )
         except Exception as e:
             logger.warning(f"Could not get valuation data: {e}", exc_info=True)
-            return None, None
+            return None, None, None
 
     def get_risk(
             self,
@@ -434,7 +439,7 @@ class AnalyticsService:
             )
 
         # Get cost_basis and realized_pnl for accurate CAGR calculation (needed for Calmar ratio)
-        cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
+        cost_basis, realized_pnl, net_invested = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Get performance metrics for CAGR (needed for Calmar ratio)
         # Pass cost_basis and realized_pnl for accurate simple_return/CAGR calculation
@@ -442,6 +447,7 @@ class AnalyticsService:
             daily_values,
             cost_basis=cost_basis,
             realized_pnl=realized_pnl,
+            net_invested=net_invested,
         )
 
         # Calculate all risk metrics
@@ -616,12 +622,12 @@ class AnalyticsService:
         daily_values = self._get_daily_values(
             db, portfolio_id, start_date, end_date, history=history
         )
-        cost_basis, realized_pnl = self._get_valuation_data(db, portfolio_id, end_date)
+        cost_basis, realized_pnl, net_invested = self._get_valuation_data(db, portfolio_id, end_date)
 
         # Calculate metrics
         performance = self._calculate_performance_metrics(
             db, portfolio_id, start_date, end_date,
-            daily_values, cost_basis, realized_pnl, scope,
+            daily_values, cost_basis, realized_pnl, net_invested, scope,
         )
         risk = RiskCalculator.calculate_all(
             daily_values=daily_values,
@@ -1050,6 +1056,7 @@ class AnalyticsService:
             daily_values: list[DailyValue],
             cost_basis: Decimal | None,
             realized_pnl: Decimal | None,
+            net_invested: Decimal | None,
             scope: str,
     ) -> PerformanceMetrics:
         """Calculate performance metrics with cash flow adjustments."""
@@ -1074,12 +1081,13 @@ class AnalyticsService:
         # Filter to active periods (GIPS-compliant)
         filtered_daily_values = self._filter_to_active_periods(daily_values, scope)
 
-        # Calculate
+        # Calculate base metrics using FILTERED data (correct start/end values, calendar_days)
         performance = ReturnsCalculator.calculate_all(
             filtered_daily_values,
             cash_flows,
             cost_basis=cost_basis,
             realized_pnl=realized_pnl,
+            net_invested=net_invested,
         )
 
         # Add scope warning if needed

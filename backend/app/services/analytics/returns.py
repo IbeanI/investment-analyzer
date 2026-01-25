@@ -180,7 +180,7 @@ def calculate_twr(daily_values: list[DailyValue]) -> Decimal | None:
     Calculate Time-Weighted Return using the Daily Linking Method.
 
     TWR removes the impact of cash flows, showing pure investment performance.
-    This is the industry standard for comparing fund managers.
+    This is the industry standard for comparing fund managers (GIPS-compliant).
 
     Formula (Daily Linking Method):
         r_daily = (V_end - CF) / V_start - 1
@@ -191,9 +191,13 @@ def calculate_twr(daily_values: list[DailyValue]) -> Decimal | None:
         V_start = Portfolio value at start of day (previous day's end value)
         CF = Cash flow on that day (positive = deposit, negative = withdrawal)
 
-    This method is simpler and more robust than breaking into sub-periods.
-    Since we have daily valuations, we can calculate the return for each day
-    and chain-link them together.
+    Gap Period Handling (GIPS-compliant):
+        When a portfolio has gap periods (full liquidation then reinvestment),
+        we identify each investment period separately and chain-link their returns.
+        This prevents incorrect daily returns when transitioning across gaps.
+
+        Example: Period 1 (10% return) -> Gap -> Period 2 (5% return)
+        TWR = (1.10)(1.05) - 1 = 15.5%
 
     Args:
         daily_values: List of DailyValue with date, value, and cash_flow
@@ -207,27 +211,74 @@ def calculate_twr(daily_values: list[DailyValue]) -> Decimal | None:
     # Sort by date
     sorted_values = sorted(daily_values, key=lambda x: x.date)
 
-    # Calculate chain-linked returns using Daily Linking Method
+    # Identify investment periods (contiguous runs of positive equity)
+    # A gap period is when value <= 0 (full liquidation)
+    periods: list[list[DailyValue]] = []
+    current_period: list[DailyValue] = []
+
+    for dv in sorted_values:
+        if dv.value > 0:
+            current_period.append(dv)
+        else:
+            # End of an investment period - save it if it has enough data
+            if len(current_period) >= 2:
+                periods.append(current_period)
+            current_period = []
+
+    # Don't forget the last period if it's still active
+    if len(current_period) >= 2:
+        periods.append(current_period)
+
+    if not periods:
+        return None
+
+    # Calculate TWR for each period and chain-link them together
+    cumulative = Decimal("1")
+    total_periods_used = 0
+
+    for period in periods:
+        period_twr = _calculate_period_twr(period)
+        if period_twr is not None:
+            cumulative *= (Decimal("1") + period_twr)
+            total_periods_used += 1
+
+    if total_periods_used == 0:
+        return None
+
+    if len(periods) > 1:
+        logger.debug(
+            f"TWR: Chain-linked {len(periods)} investment periods "
+            f"(gap periods detected)"
+        )
+
+    return cumulative - Decimal("1")
+
+
+def _calculate_period_twr(period_values: list[DailyValue]) -> Decimal | None:
+    """
+    Calculate TWR for a single contiguous investment period.
+
+    This is the inner calculation for a period with no gaps.
+    All values in period_values should be > 0.
+
+    Args:
+        period_values: List of DailyValue for a contiguous investment period
+
+    Returns:
+        TWR for this period as decimal, or None if insufficient data
+    """
+    if len(period_values) < 2:
+        return None
+
     cumulative = Decimal("1")
 
-    # Track skipped dates for aggregated logging (avoid per-iteration debug logs)
-    skipped_prev_zero = 0
-    skipped_curr_zero = 0
+    for i in range(1, len(period_values)):
+        prev_value = period_values[i - 1].value
+        curr_value = period_values[i].value
+        cash_flow = period_values[i].cash_flow
 
-    for i in range(1, len(sorted_values)):
-        prev_value = sorted_values[i - 1].value  # V_start (previous day's end value)
-        curr_value = sorted_values[i].value  # V_end (today's end value)
-        cash_flow = sorted_values[i].cash_flow  # CF (cash flow today)
-
-        # Skip if previous value is zero or negative (handles start of liquidation gap)
+        # Safety check (should not happen as we filtered for value > 0)
         if prev_value <= 0:
-            skipped_prev_zero += 1
-            continue
-
-        # Skip if current value is zero or negative (handles end of liquidation gap)
-        # This prevents -100% return when portfolio is fully liquidated
-        if curr_value <= 0:
-            skipped_curr_zero += 1
             continue
 
         # Daily Linking Method: r = (V_end - CF) / V_start - 1
@@ -235,13 +286,6 @@ def calculate_twr(daily_values: list[DailyValue]) -> Decimal | None:
         r_daily = (curr_value - cash_flow) / prev_value - Decimal("1")
 
         cumulative *= (Decimal("1") + r_daily)
-
-    # Log skipped dates in aggregate (reduces noise in logs)
-    if skipped_prev_zero > 0 or skipped_curr_zero > 0:
-        logger.debug(
-            f"TWR: Skipped {skipped_prev_zero + skipped_curr_zero} dates "
-            f"(prev_zero={skipped_prev_zero}, curr_zero={skipped_curr_zero})"
-        )
 
     return cumulative - Decimal("1")
 
@@ -490,6 +534,7 @@ class ReturnsCalculator:
             cash_flows: list[CashFlow] | None = None,
             cost_basis: Decimal | None = None,
             realized_pnl: Decimal | None = None,
+            net_invested: Decimal | None = None,
     ) -> PerformanceMetrics:
         """
         Calculate all return metrics.
@@ -499,8 +544,11 @@ class ReturnsCalculator:
             cash_flows: Optional separate list of cash flows for XIRR
                        If None, extracted from daily_values
             cost_basis: Optional cost basis from valuation service.
-                       If provided, used for simple_return calculation
-                       (crucial for portfolios without cash tracking)
+                       If provided, used for total_gain calculation
+            realized_pnl: Optional realized P&L from valuation service.
+            net_invested: Optional net invested from valuation service.
+                       If provided, used as denominator for simple_return
+                       to match Overview page calculation.
 
         Returns:
             PerformanceMetrics with all available metrics
@@ -519,7 +567,9 @@ class ReturnsCalculator:
         result.start_value = sorted_values[0].value
         result.end_value = sorted_values[-1].value
         result.trading_days = len(sorted_values)
-        result.calendar_days = (sorted_values[-1].date - sorted_values[0].date).days
+        # Inclusive day count: counts from close of day before first data point
+        # E.g., Jan 1 to Jan 25 = 25 days (not 24), per institutional standard
+        result.calendar_days = (sorted_values[-1].date - sorted_values[0].date).days + 1
 
         # Calculate deposits and withdrawals DURING the period
         # IMPORTANT: Exclude the first day's cash flow - that's the initial investment,
@@ -545,15 +595,13 @@ class ReturnsCalculator:
         #
         # Two cases:
         # 1. "All" / inception period (start_value is small, most capital came from deposits):
-        #    Use cost_basis as denominator for consistency with Overview page
-        #    simple_return = total_pnl / cost_basis
+        #    Use net_invested as denominator for consistency with Overview page
+        #    simple_return = total_pnl / net_invested
         #
         # 2. Shorter periods (1M, 3M, YTD, 1Y) where start_value is meaningful:
         #    Use period-based formula with start_value as base
         #    simple_return = (end_value - start_value - net_cash_flows) / start_value
         #
-        # Note: net_invested always shows cost_basis (actual money invested by user),
-        # regardless of which formula is used for Simple Return.
         # =====================================================================
 
         # Store cost_basis and realized_pnl
@@ -569,22 +617,29 @@ class ReturnsCalculator:
             else result.start_value == 0
         )
 
-        # Net invested = money invested during the selected period
-        # - For inception/"All" period: use cost_basis (total money ever invested)
-        # - For shorter periods: use deposits - withdrawals during that period
-        if is_inception_period and cost_basis is not None and cost_basis > 0:
-            result.net_invested = cost_basis
+        # Net invested from valuation service (for inception period)
+        # or deposits - withdrawals during period (for shorter periods)
+        if is_inception_period and net_invested is not None and net_invested > 0:
+            result.net_invested = net_invested
         else:
             result.net_invested = result.total_deposits - result.total_withdrawals
 
         if is_inception_period and cost_basis is not None and cost_basis > 0:
-            # Use cost_basis formula (matches Overview page calculation)
+            # Use valuation-based formula (matches Overview page calculation)
             # total_pnl = unrealized_pnl + realized_pnl
             # unrealized_pnl = end_value - cost_basis
             unrealized_pnl = result.end_value - cost_basis
             total_realized = realized_pnl if realized_pnl is not None else Decimal("0")
             result.total_gain = unrealized_pnl + total_realized
-            result.simple_return = result.total_gain / cost_basis
+
+            # Use net_invested as denominator (same as Overview page pnl_percentage)
+            if net_invested is not None and net_invested > 0:
+                result.simple_return = result.total_gain / net_invested
+            elif cost_basis > 0:
+                # Fallback to cost_basis if net_invested not available
+                result.simple_return = result.total_gain / cost_basis
+            else:
+                result.simple_return = None
         else:
             # Use period-based formula for shorter periods
             # Formula: (end_value - start_value - net_cash_flows) / start_value
@@ -609,14 +664,13 @@ class ReturnsCalculator:
                 result.twr, result.calendar_days
             )
 
-        # CAGR - Compound Annual Growth Rate
-        # We use the cash-flow-adjusted simple_return to calculate CAGR
-        # This gives the true annualized growth rate of the investment
-        # Traditional CAGR = (end/start)^(1/years) - 1 ignores cash flows
-        # Adjusted CAGR = (1 + simple_return)^(365/days) - 1
-        if result.simple_return is not None and result.calendar_days > 0:
+        # CAGR - Compound Annual Growth Rate (Institutional Standard)
+        # CAGR = (1 + TWR)^(365/days) - 1
+        # Uses TWR as the base, which removes cash flow bias and measures
+        # pure investment performance annualized.
+        if result.twr is not None and result.calendar_days > 0:
             result.cagr = annualize_return(
-                result.simple_return, result.calendar_days
+                result.twr, result.calendar_days
             )
 
         # XIRR

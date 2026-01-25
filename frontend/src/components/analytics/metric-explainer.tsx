@@ -29,43 +29,83 @@ export interface MetricDefinition {
 }
 
 export const PERFORMANCE_METRICS: Record<string, MetricDefinition> = {
-  roi: {
-    name: "ROI (Return on Investment)",
-    shortDescription: "Total percentage gain or loss on invested capital",
+  totalValue: {
+    name: "Total Value",
+    shortDescription: "Liquidation value of your portfolio",
     longDescription:
-      "ROI measures the total percentage return on your invested capital. It shows how much you've gained or lost relative to what you put in.",
+      "The estimated amount you would receive if you sold all your holdings today at current market prices. This is the sum of your Net Invested capital plus your accumulated Total P/L.",
     interpretation: {
-      good: "A positive ROI means your investments have grown in value.",
-      bad: "A negative ROI means your investments have lost value.",
-      neutral: "A zero ROI means your portfolio value is unchanged.",
+      good: "A higher value indicates portfolio growth from your investments.",
+      bad: "A lower value than your Net Invested means you have unrealized losses.",
+      neutral: "Equal to Net Invested means you're at break-even.",
     },
     example:
-      "If you invested $10,000 and it's now worth $11,500, your ROI is +15%.",
+      "You invested €45,000 and made €17,000 profit. Your Total Value is €62,000.",
+  },
+  netInvested: {
+    name: "Net Invested",
+    shortDescription: "Your total principal capital",
+    longDescription:
+      "The total amount of cash you have personally contributed from your bank account (Total Deposits minus Total Withdrawals).",
+    interpretation: {
+      good: "Positive means you have added more money than you have withdrawn.",
+      bad: "Negative means you have withdrawn more than you deposited (taking profits out).",
+      neutral: "Zero means you have withdrawn exactly as much as you deposited.",
+    },
+    example:
+      "You deposited €50,000 and later withdrew €5,000. Your Net Invested is €45,000.",
+  },
+  totalPnl: {
+    name: "Total P/L",
+    shortDescription: "Total profit/loss since inception",
+    longDescription:
+      "The absolute financial growth of your portfolio relative to your total Net Invested capital since day one.",
+    interpretation: {
+      good: "Positive means you have made money on your invested capital.",
+      bad: "Negative means you have lost part of your invested capital.",
+      neutral: "Zero means you have exactly the same amount you invested (break-even).",
+    },
+    example:
+      "You put in €10,000 total. Your portfolio is now worth €13,000. Your Total P/L is +€3,000 (+30%).",
   },
   twr: {
-    name: "Time-Weighted Return (TWR)",
-    shortDescription: "Performance excluding deposit/withdrawal timing",
+    name: "TWR (Time-Weighted Return)",
+    shortDescription: "Strategy performance (Skill)",
     longDescription:
-      "TWR measures how well your investments performed, independent of when you added or withdrew money. It's useful for comparing your investment decisions against benchmarks or other investors.",
+      "Measures how well your investments performed, ignoring the timing of your deposits and withdrawals. This is the best metric to compare yourself against a benchmark (like the S&P 500).",
     interpretation: {
-      good: "A higher TWR means your investment choices performed well.",
-      bad: "A lower TWR suggests your investment picks underperformed.",
+      good: "Positive means your investment selections increased in value.",
+      bad: "Negative means your investment selections decreased in value.",
+      neutral: "Zero means your investment selections neither gained nor lost value.",
     },
     example:
-      "TWR ignores the fact that you added $5,000 right before a market drop. It shows the pure investment performance.",
-    relatedMetrics: ["roi", "xirr"],
+      "You deposit €1M just before a market drop. You lose money personally, but TWR ignores the bad timing and only measures how the assets performed.",
   },
   xirr: {
     name: "XIRR (Extended IRR)",
-    shortDescription: "Your actual annualized return",
+    shortDescription: "Personal effective return (Wallet)",
     longDescription:
-      "XIRR calculates your true annualized return, accounting for the timing and size of all your deposits and withdrawals. It's the most accurate measure of your personal investment success.",
+      "Your actual annualized return, accounting for the timing of every single deposit and withdrawal. It reflects your personal experience as an investor.",
     interpretation: {
-      good: "An XIRR higher than inflation (typically 2-3%) means you're growing wealth in real terms.",
-      bad: "A negative XIRR means you're losing money on your investments.",
+      good: "Higher than inflation (typically >3%) means you are growing real wealth.",
+      bad: "Negative means you are losing money on a personal basis.",
+      neutral: "Zero means your return is equivalent to keeping cash under a mattress.",
     },
     example:
-      "If your XIRR is 8%, investing $100 at the start of each year would result in the same outcome as getting 8% annually.",
+      "An XIRR of 8% means your portfolio generated the same result as a savings account paying 8% interest per year.",
+  },
+  roi: {
+    name: "ROI (Return on Investment)",
+    shortDescription: "Simple period growth",
+    longDescription:
+      "The percentage growth of your balance during a specific timeframe. Calculated as the Profit/Loss divided by the Starting Value of that period.",
+    interpretation: {
+      good: "Positive means your balance grew during this period.",
+      bad: "Negative means your balance shrank during this period.",
+      neutral: "Zero means your portfolio value is unchanged.",
+    },
+    example:
+      "You started the month with €1,000 and made €50 profit. Your ROI is +5%.",
   },
 };
 

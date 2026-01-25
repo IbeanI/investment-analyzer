@@ -29,18 +29,18 @@ export interface MetricDefinition {
 }
 
 export const PERFORMANCE_METRICS: Record<string, MetricDefinition> = {
-  simple_return: {
-    name: "Simple Return",
-    shortDescription: "Total percentage gain or loss",
+  roi: {
+    name: "ROI (Return on Investment)",
+    shortDescription: "Total percentage gain or loss on invested capital",
     longDescription:
-      "Simple return measures the total percentage change in your portfolio value from the start to the end of the period. It's the most straightforward way to see how much you've gained or lost.",
+      "ROI measures the total percentage return on your invested capital. It shows how much you've gained or lost relative to what you put in.",
     interpretation: {
-      good: "A positive return means your investments have grown in value.",
-      bad: "A negative return means your investments have lost value.",
-      neutral: "A zero return means your portfolio value is unchanged.",
+      good: "A positive ROI means your investments have grown in value.",
+      bad: "A negative ROI means your investments have lost value.",
+      neutral: "A zero ROI means your portfolio value is unchanged.",
     },
     example:
-      "If you invested $10,000 and it's now worth $11,500, your simple return is +15%.",
+      "If you invested $10,000 and it's now worth $11,500, your ROI is +15%.",
   },
   twr: {
     name: "Time-Weighted Return (TWR)",
@@ -53,7 +53,7 @@ export const PERFORMANCE_METRICS: Record<string, MetricDefinition> = {
     },
     example:
       "TWR ignores the fact that you added $5,000 right before a market drop. It shows the pure investment performance.",
-    relatedMetrics: ["simple_return", "xirr"],
+    relatedMetrics: ["roi", "xirr"],
   },
   xirr: {
     name: "XIRR (Extended IRR)",

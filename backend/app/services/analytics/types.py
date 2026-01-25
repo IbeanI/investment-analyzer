@@ -127,8 +127,8 @@ class PerformanceMetrics:
     All percentages are expressed as decimals (0.15 = 15%).
 
     Attributes:
-        simple_return: (End - Start) / Start
-        simple_return_annualized: Simple return scaled to 1 year
+        roi: Return on Investment (total_gain / invested_capital)
+        roi_annualized: ROI scaled to 1 year
         twr: Time-Weighted Return (removes cash flow bias)
         twr_annualized: TWR scaled to 1 year
         cagr: Compound Annual Growth Rate
@@ -146,8 +146,8 @@ class PerformanceMetrics:
         calendar_days: Number of calendar days in period
     """
     # Return metrics (as decimals, e.g., 0.15 = 15%)
-    simple_return: Decimal | None = None
-    simple_return_annualized: Decimal | None = None
+    roi: Decimal | None = None
+    roi_annualized: Decimal | None = None
     twr: Decimal | None = None
     twr_annualized: Decimal | None = None
     cagr: Decimal | None = None

@@ -624,22 +624,28 @@ class ReturnsCalculator:
         else:
             result.net_invested = result.total_deposits - result.total_withdrawals
 
-        if is_inception_period and cost_basis is not None and cost_basis > 0:
+        if is_inception_period:
             # Use valuation-based formula (matches Overview page calculation)
-            # total_pnl = unrealized_pnl + realized_pnl
-            # unrealized_pnl = end_value - cost_basis
-            unrealized_pnl = result.end_value - cost_basis
-            total_realized = realized_pnl if realized_pnl is not None else Decimal("0")
-            result.total_gain = unrealized_pnl + total_realized
+            if cost_basis is not None and cost_basis > 0:
+                # total_pnl = unrealized_pnl + realized_pnl
+                # unrealized_pnl = end_value - cost_basis
+                unrealized_pnl = result.end_value - cost_basis
+                total_realized = realized_pnl if realized_pnl is not None else Decimal("0")
+                result.total_gain = unrealized_pnl + total_realized
+            else:
+                # Fallback: total_gain = end_value - net_invested
+                result.total_gain = result.end_value - (result.net_invested or Decimal("0"))
 
             # Use net_invested as denominator (same as Overview page pnl_percentage)
             if net_invested is not None and net_invested > 0:
-                result.simple_return = result.total_gain / net_invested
-            elif cost_basis > 0:
-                # Fallback to cost_basis if net_invested not available
-                result.simple_return = result.total_gain / cost_basis
+                result.roi = result.total_gain / net_invested
+            elif cost_basis is not None and cost_basis > 0:
+                result.roi = result.total_gain / cost_basis
+            elif result.net_invested is not None and result.net_invested > 0:
+                # Final fallback to calculated net_invested
+                result.roi = result.total_gain / result.net_invested
             else:
-                result.simple_return = None
+                result.roi = Decimal("0")  # No investment = 0% return
         else:
             # Use period-based formula for shorter periods
             # Formula: (end_value - start_value - net_cash_flows) / start_value
@@ -647,19 +653,23 @@ class ReturnsCalculator:
             result.total_gain = result.end_value - result.start_value - net_cash_flow
 
             if result.start_value > 0:
-                result.simple_return = result.total_gain / result.start_value
+                result.roi = result.total_gain / result.start_value
             else:
-                result.simple_return = None
+                # For periods starting at 0, use net_invested as denominator
+                if result.net_invested is not None and result.net_invested > 0:
+                    result.roi = result.total_gain / result.net_invested
+                else:
+                    result.roi = Decimal("0")  # No investment = 0% return
 
-        if result.simple_return is not None and result.calendar_days > 0:
-            result.simple_return_annualized = annualize_return(
-                result.simple_return, result.calendar_days
+        if result.roi is not None and result.calendar_days >= 365:
+            result.roi_annualized = annualize_return(
+                result.roi, result.calendar_days
             )
 
         # TWR
         result.twr = calculate_twr(sorted_values)
 
-        if result.twr is not None and result.calendar_days > 0:
+        if result.twr is not None and result.calendar_days >= 365:
             result.twr_annualized = annualize_return(
                 result.twr, result.calendar_days
             )
@@ -668,7 +678,7 @@ class ReturnsCalculator:
         # CAGR = (1 + TWR)^(365/days) - 1
         # Uses TWR as the base, which removes cash flow bias and measures
         # pure investment performance annualized.
-        if result.twr is not None and result.calendar_days > 0:
+        if result.twr is not None and result.calendar_days >= 365:
             result.cagr = annualize_return(
                 result.twr, result.calendar_days
             )

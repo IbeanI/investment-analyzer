@@ -465,8 +465,8 @@ export interface PeriodInfo {
 }
 
 export interface PerformanceMetrics {
-  simple_return: string | null;
-  simple_return_annualized: string | null;
+  roi: string | null;
+  roi_annualized: string | null;
   total_realized_pnl: string | null;
   twr: string | null;
   twr_annualized: string | null;

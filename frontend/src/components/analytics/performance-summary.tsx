@@ -99,8 +99,8 @@ export function PerformanceSummary({
           {/* Performance */}
           <SummaryItem
             label="Total Return"
-            value={formatPct(performance?.simple_return)}
-            trend={getTrend(performance?.simple_return)}
+            value={formatPct(performance?.roi)}
+            trend={getTrend(performance?.roi)}
             isLoading={isLoading}
           />
           <SummaryItem
@@ -184,8 +184,8 @@ export function PerformanceSummaryCompact({
         <div className="space-y-1">
           <SummaryItem
             label="Return"
-            value={formatPct(performance?.simple_return)}
-            trend={getTrend(performance?.simple_return)}
+            value={formatPct(performance?.roi)}
+            trend={getTrend(performance?.roi)}
             isLoading={isLoading}
           />
           <SummaryItem

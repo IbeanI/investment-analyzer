@@ -511,10 +511,10 @@ export default function AnalyticsPage({ params }: PageProps) {
           {/* Row 3: Secondary Metrics */}
           <div className="grid gap-4 grid-cols-2 max-w-md">
             <MetricCard
-              title="Simple Return"
-              value={formatMetric(performance?.simple_return)}
-              description="Total percentage gain or loss from your initial investment."
-              trend={getTrend(performance?.simple_return)}
+              title="ROI"
+              value={formatMetric(performance?.roi)}
+              description="Return on Investment: Total percentage gain or loss from your invested capital."
+              trend={getTrend(performance?.roi)}
               isLoading={isLoading}
             />
             <MetricCard

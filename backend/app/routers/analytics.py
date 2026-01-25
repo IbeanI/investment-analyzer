@@ -209,8 +209,8 @@ def _map_measurement_period(period: MeasurementPeriodInfo | None) -> Measurement
 def _map_performance(perf: PerformanceMetrics) -> PerformanceMetricsResponse:
     """Map internal PerformanceMetrics to Pydantic schema."""
     return PerformanceMetricsResponse(
-        simple_return=_decimal_to_str(perf.simple_return),
-        simple_return_annualized=_decimal_to_str(perf.simple_return_annualized),
+        roi=_decimal_to_str(perf.roi),
+        roi_annualized=_decimal_to_str(perf.roi_annualized),
         twr=_decimal_to_str(perf.twr),
         twr_annualized=_decimal_to_str(perf.twr_annualized),
         cagr=_decimal_to_str(perf.cagr),
@@ -423,7 +423,7 @@ def get_portfolio_performance(
     - `twr`: Time-Weighted Return
     - `xirr`: Extended IRR (money-weighted)
     - `cagr`: Compound Annual Growth Rate
-    - `simple_return`: Cash-flow adjusted return
+    - `roi`: Return on Investment
     - `total_gain`: Absolute gain in portfolio currency
 
     **Use this endpoint when you only need returns**, without risk

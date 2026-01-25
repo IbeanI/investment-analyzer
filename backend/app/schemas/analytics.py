@@ -51,13 +51,13 @@ class PerformanceMetricsResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     # Return metrics (as decimal strings, e.g., "0.1550" = 15.5%)
-    simple_return: str | None = Field(
+    roi: str | None = Field(
         None,
-        description="Cash-flow adjusted return: total_gain / start_value"
+        description="Return on Investment: total_gain / invested_capital"
     )
-    simple_return_annualized: str | None = Field(
+    roi_annualized: str | None = Field(
         None,
-        description="Simple return annualized to 1 year"
+        description="ROI annualized to 1 year"
     )
     total_realized_pnl: str | None = Field(
         None,

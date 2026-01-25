@@ -120,11 +120,10 @@
     @apply border-border outline-ring/50;
   }
   html {
-    /* Prevent layout shift when scrollbar appears/disappears */
-    scrollbar-gutter: stable;
+    @apply overflow-hidden;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground overflow-hidden;
   }
 }
 

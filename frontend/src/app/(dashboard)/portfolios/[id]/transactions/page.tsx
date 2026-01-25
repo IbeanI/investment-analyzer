@@ -233,6 +233,7 @@ export default function TransactionsPage({ params }: PageProps) {
                 currency={portfolio.currency}
                 onEdit={setEditTransaction}
                 searchValue={searchInput}
+                debouncedSearchValue={debouncedSearch}
                 onSearchChange={setSearchInput}
                 typeValue={typeFilter}
                 onTypeChange={setTypeFilter}

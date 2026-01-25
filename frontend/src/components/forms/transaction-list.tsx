@@ -90,6 +90,7 @@ interface TransactionListProps {
   onEdit?: (transaction: Transaction) => void;
   // Server-side filtering props
   searchValue?: string;
+  debouncedSearchValue?: string;
   onSearchChange?: (value: string) => void;
   typeValue?: string;
   onTypeChange?: (value: string) => void;
@@ -103,6 +104,7 @@ export function TransactionList({
   currency: _currency,
   onEdit,
   searchValue = "",
+  debouncedSearchValue = "",
   onSearchChange,
   typeValue = "",
   onTypeChange,
@@ -325,10 +327,13 @@ export function TransactionList({
     }
   };
 
-  const hasActiveFilters = Boolean(searchValue || typeValue);
+  // Use debounced value to check filters - this matches the actual query state
+  // and prevents premature "no transactions" message during rapid filter changes
+  const hasActiveFilters = Boolean(debouncedSearchValue || typeValue);
+  const isFilterChangePending = searchValue !== debouncedSearchValue;
 
-  // Show message when no transactions exist at all (no filters active)
-  if (transactions.length === 0 && !hasActiveFilters) {
+  // Show message when no transactions exist at all (no filters active, no pending changes)
+  if (transactions.length === 0 && !hasActiveFilters && !isFilterChangePending && !isSearching) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
         No transactions yet. Add your first transaction above.

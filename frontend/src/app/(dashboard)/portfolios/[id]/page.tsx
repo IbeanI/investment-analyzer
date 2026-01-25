@@ -364,14 +364,14 @@ export default function PortfolioDetailPage({ params }: PageProps) {
       ) : summary ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <MetricCard
-            title="Current Portfolio Value"
+            title="Current Value"
             value={formatCurrency(summary.total_equity ?? summary.total_value, currency)}
-            infoDescription="The current market value of your securities plus any available cash in the portfolio."
+            infoDescription="The estimated amount you would receive if you sold everything today. It represents the total market value of your holdings, equal to your Net Invested capital plus your Total P/L."
           />
           <MetricCard
             title="Total Net Invested"
             value={formatCurrency(summary.total_net_invested, currency)}
-            infoDescription="The total cumulative cash flow into the portfolio (Deposits/Buys minus Withdrawals/Sales). This represents your principal contribution."
+            infoDescription="The total cash you contributed from your bank account. Calculated as Total Deposits/Buys minus Total Withdrawals/Sales. This is your principal capital and does not include reinvested profits from previous trades."
           />
           <MetricCard
             title="Unrealized P/L"
@@ -383,10 +383,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
             }
             trend={getTrend(summary.total_unrealized_pnl)}
             infoDescription={
-              <>
-                <p className="font-medium mb-1">Unrealized Profit/Loss</p>
-                <p>The potential profit or loss on positions you <strong>still own</strong>. It is calculated by comparing your purchase price to the current market price. This value changes constantly as the market moves.</p>
-              </>
+              <p>The floating "paper" profit or loss on your open positions. This value fluctuates with the market price of your current holdings and only becomes permanent (realized) when you sell them.</p>
             }
           />
           <MetricCard
@@ -394,10 +391,7 @@ export default function PortfolioDetailPage({ params }: PageProps) {
             value={formatPnlValue(realizedPnl, currency)}
             trend={getTrend(summary.total_realized_pnl)}
             infoDescription={
-              <>
-                <p className="font-medium mb-1">Realized Profit/Loss</p>
-                <p>The actual profit or loss from positions you have <strong>already sold</strong>. It is called "realized" because the transaction is closed; the amount is final and will no longer fluctuate with the market.</p>
-              </>
+              <p>The total profit or loss from assets you have already sold. These gains or losses are "locked in" and are no longer exposed to market risk.</p>
             }
           />
         </div>

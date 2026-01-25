@@ -140,10 +140,7 @@ export function QuickStats({
         trend={getTrend(totalReturn)}
         isLoading={isLoading}
         infoDescription={
-          <>
-            <p className="font-medium mb-1">Total Profit/Loss</p>
-            <p>The cumulative financial outcome of your entire portfolio history. This value combines your <strong>Realized Profit/Loss</strong> (profits you have already secured) and your <strong>Unrealized Profit/Loss</strong> (paper profits on assets you still hold).</p>
-          </>
+          <p>Your total financial profit or loss since inception. Calculated as Current Value minus Net Invested. The percentage represents your total Return on Investment (ROI) on the cash you contributed.</p>
         }
       />
       {lastUpdated && (
@@ -195,10 +192,7 @@ export function QuickStatsCompact({
         trend={getTrend(totalReturn)}
         isLoading={isLoading}
         infoDescription={
-          <>
-            <p className="font-medium mb-1">Total Profit/Loss</p>
-            <p>The cumulative financial outcome of your entire portfolio history. This value combines your <strong>Realized Profit/Loss</strong> (profits you have already secured) and your <strong>Unrealized Profit/Loss</strong> (paper profits on assets you still hold).</p>
-          </>
+          <p>Your total financial profit or loss since inception. Calculated as Current Value minus Net Invested. The percentage represents your total Return on Investment (ROI) on the cash you contributed.</p>
         }
       />
     </div>

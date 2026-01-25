@@ -462,19 +462,19 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="Total Value"
               value={formatMetric(performance?.end_value, "currency")}
-              description="Current portfolio value at the end of the selected period."
+              description="The market value of your portfolio at the end of this period. This is the closing balance on the last day of the selected time horizon (e.g., today)."
               isLoading={isLoading}
             />
             <MetricCard
               title="Net Invested"
               value={formatMetric(performance?.net_invested, "currency")}
-              description="The total cumulative cash flow into the portfolio (Deposits/Buys minus Withdrawals/Sales). This represents your principal contribution."
+              description="The net cash you added or removed during this specific period. Calculated as Deposits/Buys minus Withdrawals/Sales that occurred strictly between the start and end dates of this timeframe."
               isLoading={isLoading}
             />
             <MetricCard
               title="Total P/L"
               value={formatPnlCurrency(performance?.total_gain)}
-              description="Total monetary profit or loss in portfolio currency."
+              description="The profit or loss generated strictly during this period. It shows how much your portfolio value changed due to market performance in this timeframe, excluding your cash deposits or withdrawals."
               trend={getTrend(performance?.total_gain)}
               isLoading={isLoading}
             />
@@ -486,7 +486,7 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="TWR (Cumulative)"
               subtitle="Strategy Growth"
               value={formatMetric(performance?.twr)}
-              description="Time-Weighted Return measures investment performance excluding the impact of deposits and withdrawals."
+              description="The true performance of your investment strategy for this period. Time-Weighted Return removes the distorting effects of cash flows (deposits/withdrawals), allowing you to see how well your assets performed in the market."
               trend={getTrend(performance?.twr)}
               isLoading={isLoading}
             />
@@ -494,7 +494,7 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="TWR Annualized"
               subtitle="Yearly Avg"
               value={formatMetric(performance?.twr_annualized)}
-              description="Time-Weighted Return expressed as an annual rate for easy comparison across different time periods."
+              description="The compound annual growth rate of your strategy. It calculates what your Cumulative TWR would look like if maintained for a full year. Note: This is hidden for periods shorter than 1 year to avoid misleading projections."
               trend={getTrend(performance?.twr_annualized)}
               isLoading={isLoading}
             />
@@ -502,7 +502,7 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="XIRR"
               subtitle="Personal ROI"
               value={formatMetric(performance?.xirr)}
-              description="Annualized return accounting for the timing and size of all cash flows. Requires at least one transaction (buy/sell or deposit/withdrawal) in the selected period."
+              description="The annualized effective interest rate of your money. Money-Weighted Return takes the timing of your cash flows into account. It answers the question: 'What annual interest rate would I need from a bank to match this result?'"
               trend={getTrend(performance?.xirr)}
               isLoading={isLoading}
             />
@@ -513,7 +513,7 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="ROI"
               value={formatMetric(performance?.roi)}
-              description="Return on Investment: Total percentage gain or loss from your invested capital."
+              description="The simple percentage growth of your starting balance. Calculated as Total P/L divided by the Portfolio Value at the Start of the period. It shows the straightforward return on the capital you had available at the beginning."
               trend={getTrend(performance?.roi)}
               isLoading={isLoading}
             />

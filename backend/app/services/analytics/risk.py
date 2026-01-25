@@ -362,10 +362,9 @@ def calculate_downside_deviation(
     """
     Calculate downside deviation (semi-deviation) using pure Decimal arithmetic.
 
-    Only considers returns below the target (negative returns by default).
-    Used in Sortino Ratio calculation.
-
-    Formula: σ_down = sqrt(Σ(r - target)² / n) for all r < target
+    Standard Sortino formula: sqrt(Σ(min(r - target, 0)²) / (n-1))
+    - Considers ALL returns in the denominator
+    - Positive returns contribute 0 to the sum (not excluded)
 
     Args:
         daily_returns: List of daily returns
@@ -375,26 +374,30 @@ def calculate_downside_deviation(
     Returns:
         Downside deviation as decimal, or None if insufficient data
     """
-    downside_returns = [r for r in daily_returns if r < target_return]
-
-    if len(downside_returns) < MIN_DAYS_FOR_VOLATILITY:
+    n = len(daily_returns)
+    if n < MIN_DAYS_FOR_VOLATILITY:
         return None
 
-    # Calculate deviation from target using pure Decimal
-    deviations = [(r - target_return) ** 2 for r in downside_returns]
+    # Calculate squared deviations for ALL returns
+    # Positive returns (above target) contribute 0 to the sum
+    deviations = [
+        (r - target_return) ** 2 if r < target_return else Decimal("0")
+        for r in daily_returns
+    ]
     sum_deviations = sum(deviations, Decimal("0"))
-    mean_sq_deviation = sum_deviations / Decimal(str(len(deviations)))
+
+    # Use N-1 (sample) and divide by TOTAL count of returns
+    if n <= 1:
+        return None
+    mean_sq_deviation = sum_deviations / Decimal(str(n - 1))
 
     # Use Decimal.sqrt() for precision
     try:
         downside_dev = mean_sq_deviation.sqrt()
     except Exception:
-        # Fallback to float only if Decimal.sqrt() fails
         downside_dev = Decimal(str(math.sqrt(float(mean_sq_deviation))))
 
     if annualize:
-        # Annualization factor: sqrt(252)
-        # Pre-calculate as Decimal for precision
         annualization_factor = Decimal(str(TRADING_DAYS_PER_YEAR)).sqrt()
         downside_dev = downside_dev * annualization_factor
 
@@ -502,7 +505,10 @@ def calculate_drawdowns(
         top_n: int = 5,
 ) -> tuple[Decimal | None, DrawdownPeriod | None, list[DrawdownPeriod]]:
     """
-    Calculate drawdown metrics from daily values.
+    Calculate drawdown metrics using TWR (cumulative return) index.
+
+    This removes cash flow bias - a deposit during a crash won't make
+    the drawdown appear smaller than it really was.
 
     IMPORTANT: This function filters out days with zero or None equity.
     Zero-equity days represent intentional liquidations, not losses.
@@ -530,22 +536,39 @@ def calculate_drawdowns(
     # Sort by date
     sorted_values = sorted(valid_values, key=lambda x: x.date)
 
-    # Track peak and drawdown periods
-    peak_value = sorted_values[0].value
-    peak_date = sorted_values[0].date
+    # Build TWR index (cumulative return, starting at 1.0)
+    # This removes cash flow bias from drawdown calculation
+    twr_index = [Decimal("1")]
+    for i in range(1, len(sorted_values)):
+        prev_value = sorted_values[i - 1].value
+        curr_value = sorted_values[i].value
+        cash_flow = sorted_values[i].cash_flow
+
+        if prev_value > ZERO:
+            # Daily Linking Method: remove cash flow impact
+            daily_return = (curr_value - cash_flow) / prev_value - Decimal("1")
+            twr_index.append(twr_index[-1] * (Decimal("1") + daily_return))
+        else:
+            twr_index.append(twr_index[-1])
+
+    # Track peak and drawdown periods using TWR index
+    peak_twr = twr_index[0]
+    peak_idx = 0
 
     current_drawdown_start: date | None = None
     current_trough_date: date | None = None
-    current_trough_value: Decimal | None = None
+    current_trough_twr: Decimal | None = None
 
     drawdown_periods: list[DrawdownPeriod] = []
     max_drawdown = Decimal("0")
 
-    for dv in sorted_values:
-        if dv.value >= peak_value:
+    for i, twr in enumerate(twr_index):
+        dv = sorted_values[i]
+
+        if twr >= peak_twr:
             # New peak - close any open drawdown period
-            if current_drawdown_start is not None and current_trough_value is not None:
-                depth = (current_trough_value - peak_value) / peak_value
+            if current_drawdown_start is not None and current_trough_twr is not None:
+                depth = (current_trough_twr - peak_twr) / peak_twr
                 if depth < DRAWDOWN_RECORDING_THRESHOLD:  # Only record >1% drawdowns
                     period = DrawdownPeriod(
                         start_date=current_drawdown_start,
@@ -558,29 +581,29 @@ def calculate_drawdowns(
                     drawdown_periods.append(period)
 
             # Reset for new peak
-            peak_value = dv.value
-            peak_date = dv.date
+            peak_twr = twr
+            peak_idx = i
             current_drawdown_start = None
             current_trough_date = None
-            current_trough_value = None
+            current_trough_twr = None
         else:
             # Below peak - in a drawdown
             if current_drawdown_start is None:
-                current_drawdown_start = peak_date
+                current_drawdown_start = sorted_values[peak_idx].date
                 current_trough_date = dv.date
-                current_trough_value = dv.value
-            elif dv.value < current_trough_value:
+                current_trough_twr = twr
+            elif twr < current_trough_twr:
                 current_trough_date = dv.date
-                current_trough_value = dv.value
+                current_trough_twr = twr
 
             # Track max drawdown
-            current_dd = (dv.value - peak_value) / peak_value
+            current_dd = (twr - peak_twr) / peak_twr
             if current_dd < max_drawdown:
                 max_drawdown = current_dd
 
     # Handle ongoing drawdown (not yet recovered)
-    if current_drawdown_start is not None and current_trough_value is not None:
-        depth = (current_trough_value - peak_value) / peak_value
+    if current_drawdown_start is not None and current_trough_twr is not None:
+        depth = (current_trough_twr - peak_twr) / peak_twr
         if depth < DRAWDOWN_RECORDING_THRESHOLD:
             period = DrawdownPeriod(
                 start_date=current_drawdown_start,

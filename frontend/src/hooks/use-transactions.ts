@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect } from "react";
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   getTransactions,
@@ -73,17 +72,7 @@ export function useInfiniteTransactions(
   portfolioId: number,
   filters: TransactionFilters = {}
 ) {
-  const queryClient = useQueryClient();
   const { ticker, transaction_type } = filters;
-
-  // Reset cache when component unmounts so we start fresh on return
-  useEffect(() => {
-    return () => {
-      queryClient.removeQueries({
-        queryKey: [...transactionKeys.list(portfolioId), "infinite"],
-      });
-    };
-  }, [queryClient, portfolioId]);
 
   return useInfiniteQuery({
     queryKey: [...transactionKeys.list(portfolioId), "infinite", { ticker, transaction_type }],

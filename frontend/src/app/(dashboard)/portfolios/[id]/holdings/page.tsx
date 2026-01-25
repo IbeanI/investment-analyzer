@@ -108,7 +108,7 @@ export default function HoldingsPage({ params }: PageProps) {
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{portfolio.name}</h1>
             <p className="text-sm text-muted-foreground">
-              {holdings.length} holding{holdings.length !== 1 ? "s" : ""}
+              Holdings: {holdings.length}
             </p>
           </div>
         </div>

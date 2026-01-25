@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState } from "react";
+import { use, useMemo, useState, useEffect } from "react";
 import Link from "next/link";
 import { ArrowLeft, Plus, Upload, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -33,7 +33,7 @@ import { AlertCircle } from "lucide-react";
 import { TransactionForm, TransactionList, CsvUpload } from "@/components/forms";
 import { PortfolioNav } from "@/components/portfolio";
 import { usePortfolio } from "@/hooks/use-portfolios";
-import { useInfiniteTransactions } from "@/hooks/use-transactions";
+import { useInfiniteTransactions, useTransactionTypes } from "@/hooks/use-transactions";
 import type { Transaction } from "@/types/api";
 
 interface PageProps {
@@ -44,14 +44,31 @@ export default function TransactionsPage({ params }: PageProps) {
   const { id } = use(params);
   const portfolioId = parseInt(id, 10);
 
+  // Filter state
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchInput);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   const { data: portfolio, isLoading: portfolioLoading } = usePortfolio(portfolioId);
+  const { data: availableTypes = [] } = useTransactionTypes(portfolioId);
   const {
     data: transactionsData,
     isLoading: transactionsLoading,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
-  } = useInfiniteTransactions(portfolioId);
+  } = useInfiniteTransactions(portfolioId, {
+    ticker: debouncedSearch || undefined,
+    transaction_type: typeFilter || undefined,
+  });
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [editTransaction, setEditTransaction] = useState<Transaction | null>(null);
@@ -214,6 +231,11 @@ export default function TransactionsPage({ params }: PageProps) {
                 portfolioId={portfolioId}
                 currency={portfolio.currency}
                 onEdit={setEditTransaction}
+                searchValue={searchInput}
+                onSearchChange={setSearchInput}
+                typeValue={typeFilter}
+                onTypeChange={setTypeFilter}
+                availableTypes={availableTypes}
               />
               {hasNextPage && (
                 <div className="mt-4 flex justify-center">

@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect } from "react";
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   getTransactions,
+  getTransactionTypes,
   getEarliestTransactionDate,
   createTransaction,
   updateTransaction,
@@ -26,6 +28,8 @@ export const transactionKeys = {
   details: () => [...transactionKeys.all, "detail"] as const,
   detail: (portfolioId: number, transactionId: number) =>
     [...transactionKeys.details(), portfolioId, transactionId] as const,
+  types: (portfolioId: number) =>
+    [...transactionKeys.all, "types", portfolioId] as const,
 };
 
 // -----------------------------------------------------------------------------
@@ -55,15 +59,36 @@ export function useEarliestTransactionDate(portfolioId: number) {
   });
 }
 
-const PAGE_SIZE = 100;
+const PAGE_SIZE = 25;
+
+export interface TransactionFilters {
+  ticker?: string;
+  transaction_type?: string;
+}
 
 /**
  * Hook to fetch transactions with infinite scroll pagination
  */
-export function useInfiniteTransactions(portfolioId: number) {
+export function useInfiniteTransactions(
+  portfolioId: number,
+  filters: TransactionFilters = {}
+) {
+  const queryClient = useQueryClient();
+  const { ticker, transaction_type } = filters;
+
+  // Reset cache when component unmounts so we start fresh on return
+  useEffect(() => {
+    return () => {
+      queryClient.removeQueries({
+        queryKey: [...transactionKeys.list(portfolioId), "infinite"],
+      });
+    };
+  }, [queryClient, portfolioId]);
+
   return useInfiniteQuery({
-    queryKey: [...transactionKeys.list(portfolioId), "infinite"],
-    queryFn: ({ pageParam = 0 }) => getTransactions(portfolioId, pageParam, PAGE_SIZE),
+    queryKey: [...transactionKeys.list(portfolioId), "infinite", { ticker, transaction_type }],
+    queryFn: ({ pageParam = 0 }) =>
+      getTransactions(portfolioId, pageParam, PAGE_SIZE, ticker, transaction_type),
     enabled: !!portfolioId,
     initialPageParam: 0,
     getNextPageParam: (lastPage, allPages) => {
@@ -71,6 +96,18 @@ export function useInfiniteTransactions(portfolioId: number) {
       const hasMore = totalLoaded < lastPage.pagination.total;
       return hasMore ? totalLoaded : undefined;
     },
+  });
+}
+
+/**
+ * Hook to fetch available transaction types for a portfolio
+ */
+export function useTransactionTypes(portfolioId: number) {
+  return useQuery({
+    queryKey: transactionKeys.types(portfolioId),
+    queryFn: () => getTransactionTypes(portfolioId),
+    enabled: !!portfolioId,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 }
 

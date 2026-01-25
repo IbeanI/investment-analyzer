@@ -396,11 +396,12 @@ def list_transactions(
 
     if ticker is not None:
         # Use explicit join + contains_eager when filtering
+        # Use ILIKE for partial, case-insensitive search
         query = (
             query
             .join(Transaction.asset)
             .options(contains_eager(Transaction.asset))
-            .where(Asset.ticker == ticker)  # Already normalized by validator
+            .where(Asset.ticker.ilike(f"%{ticker}%"))
         )
     else:
         # Use joinedload when not filtering by asset
@@ -583,11 +584,12 @@ def get_portfolio_transactions(
 
     if ticker is not None:
         # Use explicit join + contains_eager when filtering
+        # Use ILIKE for partial, case-insensitive search
         query = (
             query
             .join(Transaction.asset)
             .options(contains_eager(Transaction.asset))
-            .where(Asset.ticker == ticker)  # Already normalized by validator
+            .where(Asset.ticker.ilike(f"%{ticker}%"))
         )
     else:
         # Use joinedload when not filtering by asset
@@ -618,6 +620,40 @@ def get_portfolio_transactions(
         items=list(transactions),
         pagination=PaginationMeta.create(total=total, skip=skip, limit=limit),
     )
+
+
+@router.get(
+    "/portfolio/{portfolio_id}/types",
+    response_model=list[str],
+    summary="Get distinct transaction types in a portfolio",
+    response_description="List of transaction types that exist in the portfolio"
+)
+def get_portfolio_transaction_types(
+        portfolio_id: int,
+        db: Annotated[Session, Depends(get_db)],
+        current_user: Annotated[User, Depends(get_current_user)],
+) -> list[str]:
+    """
+    Get all distinct transaction types that exist in a portfolio.
+
+    Useful for populating filter dropdowns with only relevant options.
+
+    Raises **404** if the portfolio does not exist.
+    Raises **403** if you don't own the portfolio.
+    """
+    # Verify portfolio exists and user owns it
+    validate_portfolio_ownership(db, portfolio_id, current_user)
+
+    # Get distinct transaction types
+    query = (
+        select(Transaction.transaction_type)
+        .where(Transaction.portfolio_id == portfolio_id)
+        .distinct()
+    )
+    types = db.scalars(query).all()
+
+    # Return as strings (enum values)
+    return [t.value for t in types]
 
 
 @router.post(

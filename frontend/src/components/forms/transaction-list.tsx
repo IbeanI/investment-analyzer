@@ -4,12 +4,10 @@ import { useState } from "react";
 import {
   flexRender,
   getCoreRowModel,
-  getFilteredRowModel,
   getSortedRowModel,
   useReactTable,
   type ColumnDef,
   type SortingState,
-  type ColumnFiltersState,
 } from "@tanstack/react-table";
 import {
   ArrowUpDown,
@@ -89,6 +87,12 @@ interface TransactionListProps {
   portfolioId: number;
   currency: string;
   onEdit?: (transaction: Transaction) => void;
+  // Server-side filtering props
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  typeValue?: string;
+  onTypeChange?: (value: string) => void;
+  availableTypes?: string[];
 }
 
 export function TransactionList({
@@ -96,11 +100,15 @@ export function TransactionList({
   portfolioId,
   currency: _currency,
   onEdit,
+  searchValue = "",
+  onSearchChange,
+  typeValue = "",
+  onTypeChange,
+  availableTypes = [],
 }: TransactionListProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "date", desc: true },
   ]);
-  const [columnFilters, setColumnFilters] = useState<ColumnFiltersState>([]);
   const [deleteTransaction, setDeleteTransaction] = useState<Transaction | null>(
     null
   );
@@ -145,11 +153,6 @@ export function TransactionList({
           </div>
         </div>
       ),
-      filterFn: (row, id, value) => {
-        return (row.original.asset?.ticker ?? "")
-          .toLowerCase()
-          .includes(value.toLowerCase());
-      },
     },
     {
       accessorKey: "transaction_type",
@@ -162,10 +165,6 @@ export function TransactionList({
           {row.original.transaction_type}
         </Badge>
       ),
-      filterFn: (row, id, value) => {
-        if (!value) return true;
-        return row.original.transaction_type === value;
-      },
     },
     {
       accessorKey: "quantity",
@@ -179,7 +178,7 @@ export function TransactionList({
               column.toggleSorting(column.getIsSorted() === "asc");
             }
           }}
-          className="h-auto p-0 hover:bg-transparent w-full justify-end"
+          className="h-auto p-0 hover:bg-transparent"
         >
           Quantity
           {column.getIsSorted() === "asc" ? (
@@ -196,6 +195,7 @@ export function TransactionList({
       ),
       sortingFn: (rowA, rowB) =>
         parseFloat(rowA.original.quantity) - parseFloat(rowB.original.quantity),
+      meta: { align: "right" },
     },
     {
       accessorKey: "price_per_share",
@@ -209,7 +209,7 @@ export function TransactionList({
               column.toggleSorting(column.getIsSorted() === "asc");
             }
           }}
-          className="h-auto p-0 hover:bg-transparent w-full justify-end"
+          className="h-auto p-0 hover:bg-transparent"
         >
           Price
           {column.getIsSorted() === "asc" ? (
@@ -228,6 +228,7 @@ export function TransactionList({
       ),
       sortingFn: (rowA, rowB) =>
         parseFloat(rowA.original.price_per_share) - parseFloat(rowB.original.price_per_share),
+      meta: { align: "right" },
     },
     {
       id: "total",
@@ -241,7 +242,7 @@ export function TransactionList({
               column.toggleSorting(column.getIsSorted() === "asc");
             }
           }}
-          className="h-auto p-0 hover:bg-transparent w-full justify-end"
+          className="h-auto p-0 hover:bg-transparent"
         >
           Total
           {column.getIsSorted() === "asc" ? (
@@ -272,6 +273,7 @@ export function TransactionList({
           parseFloat(rowB.original.price_per_share);
         return totalA - totalB;
       },
+      meta: { align: "right" },
     },
     {
       id: "actions",
@@ -306,10 +308,8 @@ export function TransactionList({
     columns,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getFilteredRowModel: getFilteredRowModel(),
     onSortingChange: setSorting,
-    onColumnFiltersChange: setColumnFilters,
-    state: { sorting, columnFilters },
+    state: { sorting },
   });
 
   const handleDelete = async () => {
@@ -336,29 +336,24 @@ export function TransactionList({
       <div className="mb-4 flex gap-2">
         <Input
           placeholder="Filter by ticker..."
-          value={
-            (table.getColumn("ticker")?.getFilterValue() as string) ?? ""
-          }
-          onChange={(e) =>
-            table.getColumn("ticker")?.setFilterValue(e.target.value)
-          }
+          value={searchValue}
+          onChange={(e) => onSearchChange?.(e.target.value)}
           className="max-w-sm"
         />
         <Select
-          onValueChange={(value) =>
-            table.getColumn("transaction_type")?.setFilterValue(value === "all" ? "" : value)
-          }
+          value={typeValue || "all"}
+          onValueChange={(value) => onTypeChange?.(value === "all" ? "" : value)}
         >
           <SelectTrigger className="w-32">
             <SelectValue placeholder="All Types" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">All Types</SelectItem>
-            <SelectItem value="BUY">Buy</SelectItem>
-            <SelectItem value="SELL">Sell</SelectItem>
-            <SelectItem value="DIVIDEND">Dividend</SelectItem>
-            <SelectItem value="DEPOSIT">Deposit</SelectItem>
-            <SelectItem value="WITHDRAWAL">Withdrawal</SelectItem>
+            {availableTypes.map((type) => (
+              <SelectItem key={type} value={type}>
+                {type.charAt(0) + type.slice(1).toLowerCase()}
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </div>
@@ -369,19 +364,25 @@ export function TransactionList({
           <thead className="bg-muted/50">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id} className="border-b">
-                {headerGroup.headers.map((header) => (
-                  <th
-                    key={header.id}
-                    className="p-3 text-left font-medium text-muted-foreground"
-                  >
-                    {header.isPlaceholder
-                      ? null
-                      : flexRender(
-                          header.column.columnDef.header,
-                          header.getContext()
-                        )}
-                  </th>
-                ))}
+                {headerGroup.headers.map((header) => {
+                  const align = (header.column.columnDef.meta as { align?: string })?.align;
+                  return (
+                    <th
+                      key={header.id}
+                      className={cn(
+                        "p-3 font-medium text-muted-foreground",
+                        align === "right" ? "text-right" : "text-left"
+                      )}
+                    >
+                      {header.isPlaceholder
+                        ? null
+                        : flexRender(
+                            header.column.columnDef.header,
+                            header.getContext()
+                          )}
+                    </th>
+                  );
+                })}
               </tr>
             ))}
           </thead>

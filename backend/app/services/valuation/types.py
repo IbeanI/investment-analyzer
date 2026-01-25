@@ -492,6 +492,7 @@ class HistoryPoint:
     has_synthetic_data: bool = False
     synthetic_holdings: dict[str, str | None] = field(default_factory=dict)  # {ticker: proxy_ticker}
     holdings_count: int = 0  # Total holdings on this day (for % calculation)
+    drawdown: Decimal | None = None  # TWR-based drawdown as decimal (e.g., -0.0385)
 
     @property
     def pnl_percentage(self) -> Decimal | None:

@@ -425,6 +425,7 @@ export interface ValuationHistoryPoint {
   is_gap_period: boolean;
   has_synthetic_data: boolean;
   synthetic_holdings: string[];
+  drawdown: string | null;  // TWR-based drawdown as decimal string (e.g., "-0.0385")
 }
 
 export interface PortfolioHistory {

@@ -417,6 +417,12 @@ class HistoryCalculator:
             from app.services.valuation.calculators import CashCalculator
             cash_calc = CashCalculator()
 
+        # TWR tracking for drawdown calculation - maintained across chunks
+        twr_index = Decimal("1")
+        peak_twr = Decimal("1")
+        prev_equity: Decimal | None = None
+        prev_net_invested: Decimal | None = None
+
         for chunk_idx, chunk_dates in enumerate(date_chunks):
             if not chunk_dates:
                 continue
@@ -463,6 +469,35 @@ class HistoryCalculator:
                     tracks_cash=tracks_cash,
                     assets=assets,
                 )
+
+                # Calculate TWR-based drawdown
+                if point.equity is not None and not point.is_gap_period:
+                    current_equity = point.equity
+
+                    if prev_equity is not None and prev_equity > 0:
+                        # Cash flow = change in net_invested since last point
+                        cash_flow = point.net_invested - prev_net_invested if prev_net_invested is not None else Decimal("0")
+
+                        # Daily return using Modified Dietz approximation
+                        # (End - Start - CashFlow) / Start
+                        daily_return = (current_equity - prev_equity - cash_flow) / prev_equity
+                        twr_index = twr_index * (Decimal("1") + daily_return)
+
+                    # Track peak
+                    if twr_index > peak_twr:
+                        peak_twr = twr_index
+
+                    # Calculate drawdown from peak
+                    if peak_twr > 0:
+                        point.drawdown = ((twr_index - peak_twr) / peak_twr).quantize(Decimal("0.0001"))
+                    else:
+                        point.drawdown = Decimal("0")
+
+                    prev_equity = current_equity
+                    prev_net_invested = point.net_invested
+                else:
+                    point.drawdown = None
+
                 all_data_points.append(point)
 
             # Clear chunk data to free memory (Python GC will reclaim)
@@ -715,6 +750,12 @@ class HistoryCalculator:
             from app.services.valuation.calculators import CashCalculator
             cash_calc = CashCalculator()
 
+        # TWR tracking for drawdown calculation
+        twr_index = Decimal("1")
+        peak_twr = Decimal("1")
+        prev_equity: Decimal | None = None
+        prev_net_invested: Decimal | None = None
+
         for target_date in target_dates:
             # Apply all transactions up to this date
             txn_index = self._apply_transactions_until_date(
@@ -735,6 +776,35 @@ class HistoryCalculator:
                 tracks_cash=tracks_cash,
                 assets=assets,
             )
+
+            # Calculate TWR-based drawdown
+            if point.equity is not None and not point.is_gap_period:
+                current_equity = point.equity
+
+                if prev_equity is not None and prev_equity > 0:
+                    # Cash flow = change in net_invested since last point
+                    cash_flow = point.net_invested - prev_net_invested if prev_net_invested is not None else Decimal("0")
+
+                    # Daily return using Modified Dietz approximation
+                    # (End - Start - CashFlow) / Start
+                    daily_return = (current_equity - prev_equity - cash_flow) / prev_equity
+                    twr_index = twr_index * (Decimal("1") + daily_return)
+
+                # Track peak
+                if twr_index > peak_twr:
+                    peak_twr = twr_index
+
+                # Calculate drawdown from peak
+                if peak_twr > 0:
+                    point.drawdown = ((twr_index - peak_twr) / peak_twr).quantize(Decimal("0.0001"))
+                else:
+                    point.drawdown = Decimal("0")
+
+                prev_equity = current_equity
+                prev_net_invested = point.net_invested
+            else:
+                point.drawdown = None
+
             data_points.append(point)
 
         return data_points

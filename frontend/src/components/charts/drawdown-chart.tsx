@@ -44,22 +44,19 @@ export function DrawdownChart({
   isLoading,
   title = "Drawdown Analysis",
 }: DrawdownChartProps) {
-  // Calculate drawdown from peak for each point
+  // Use API-provided TWR-based drawdown for each point
   const chartData = useMemo<ChartDataPoint[]>(() => {
     if (data.length === 0) return [];
 
-    let peak = 0;
-    return data.map((point) => {
-      const value = point.value ? parseFloat(point.value) : null;
+    // Filter out gap periods - they have no holdings and would show misleading data
+    const validData = data.filter(point => !point.is_gap_period);
 
-      if (value !== null) {
-        if (value > peak) {
-          peak = value;
-        }
-      }
+    if (validData.length === 0) return [];
 
-      const drawdown = peak > 0 && value !== null
-        ? ((value - peak) / peak) * 100
+    return validData.map((point) => {
+      // Use API-provided TWR-based drawdown (already accounts for cash flows)
+      const drawdown = point.drawdown !== null && point.drawdown !== undefined
+        ? parseFloat(point.drawdown) * 100
         : 0;
 
       return {
@@ -70,16 +67,31 @@ export function DrawdownChart({
     });
   }, [data]);
 
-  // Find min drawdown for Y-axis
-  const yDomain = useMemo(() => {
-    if (chartData.length === 0) return [-20, 0];
-    const minDrawdown = Math.min(...chartData.map((d) => d.drawdown));
-    // Add 10% padding below
-    return [Math.min(minDrawdown * 1.1, -5), 0];
+  // Find min drawdown from chart data (visual minimum)
+  const chartMinDrawdown = useMemo(() => {
+    if (chartData.length === 0) return null;
+    return Math.min(...chartData.map((d) => d.drawdown));
   }, [chartData]);
 
+  // API-provided max drawdown (from true historical peak)
   const maxDrawdownValue = maxDrawdown ? parseFloat(maxDrawdown) * 100 : null;
   const currentDrawdownValue = currentDrawdown ? parseFloat(currentDrawdown) * 100 : null;
+
+  // Only show reference line if it's within the visible chart range
+  // (API's max drawdown may be from a peak before the visible data starts)
+  const showMaxDrawdownLine = maxDrawdownValue !== null &&
+    chartMinDrawdown !== null &&
+    Math.abs(maxDrawdownValue - chartMinDrawdown) < 1; // Within 1% tolerance
+
+  // Find min drawdown for Y-axis - use the lower of API value or chart min
+  const yDomain = useMemo(() => {
+    if (chartMinDrawdown === null) return [-20, 0];
+    const minValue = maxDrawdownValue !== null
+      ? Math.min(chartMinDrawdown, maxDrawdownValue)
+      : chartMinDrawdown;
+    // Add 10% padding below
+    return [Math.min(minValue * 1.1, -5), 0];
+  }, [chartMinDrawdown, maxDrawdownValue]);
 
   if (isLoading) {
     return (
@@ -94,7 +106,8 @@ export function DrawdownChart({
     );
   }
 
-  if (data.length === 0) {
+  // Check if we have valid data after filtering gap periods
+  if (data.length === 0 || chartData.length === 0) {
     return (
       <Card>
         <CardHeader>
@@ -157,13 +170,13 @@ export function DrawdownChart({
               <CartesianGrid
                 strokeDasharray="3 3"
                 vertical={false}
-                stroke="hsl(var(--border))"
+                stroke="var(--border)"
               />
               <XAxis
                 dataKey="dateFormatted"
                 axisLine={false}
                 tickLine={false}
-                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
                 tickMargin={8}
                 minTickGap={30}
               />
@@ -171,7 +184,7 @@ export function DrawdownChart({
                 domain={yDomain}
                 axisLine={false}
                 tickLine={false}
-                tick={{ fontSize: 12, fill: "hsl(var(--muted-foreground))" }}
+                tick={{ fontSize: 12, fill: "var(--muted-foreground)" }}
                 tickFormatter={(value) => `${value.toFixed(0)}%`}
                 width={50}
               />
@@ -180,7 +193,7 @@ export function DrawdownChart({
                 stroke="hsl(var(--muted-foreground))"
                 strokeDasharray="3 3"
               />
-              {maxDrawdownValue !== null && (
+              {showMaxDrawdownLine && maxDrawdownValue !== null && (
                 <ReferenceLine
                   y={maxDrawdownValue}
                   stroke="hsl(0, 84%, 50%)"
@@ -217,10 +230,15 @@ export function DrawdownChart({
                 strokeWidth={2}
                 fill="url(#drawdownGradient)"
                 dot={false}
+                connectNulls
+                isAnimationActive={true}
+                animationBegin={0}
+                animationDuration={900}
+                animationEasing="ease-out"
                 activeDot={{
                   r: 4,
                   fill: "hsl(0, 84%, 60%)",
-                  stroke: "hsl(var(--background))",
+                  stroke: "var(--background)",
                   strokeWidth: 2,
                 }}
               />

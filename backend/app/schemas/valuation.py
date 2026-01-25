@@ -361,6 +361,12 @@ class ValuationHistoryPoint(BaseModel):
         description="Tickers of holdings with synthetic prices on this date"
     )
 
+    # TWR-based drawdown
+    drawdown: Decimal | None = Field(
+        default=None,
+        description="TWR-based drawdown as decimal (e.g., -0.0385 for -3.85%)"
+    )
+
 
 class PortfolioHistoryResponse(BaseModel):
     """Portfolio valuation history (time series)."""

@@ -134,6 +134,7 @@ def _map_history_point(point) -> ValuationHistoryPoint:
         is_gap_period=point.is_gap_period,
         has_synthetic_data=point.has_synthetic_data,
         synthetic_holdings=list(point.synthetic_holdings.keys()),
+        drawdown=point.drawdown,
     )
 
 

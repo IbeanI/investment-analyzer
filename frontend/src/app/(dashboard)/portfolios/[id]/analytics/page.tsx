@@ -339,11 +339,15 @@ export default function AnalyticsPage({ params }: PageProps) {
             <p className="text-sm text-muted-foreground">Analytics</p>
           </div>
         </div>
-        <PeriodSelector value={period} onChange={setPeriod} />
       </div>
 
       {/* Navigation */}
       <PortfolioNav portfolioId={portfolioId} />
+
+      {/* Period Selector */}
+      <div className="flex justify-end">
+        <PeriodSelector value={period} onChange={setPeriod} />
+      </div>
 
       {/* Synthetic Data Disclaimer */}
       {analytics?.has_synthetic_data && analytics?.synthetic_details && (() => {

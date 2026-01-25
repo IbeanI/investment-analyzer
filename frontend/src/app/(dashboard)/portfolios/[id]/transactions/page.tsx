@@ -106,55 +106,8 @@ export default function TransactionsPage({ params }: PageProps) {
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{portfolio.name}</h1>
-            <p className="text-muted-foreground">Transactions</p>
+            <p className="text-sm text-muted-foreground">Transactions</p>
           </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* CSV Upload Dialog */}
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button variant="outline">
-                <Upload className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline">Import CSV</span>
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>Import Transactions</DialogTitle>
-                <DialogDescription>
-                  Upload a CSV file to import multiple transactions at once.
-                </DialogDescription>
-              </DialogHeader>
-              <CsvUpload portfolioId={portfolioId} />
-            </DialogContent>
-          </Dialog>
-
-          {/* Add Transaction Sheet */}
-          <Sheet open={showAddForm} onOpenChange={setShowAddForm}>
-            <SheetTrigger asChild>
-              <Button>
-                <Plus className="mr-2 h-4 w-4" />
-                <span className="hidden sm:inline">Add Transaction</span>
-              </Button>
-            </SheetTrigger>
-            <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-              <SheetHeader>
-                <SheetTitle>Add Transaction</SheetTitle>
-                <SheetDescription>
-                  Record a new buy or sell transaction for {portfolio.name}.
-                </SheetDescription>
-              </SheetHeader>
-              <div className="mt-6">
-                <TransactionForm
-                  portfolioId={portfolioId}
-                  portfolioCurrency={portfolio.currency}
-                  onSuccess={() => setShowAddForm(false)}
-                  onCancel={() => setShowAddForm(false)}
-                />
-              </div>
-            </SheetContent>
-          </Sheet>
         </div>
       </div>
 
@@ -186,6 +139,54 @@ export default function TransactionsPage({ params }: PageProps) {
 
       {/* Navigation */}
       <PortfolioNav portfolioId={portfolioId} />
+
+      {/* Action Buttons */}
+      <div className="flex justify-end gap-2">
+        {/* CSV Upload Dialog */}
+        <Dialog>
+          <DialogTrigger asChild>
+            <Button variant="outline">
+              <Upload className="mr-2 h-4 w-4" />
+              <span className="hidden sm:inline">Import CSV</span>
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Import Transactions</DialogTitle>
+              <DialogDescription>
+                Upload a CSV file to import multiple transactions at once.
+              </DialogDescription>
+            </DialogHeader>
+            <CsvUpload portfolioId={portfolioId} />
+          </DialogContent>
+        </Dialog>
+
+        {/* Add Transaction Sheet */}
+        <Sheet open={showAddForm} onOpenChange={setShowAddForm}>
+          <SheetTrigger asChild>
+            <Button>
+              <Plus className="mr-2 h-4 w-4" />
+              <span className="hidden sm:inline">Add Transaction</span>
+            </Button>
+          </SheetTrigger>
+          <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>Add Transaction</SheetTitle>
+              <SheetDescription>
+                Record a new buy or sell transaction for {portfolio.name}.
+              </SheetDescription>
+            </SheetHeader>
+            <div className="mt-6">
+              <TransactionForm
+                portfolioId={portfolioId}
+                portfolioCurrency={portfolio.currency}
+                onSuccess={() => setShowAddForm(false)}
+                onCancel={() => setShowAddForm(false)}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      </div>
 
       {/* Content */}
       <Card>

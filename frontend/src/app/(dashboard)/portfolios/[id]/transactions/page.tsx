@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useMemo, useState, useEffect } from "react";
+import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, Plus, Upload, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -44,7 +44,7 @@ export default function TransactionsPage({ params }: PageProps) {
   const { id } = use(params);
   const portfolioId = parseInt(id, 10);
 
-  // Filter state
+  // Filter state (server-side)
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -53,7 +53,7 @@ export default function TransactionsPage({ params }: PageProps) {
   useEffect(() => {
     const timer = setTimeout(() => {
       setDebouncedSearch(searchInput);
-    }, 300);
+    }, 150);
     return () => clearTimeout(timer);
   }, [searchInput]);
 
@@ -62,6 +62,7 @@ export default function TransactionsPage({ params }: PageProps) {
   const {
     data: transactionsData,
     isLoading: transactionsLoading,
+    isFetching,
     hasNextPage,
     fetchNextPage,
     isFetchingNextPage,
@@ -218,7 +219,7 @@ export default function TransactionsPage({ params }: PageProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {transactionsLoading ? (
+          {!transactionsData?.pages?.length ? (
             <div className="space-y-3">
               {[1, 2, 3].map((i) => (
                 <Skeleton key={i} className="h-16 w-full" />
@@ -236,6 +237,7 @@ export default function TransactionsPage({ params }: PageProps) {
                 typeValue={typeFilter}
                 onTypeChange={setTypeFilter}
                 availableTypes={availableTypes}
+                isSearching={(searchInput !== debouncedSearch && !!searchInput) || (isFetching && !!searchInput)}
               />
               {hasNextPage && (
                 <div className="mt-4 flex justify-center">

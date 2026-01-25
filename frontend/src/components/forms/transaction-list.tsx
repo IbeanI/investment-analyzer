@@ -13,6 +13,7 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
+  Loader2,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -93,6 +94,7 @@ interface TransactionListProps {
   typeValue?: string;
   onTypeChange?: (value: string) => void;
   availableTypes?: string[];
+  isSearching?: boolean;
 }
 
 export function TransactionList({
@@ -105,6 +107,7 @@ export function TransactionList({
   typeValue = "",
   onTypeChange,
   availableTypes = [],
+  isSearching = false,
 }: TransactionListProps) {
   const [sorting, setSorting] = useState<SortingState>([
     { id: "date", desc: true },
@@ -322,7 +325,10 @@ export function TransactionList({
     }
   };
 
-  if (transactions.length === 0) {
+  const hasActiveFilters = Boolean(searchValue || typeValue);
+
+  // Show message when no transactions exist at all (no filters active)
+  if (transactions.length === 0 && !hasActiveFilters) {
     return (
       <p className="text-sm text-muted-foreground py-8 text-center">
         No transactions yet. Add your first transaction above.
@@ -334,12 +340,17 @@ export function TransactionList({
     <>
       {/* Filters */}
       <div className="mb-4 flex gap-2">
-        <Input
-          placeholder="Filter by ticker..."
-          value={searchValue}
-          onChange={(e) => onSearchChange?.(e.target.value)}
-          className="max-w-sm"
-        />
+        <div className="relative max-w-sm">
+          <Input
+            placeholder="Filter by ticker"
+            value={searchValue}
+            onChange={(e) => onSearchChange?.(e.target.value)}
+            className="pr-8"
+          />
+          {isSearching && (
+            <Loader2 className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 animate-spin text-muted-foreground" />
+          )}
+        </div>
         <Select
           value={typeValue || "all"}
           onValueChange={(value) => onTypeChange?.(value === "all" ? "" : value)}
@@ -358,115 +369,126 @@ export function TransactionList({
         </Select>
       </div>
 
-      {/* Desktop table */}
-      <div className="hidden md:block border rounded-lg">
-        <table className="w-full">
-          <thead className="bg-muted/50">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="border-b">
-                {headerGroup.headers.map((header) => {
-                  const align = (header.column.columnDef.meta as { align?: string })?.align;
-                  return (
-                    <th
-                      key={header.id}
-                      className={cn(
-                        "p-3 font-medium text-muted-foreground",
-                        align === "right" ? "text-right" : "text-left"
-                      )}
-                    >
-                      {header.isPlaceholder
-                        ? null
-                        : flexRender(
-                            header.column.columnDef.header,
-                            header.getContext()
+      {/* Empty state when filters return no results */}
+      {transactions.length === 0 && hasActiveFilters && (
+        <p className="text-sm text-muted-foreground py-8 text-center">
+          No transactions matching your filters.
+        </p>
+      )}
+
+      {transactions.length > 0 && (
+        <>
+          {/* Desktop table */}
+          <div className="hidden md:block border rounded-lg">
+            <table className="w-full">
+              <thead className="bg-muted/50">
+                {table.getHeaderGroups().map((headerGroup) => (
+                  <tr key={headerGroup.id} className="border-b">
+                    {headerGroup.headers.map((header) => {
+                      const align = (header.column.columnDef.meta as { align?: string })?.align;
+                      return (
+                        <th
+                          key={header.id}
+                          className={cn(
+                            "p-3 font-medium text-muted-foreground",
+                            align === "right" ? "text-right" : "text-left"
                           )}
-                    </th>
-                  );
-                })}
-              </tr>
-            ))}
-          </thead>
-          <tbody>
-            {table.getRowModel().rows.map((row) => (
-              <tr key={row.id} className="border-b last:border-0 hover:bg-muted/50">
-                {row.getVisibleCells().map((cell) => (
-                  <td key={cell.id} className="p-3">
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Mobile card view */}
-      <div className="md:hidden space-y-3">
-        {table.getRowModel().rows.map((row) => {
-          const transaction = row.original;
-          const total =
-            parseFloat(transaction.quantity) *
-            parseFloat(transaction.price_per_share);
-
-          return (
-            <Card key={row.id}>
-              <CardContent className="p-4">
-                <div className="flex items-start justify-between">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{transaction.asset?.ticker}</span>
-                      <Badge
-                        variant="outline"
-                        className={cn(
-                          "text-xs",
-                          getTransactionTypeBadgeClass(transaction.transaction_type)
-                        )}
-                      >
-                        {transaction.transaction_type}
-                      </Badge>
-                    </div>
-                    <div className="text-sm text-muted-foreground">
-                      {formatDate(transaction.date)}
-                    </div>
-                    <div className="text-sm">
-                      {formatNumber(transaction.quantity, 4)} @{" "}
-                      {formatCurrency(
-                        transaction.price_per_share,
-                        transaction.currency
-                      )}
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-medium">
-                      {formatCurrency(total, transaction.currency)}
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="sm" className="h-8 mt-1">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => onEdit?.(transaction)}>
-                          <Pencil className="mr-2 h-4 w-4" />
-                          Edit
-                        </DropdownMenuItem>
-                        <DropdownMenuItem
-                          className="text-destructive focus:text-destructive"
-                          onClick={() => setDeleteTransaction(transaction)}
                         >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+                          {header.isPlaceholder
+                            ? null
+                            : flexRender(
+                                header.column.columnDef.header,
+                                header.getContext()
+                              )}
+                        </th>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </thead>
+              <tbody>
+                {table.getRowModel().rows.map((row) => (
+                  <tr key={row.id} className="border-b last:border-0 hover:bg-muted/50">
+                    {row.getVisibleCells().map((cell) => (
+                      <td key={cell.id} className="p-3">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile card view */}
+          <div className="md:hidden space-y-3">
+            {table.getRowModel().rows.map((row) => {
+              const transaction = row.original;
+              const total =
+                parseFloat(transaction.quantity) *
+                parseFloat(transaction.price_per_share);
+
+              return (
+                <Card key={row.id}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{transaction.asset?.ticker}</span>
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-xs",
+                              getTransactionTypeBadgeClass(transaction.transaction_type)
+                            )}
+                          >
+                            {transaction.transaction_type}
+                          </Badge>
+                        </div>
+                        <div className="text-sm text-muted-foreground">
+                          {formatDate(transaction.date)}
+                        </div>
+                        <div className="text-sm">
+                          {formatNumber(transaction.quantity, 4)} @{" "}
+                          {formatCurrency(
+                            transaction.price_per_share,
+                            transaction.currency
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-medium">
+                          {formatCurrency(total, transaction.currency)}
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 mt-1">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => onEdit?.(transaction)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              className="text-destructive focus:text-destructive"
+                              onClick={() => setDeleteTransaction(transaction)}
+                            >
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* Delete confirmation */}
       <AlertDialog

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useInfiniteQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   getTransactions,
   getTransactionTypes,
@@ -96,6 +96,7 @@ export function useInfiniteTransactions(
       const hasMore = totalLoaded < lastPage.pagination.total;
       return hasMore ? totalLoaded : undefined;
     },
+    placeholderData: keepPreviousData,
   });
 }
 

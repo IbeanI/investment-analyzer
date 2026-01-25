@@ -103,12 +103,6 @@ export function PerformanceSummary({
             trend={getTrend(performance?.roi)}
             isLoading={isLoading}
           />
-          <SummaryItem
-            label="CAGR"
-            value={formatPct(performance?.cagr)}
-            trend={getTrend(performance?.cagr)}
-            isLoading={isLoading}
-          />
 
           {/* Risk */}
           <SummaryItem
@@ -186,12 +180,6 @@ export function PerformanceSummaryCompact({
             label="Return"
             value={formatPct(performance?.roi)}
             trend={getTrend(performance?.roi)}
-            isLoading={isLoading}
-          />
-          <SummaryItem
-            label="CAGR"
-            value={formatPct(performance?.cagr)}
-            trend={getTrend(performance?.cagr)}
             isLoading={isLoading}
           />
         </div>

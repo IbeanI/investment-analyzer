@@ -3,7 +3,7 @@
 Pydantic schemas for Analytics API.
 
 These schemas define the request/response formats for portfolio analytics:
-- Performance metrics (TWR, XIRR, CAGR, simple return)
+- Performance metrics (TWR, XIRR, ROI)
 - Risk metrics (Volatility, Sharpe, Sortino, Drawdown, VaR)
 - Benchmark comparison (Beta, Alpha, Correlation, Tracking Error)
 
@@ -70,10 +70,6 @@ class PerformanceMetricsResponse(BaseModel):
     twr_annualized: str | None = Field(
         None,
         description="TWR annualized to 1 year"
-    )
-    cagr: str | None = Field(
-        None,
-        description="Compound Annual Growth Rate"
     )
     xirr: str | None = Field(
         None,

@@ -131,7 +131,6 @@ class PerformanceMetrics:
         roi_annualized: ROI scaled to 1 year
         twr: Time-Weighted Return (removes cash flow bias)
         twr_annualized: TWR scaled to 1 year
-        cagr: Compound Annual Growth Rate
         mwr: Money-Weighted Return (same as IRR)
         irr: Internal Rate of Return (periodic)
         xirr: Extended IRR (exact dates)
@@ -150,7 +149,6 @@ class PerformanceMetrics:
     roi_annualized: Decimal | None = None
     twr: Decimal | None = None
     twr_annualized: Decimal | None = None
-    cagr: Decimal | None = None
     mwr: Decimal | None = None  # Same as IRR
     irr: Decimal | None = None
     xirr: Decimal | None = None

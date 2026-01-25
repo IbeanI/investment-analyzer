@@ -470,7 +470,6 @@ export interface PerformanceMetrics {
   total_realized_pnl: string | null;
   twr: string | null;
   twr_annualized: string | null;
-  cagr: string | null;
   xirr: string | null;
   total_gain: string | null;
   start_value: string | null;

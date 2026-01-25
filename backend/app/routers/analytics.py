@@ -213,7 +213,6 @@ def _map_performance(perf: PerformanceMetrics) -> PerformanceMetricsResponse:
         roi_annualized=_decimal_to_str(perf.roi_annualized),
         twr=_decimal_to_str(perf.twr),
         twr_annualized=_decimal_to_str(perf.twr_annualized),
-        cagr=_decimal_to_str(perf.cagr),
         xirr=_decimal_to_str(perf.xirr),
         total_gain=_decimal_to_str(perf.total_gain),
         start_value=_decimal_to_str(perf.start_value),
@@ -336,7 +335,7 @@ def get_portfolio_analytics(
     Get complete portfolio analytics for a date range.
 
     Returns comprehensive metrics including:
-    - **Performance**: TWR, XIRR, CAGR, simple return
+    - **Performance**: TWR, XIRR, ROI
     - **Risk**: Volatility, Sharpe, Sortino, Drawdowns, VaR
     - **Benchmark** (optional): Beta, Alpha, Correlation
 
@@ -399,7 +398,7 @@ def get_portfolio_analytics(
     "/{portfolio_id}/analytics/performance",
     response_model=PerformanceResponse,
     summary="Get performance metrics only",
-    response_description="Performance metrics (TWR, XIRR, CAGR)"
+    response_description="Performance metrics (TWR, XIRR, ROI)"
 )
 @limiter.limit(RATE_LIMIT_ANALYTICS)
 def get_portfolio_performance(
@@ -422,7 +421,6 @@ def get_portfolio_performance(
     Returns only return-based metrics:
     - `twr`: Time-Weighted Return
     - `xirr`: Extended IRR (money-weighted)
-    - `cagr`: Compound Annual Growth Rate
     - `roi`: Return on Investment
     - `total_gain`: Absolute gain in portfolio currency
 

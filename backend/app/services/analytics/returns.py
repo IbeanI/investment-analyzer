@@ -674,15 +674,6 @@ class ReturnsCalculator:
                 result.twr, result.calendar_days
             )
 
-        # CAGR - Compound Annual Growth Rate (Institutional Standard)
-        # CAGR = (1 + TWR)^(365/days) - 1
-        # Uses TWR as the base, which removes cash flow bias and measures
-        # pure investment performance annualized.
-        if result.twr is not None and result.calendar_days >= 365:
-            result.cagr = annualize_return(
-                result.twr, result.calendar_days
-            )
-
         # XIRR
         if cash_flows is not None and len(cash_flows) >= 2:
             result.xirr = calculate_xirr(cash_flows)

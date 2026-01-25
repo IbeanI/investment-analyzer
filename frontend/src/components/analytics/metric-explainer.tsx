@@ -67,18 +67,6 @@ export const PERFORMANCE_METRICS: Record<string, MetricDefinition> = {
     example:
       "If your XIRR is 8%, investing $100 at the start of each year would result in the same outcome as getting 8% annually.",
   },
-  cagr: {
-    name: "CAGR",
-    shortDescription: "Compound Annual Growth Rate",
-    longDescription:
-      "CAGR shows the steady annual growth rate that would give you the same final result. It smooths out volatility to show consistent year-over-year growth.",
-    interpretation: {
-      good: "A CAGR of 7-10% is historically excellent for long-term stock investing.",
-      bad: "A CAGR below inflation means your purchasing power is decreasing.",
-    },
-    example:
-      "If $10,000 grew to $19,000 over 5 years, the CAGR is about 13.7% per year.",
-  },
 };
 
 export const RISK_METRICS: Record<string, MetricDefinition> = {

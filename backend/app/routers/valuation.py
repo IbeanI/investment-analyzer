@@ -131,6 +131,9 @@ def _map_history_point(point) -> ValuationHistoryPoint:
         total_pnl=point.total_pnl,
         pnl_percentage=point.pnl_percentage,
         has_complete_data=point.has_complete_data,
+        is_gap_period=point.is_gap_period,
+        has_synthetic_data=point.has_synthetic_data,
+        synthetic_holdings=list(point.synthetic_holdings.keys()),
     )
 
 

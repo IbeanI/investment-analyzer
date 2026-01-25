@@ -422,6 +422,7 @@ export interface ValuationHistoryPoint {
   total_pnl: string | null;
   pnl_percentage: string | null;
   has_complete_data: boolean;
+  is_gap_period: boolean;
   has_synthetic_data: boolean;
   synthetic_holdings: string[];
 }

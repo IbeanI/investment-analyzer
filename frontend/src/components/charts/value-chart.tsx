@@ -32,9 +32,12 @@ interface ChartDataPoint {
   date: string;
   dateFormatted: string;
   value: number | null;
+  equity: number | null;
+  netInvested: number;
   costBasis: number;
   pnl: number | null;
-  pnlPercentage: number | null; // P&L as % of cost basis (true investment return)
+  pnlPercentage: number | null; // P&L as % of net invested
+  simpleReturn: number | null;  // Simple return % for the period
 }
 
 export function ValueChart({
@@ -48,40 +51,63 @@ export function ValueChart({
   const [mode, setMode] = useState<ChartMode>("pnl");
 
   const chartData = useMemo<ChartDataPoint[]>(() => {
+    if (data.length === 0) return [];
+
     // First pass: convert raw data
     const rawData = data.map((point) => {
       // Backend returns pnl_percentage as decimal ratio (0.1735 = 17.35%), convert to percentage
       const pnlPct = point.pnl_percentage ? parseFloat(point.pnl_percentage) * 100 : null;
+      const equity = point.equity ? parseFloat(point.equity) : (point.value ? parseFloat(point.value) : null);
       return {
         date: point.date,
         dateFormatted: formatDate(point.date, { month: "short", day: "numeric" }),
         value: point.value ? parseFloat(point.value) : null,
+        equity,
+        netInvested: parseFloat(point.net_invested),
         costBasis: parseFloat(point.cost_basis),
         pnl: point.total_pnl ? parseFloat(point.total_pnl) : null,
         pnlPercentage: pnlPct,
+        simpleReturn: null as number | null, // Will be calculated below
       };
     });
 
-    // For non-ALL periods: normalize pnlPercentage to be period-relative (start at 0%)
-    // For ALL period: keep absolute values to match Total P/L
-    if (period !== "ALL" && rawData.length > 0) {
-      const firstPnlPct = rawData[0].pnlPercentage ?? 0;
-      return rawData.map((point) => ({
-        ...point,
-        pnlPercentage: point.pnlPercentage !== null ? point.pnlPercentage - firstPnlPct : null,
-      }));
+    // Calculate Simple Return for each point relative to start of period
+    // Simple Return = (equity - start_equity - net_cash_flows) / start_equity
+    // where net_cash_flows = net_invested - start_net_invested
+    const first = rawData[0];
+    const startEquity = first.equity;
+    const startNetInvested = first.netInvested;
+
+    if (startEquity !== null && startEquity > 0) {
+      for (const point of rawData) {
+        if (point.equity !== null) {
+          const netCashFlows = point.netInvested - startNetInvested;
+          point.simpleReturn = ((point.equity - startEquity - netCashFlows) / startEquity) * 100;
+        }
+      }
+    }
+
+    // For ALL period with P&L%, keep absolute values to match Total P/L card
+    // For other periods, pnlPercentage is not used (we use simpleReturn instead)
+    if (period === "ALL" && rawData.length > 0) {
+      // Keep pnlPercentage as-is for ALL period
+      return rawData;
     }
 
     return rawData;
   }, [data, period]);
+
+  // Determine which performance metric to use for the chart
+  const useSimpleReturn = mode === "pnl" && period !== "ALL";
 
   // Calculate nice Y axis domain and ticks
   const { yDomain, yTicks, zeroPosition } = useMemo(() => {
     let values: number[];
 
     if (mode === "pnl") {
+      // For ALL period: use pnlPercentage, for other periods: use simpleReturn
       values = chartData
-        .map((d) => d.pnlPercentage)
+        .map((d) => period === "ALL" ? d.pnlPercentage : d.simpleReturn)
         .filter((v): v is number => v !== null);
     } else {
       values = chartData
@@ -176,9 +202,10 @@ export function ValueChart({
         const totalPnlPct = last?.pnlPercentage ?? 0;
         return { isPositive: totalPnlPct >= 0, change: totalPnlPct, changePercent: totalPnlPct };
       }
-      // For other periods, chartData is already normalized (first = 0)
-      const periodChange = last?.pnlPercentage ?? 0;
-      return { isPositive: periodChange >= 0, change: periodChange, changePercent: periodChange };
+      // For other periods, use Simple Return
+      // Simple Return = (end_equity - start_equity - net_cash_flows) / start_equity
+      const simpleReturn = last?.simpleReturn ?? 0;
+      return { isPositive: simpleReturn >= 0, change: simpleReturn, changePercent: simpleReturn };
     }
 
     // Value mode
@@ -374,6 +401,9 @@ export function ValueChart({
                 content={({ active, payload }) => {
                   if (!active || !payload?.length) return null;
                   const data = payload[0].payload as ChartDataPoint;
+                  // Use simpleReturn for non-ALL periods, pnlPercentage for ALL
+                  const perfValue = period === "ALL" ? data.pnlPercentage : data.simpleReturn;
+                  const perfLabel = period === "ALL" ? "Total P/L" : "Return";
                   return (
                     <div className="rounded-lg border bg-background p-3 shadow-md">
                       <p className="text-sm text-muted-foreground mb-1">
@@ -381,12 +411,12 @@ export function ValueChart({
                       </p>
                       {mode === "pnl" ? (
                         <>
-                          {data.pnlPercentage !== null && (
+                          {perfValue !== null && (
                             <p
                               className="text-sm font-medium"
-                              style={{ color: data.pnlPercentage >= 0 ? chartColors.positive : chartColors.negative }}
+                              style={{ color: perfValue >= 0 ? chartColors.positive : chartColors.negative }}
                             >
-                              Performance: {data.pnlPercentage >= 0 ? "+" : ""}{data.pnlPercentage.toFixed(2)}%
+                              {perfLabel}: {perfValue >= 0 ? "+" : ""}{perfValue.toFixed(2)}%
                             </p>
                           )}
                           {data.pnl !== null && (
@@ -402,11 +432,9 @@ export function ValueChart({
                               Value: {formatCurrency(data.value, currency)}
                             </p>
                           )}
-                          {showCostBasis && (
-                            <p className="text-sm text-muted-foreground">
-                              Cost: {formatCurrency(data.costBasis, currency)}
-                            </p>
-                          )}
+                          <p className="text-sm text-muted-foreground">
+                            Net Invested: {formatCurrency(data.netInvested, currency)}
+                          </p>
                         </>
                       )}
                     </div>
@@ -439,7 +467,7 @@ export function ValueChart({
               )}
               <Area
                 type="monotone"
-                dataKey={mode === "pnl" ? "pnlPercentage" : "value"}
+                dataKey={mode === "pnl" ? (useSimpleReturn ? "simpleReturn" : "pnlPercentage") : "value"}
                 stroke={mode === "pnl" ? "url(#splitLineGradient)" : activeColor}
                 strokeWidth={2}
                 fill={mode === "pnl" ? "url(#splitFillGradient)" : "url(#valueGradient)"}
@@ -451,8 +479,9 @@ export function ValueChart({
                 activeDot={(props) => {
                   const { cx, cy, payload } = props as { cx?: number; cy?: number; payload?: ChartDataPoint };
                   if (cx === undefined || cy === undefined || !payload) return null;
-                  const dotColor = mode === "pnl" && payload.pnlPercentage !== null
-                    ? payload.pnlPercentage >= 0 ? chartColors.positive : chartColors.negative
+                  const perfValue = useSimpleReturn ? payload.simpleReturn : payload.pnlPercentage;
+                  const dotColor = mode === "pnl" && perfValue !== null
+                    ? perfValue >= 0 ? chartColors.positive : chartColors.negative
                     : activeColor;
                   return (
                     <circle

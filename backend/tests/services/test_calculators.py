@@ -834,3 +834,255 @@ class TestCashCalculator:
         calc.calculate_with_state(cash_state, sell)
         # 4990 + (20 × 120 - 10) = 4990 + 2390 = 7380
         assert cash_state["USD"] == Decimal("7380")
+
+
+# =============================================================================
+# HISTORY POINT GAP PERIOD TESTS
+# =============================================================================
+
+class TestHistoryPointGapPeriod:
+    """Tests for HistoryPoint gap period handling."""
+
+    def test_pnl_percentage_returns_none_during_gap_period(self):
+        """pnl_percentage should return None when cost_basis is 0 (gap period)."""
+        from app.services.valuation.types import HistoryPoint
+
+        # Gap period: cost_basis=0, value=0, but net_invested > 0 (from prior activity)
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=Decimal("0"),
+            cash=Decimal("0"),
+            equity=Decimal("0"),
+            cost_basis=Decimal("0"),
+            net_invested=Decimal("5000.00"),  # Had invested before selling all
+            unrealized_pnl=Decimal("0"),
+            realized_pnl=Decimal("-200.00"),  # Had some realized losses
+            total_pnl=Decimal("-200.00"),
+            has_complete_data=True,
+        )
+
+        # pnl_percentage should be None, not -0.04 (-200/5000)
+        # because we're in a gap period (no holdings)
+        assert point.pnl_percentage is None
+
+    def test_pnl_percentage_returns_none_when_net_invested_zero(self):
+        """pnl_percentage should return None when net_invested is zero."""
+        from app.services.valuation.types import HistoryPoint
+
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=Decimal("1000.00"),
+            cash=None,
+            equity=Decimal("1000.00"),
+            cost_basis=Decimal("900.00"),
+            net_invested=Decimal("0"),  # All money withdrawn
+            unrealized_pnl=Decimal("100.00"),
+            realized_pnl=Decimal("0"),
+            total_pnl=Decimal("100.00"),
+            has_complete_data=True,
+        )
+
+        assert point.pnl_percentage is None
+
+    def test_pnl_percentage_returns_none_when_total_pnl_is_none(self):
+        """pnl_percentage should return None when total_pnl is None."""
+        from app.services.valuation.types import HistoryPoint
+
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=None,  # Incomplete data
+            cash=None,
+            equity=None,
+            cost_basis=Decimal("1000.00"),
+            net_invested=Decimal("1000.00"),
+            unrealized_pnl=None,  # Can't calculate
+            realized_pnl=Decimal("0"),
+            total_pnl=None,  # Can't calculate
+            has_complete_data=False,
+        )
+
+        assert point.pnl_percentage is None
+
+    def test_pnl_percentage_calculates_correctly_for_normal_period(self):
+        """pnl_percentage should calculate correctly when not in gap period."""
+        from app.services.valuation.types import HistoryPoint
+
+        # Normal period with holdings
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=Decimal("1200.00"),
+            cash=Decimal("100.00"),
+            equity=Decimal("1300.00"),
+            cost_basis=Decimal("1000.00"),
+            net_invested=Decimal("1000.00"),
+            unrealized_pnl=Decimal("200.00"),
+            realized_pnl=Decimal("50.00"),
+            total_pnl=Decimal("250.00"),
+            has_complete_data=True,
+        )
+
+        # pnl_percentage = total_pnl / net_invested = 250 / 1000 = 0.25
+        assert point.pnl_percentage == Decimal("0.2500")
+
+    def test_is_gap_period_true_when_cost_basis_zero_and_value_zero(self):
+        """is_gap_period should be True when cost_basis=0 and value=0."""
+        from app.services.valuation.types import HistoryPoint
+
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=Decimal("0"),
+            cash=Decimal("0"),
+            equity=Decimal("0"),
+            cost_basis=Decimal("0"),
+            net_invested=Decimal("5000.00"),
+            unrealized_pnl=Decimal("0"),
+            realized_pnl=Decimal("-200.00"),
+            total_pnl=Decimal("-200.00"),
+            has_complete_data=True,
+        )
+
+        assert point.is_gap_period is True
+
+    def test_is_gap_period_true_when_cost_basis_zero_and_value_none(self):
+        """is_gap_period should be True when cost_basis=0 and value=None."""
+        from app.services.valuation.types import HistoryPoint
+
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=None,  # Incomplete data
+            cash=None,
+            equity=None,
+            cost_basis=Decimal("0"),
+            net_invested=Decimal("5000.00"),
+            unrealized_pnl=None,
+            realized_pnl=Decimal("-200.00"),
+            total_pnl=None,
+            has_complete_data=False,
+        )
+
+        assert point.is_gap_period is True
+
+    def test_is_gap_period_false_when_has_holdings(self):
+        """is_gap_period should be False when there are holdings."""
+        from app.services.valuation.types import HistoryPoint
+
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=Decimal("1200.00"),
+            cash=Decimal("100.00"),
+            equity=Decimal("1300.00"),
+            cost_basis=Decimal("1000.00"),
+            net_invested=Decimal("1000.00"),
+            unrealized_pnl=Decimal("200.00"),
+            realized_pnl=Decimal("50.00"),
+            total_pnl=Decimal("250.00"),
+            has_complete_data=True,
+        )
+
+        assert point.is_gap_period is False
+
+    def test_is_gap_period_false_when_cost_basis_zero_but_value_positive(self):
+        """
+        Edge case: cost_basis=0 but value > 0.
+
+        This could theoretically happen if shares were gifted (no cost basis).
+        This is NOT a gap period - there are still holdings.
+        """
+        from app.services.valuation.types import HistoryPoint
+
+        point = HistoryPoint(
+            date=date(2021, 6, 15),
+            value=Decimal("500.00"),  # Has value
+            cash=None,
+            equity=Decimal("500.00"),
+            cost_basis=Decimal("0"),  # No cost basis (gifted shares?)
+            net_invested=Decimal("0"),
+            unrealized_pnl=Decimal("500.00"),
+            realized_pnl=Decimal("0"),
+            total_pnl=Decimal("500.00"),
+            has_complete_data=True,
+        )
+
+        assert point.is_gap_period is False
+
+
+# =============================================================================
+# PORTFOLIO VALUATION GAP PERIOD TESTS
+# =============================================================================
+
+class TestPortfolioValuationGapPeriod:
+    """Tests for PortfolioValuation.total_pnl_percentage gap period handling."""
+
+    def test_total_pnl_percentage_returns_none_during_gap_period(self):
+        """total_pnl_percentage should return None when total_cost_basis is 0."""
+        from app.services.valuation.types import PortfolioValuation
+
+        valuation = PortfolioValuation(
+            portfolio_id=1,
+            portfolio_name="Test Portfolio",
+            portfolio_currency="EUR",
+            valuation_date=date(2021, 6, 15),
+            holdings=[],  # No holdings
+            tracks_cash=True,
+            cash_balances=[],
+            total_cost_basis=Decimal("0"),  # Gap period
+            total_net_invested=Decimal("5000.00"),
+            total_value=Decimal("0"),
+            total_cash=Decimal("0"),
+            total_equity=Decimal("0"),
+            total_unrealized_pnl=Decimal("0"),
+            total_realized_pnl=Decimal("-200.00"),
+            total_pnl=Decimal("-200.00"),
+        )
+
+        # Should return None, not -0.04 (-200/5000)
+        assert valuation.total_pnl_percentage is None
+
+    def test_total_pnl_percentage_returns_none_when_net_invested_zero(self):
+        """total_pnl_percentage should return None when total_net_invested is 0."""
+        from app.services.valuation.types import PortfolioValuation
+
+        valuation = PortfolioValuation(
+            portfolio_id=1,
+            portfolio_name="Test Portfolio",
+            portfolio_currency="EUR",
+            valuation_date=date(2021, 6, 15),
+            holdings=[],
+            tracks_cash=True,
+            cash_balances=[],
+            total_cost_basis=Decimal("1000.00"),
+            total_net_invested=Decimal("0"),  # All withdrawn
+            total_value=Decimal("1000.00"),
+            total_cash=Decimal("0"),
+            total_equity=Decimal("1000.00"),
+            total_unrealized_pnl=Decimal("0"),
+            total_realized_pnl=Decimal("0"),
+            total_pnl=Decimal("0"),
+        )
+
+        assert valuation.total_pnl_percentage is None
+
+    def test_total_pnl_percentage_calculates_correctly_for_normal_period(self):
+        """total_pnl_percentage should calculate correctly when not in gap period."""
+        from app.services.valuation.types import PortfolioValuation
+
+        valuation = PortfolioValuation(
+            portfolio_id=1,
+            portfolio_name="Test Portfolio",
+            portfolio_currency="EUR",
+            valuation_date=date(2021, 6, 15),
+            holdings=[],
+            tracks_cash=True,
+            cash_balances=[],
+            total_cost_basis=Decimal("1000.00"),
+            total_net_invested=Decimal("1000.00"),
+            total_value=Decimal("1200.00"),
+            total_cash=Decimal("100.00"),
+            total_equity=Decimal("1300.00"),
+            total_unrealized_pnl=Decimal("200.00"),
+            total_realized_pnl=Decimal("50.00"),
+            total_pnl=Decimal("250.00"),
+        )
+
+        # total_pnl_percentage = total_pnl / total_net_invested = 250 / 1000 = 0.25
+        assert valuation.total_pnl_percentage == Decimal("0.2500")

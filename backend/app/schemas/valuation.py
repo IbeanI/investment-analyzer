@@ -343,9 +343,13 @@ class ValuationHistoryPoint(BaseModel):
     )
     pnl_percentage: Decimal | None = Field(
         ...,
-        description="Total P&L as percentage of cost basis"
+        description="Total P&L as percentage of net invested (None during gap periods)"
     )
     has_complete_data: bool
+    is_gap_period: bool = Field(
+        default=False,
+        description="True if this date is in a gap period (no holdings, zero equity)"
+    )
 
     # Synthetic data tracking
     has_synthetic_data: bool = Field(

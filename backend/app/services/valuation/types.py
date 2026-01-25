@@ -393,11 +393,18 @@ class PortfolioValuation:
 
     @property
     def total_pnl_percentage(self) -> Decimal | None:
-        """Total P&L as percentage of net invested capital."""
+        """Total P&L as percentage of net invested capital.
+
+        Returns None during gap periods (when cost_basis is 0 but net_invested > 0)
+        to avoid misleading percentage calculations.
+        """
         if self.total_pnl is None:
             return None
         if self.total_net_invested <= Decimal("0"):
             return None  # Cannot calculate when net invested is zero or negative
+        # Handle zero cost basis (gap period or no holdings)
+        if self.total_cost_basis <= Decimal("0"):
+            return None
         return (self.total_pnl / self.total_net_invested).quantize(
             Decimal("0.0001")
         )
@@ -488,13 +495,30 @@ class HistoryPoint:
 
     @property
     def pnl_percentage(self) -> Decimal | None:
-        """P&L as percentage of net invested capital."""
+        """P&L as percentage of net invested capital.
+
+        Returns None during gap periods (when cost_basis is 0 but net_invested > 0)
+        to avoid misleading percentage calculations.
+        """
         if self.total_pnl is None:
             return None
         if self.net_invested <= Decimal("0"):
             return None  # Cannot calculate when net invested is zero or negative
+        # During gap periods, cost_basis is 0 but net_invested may be positive
+        # Return None to avoid misleading percentages
+        if self.cost_basis <= Decimal("0"):
+            return None
         return (self.total_pnl / self.net_invested).quantize(
             Decimal("0.0001")
+        )
+
+    @property
+    def is_gap_period(self) -> bool:
+        """True if this is a gap period (no holdings, zero equity)."""
+        # value can be None (incomplete data) or Decimal("0") (gap period)
+        # Gap period is when we have no cost basis and either zero value or no value
+        return self.cost_basis <= Decimal("0") and (
+            self.value is None or self.value == Decimal("0")
         )
 
 

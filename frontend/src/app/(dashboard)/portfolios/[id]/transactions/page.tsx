@@ -106,7 +106,9 @@ export default function TransactionsPage({ params }: PageProps) {
           </Button>
           <div>
             <h1 className="text-2xl font-bold tracking-tight">{portfolio.name}</h1>
-            <p className="text-sm text-muted-foreground">Transactions</p>
+            <p className="text-sm text-muted-foreground">
+              {totalCount} transaction{totalCount !== 1 ? "s" : ""}
+            </p>
           </div>
         </div>
       </div>

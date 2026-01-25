@@ -39,6 +39,13 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { cn, formatCurrency, formatDate, formatNumber } from "@/lib/utils";
 import { useDeleteTransaction } from "@/hooks/use-transactions";
 import type { Transaction, TransactionType } from "@/types/api";
@@ -105,7 +112,13 @@ export function TransactionList({
       header: ({ column }) => (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
+          onClick={() => {
+            if (column.getIsSorted() === "desc") {
+              column.clearSorting();
+            } else {
+              column.toggleSorting(column.getIsSorted() === "asc");
+            }
+          }}
           className="h-auto p-0 hover:bg-transparent"
         >
           Date
@@ -149,14 +162,24 @@ export function TransactionList({
           {row.original.transaction_type}
         </Badge>
       ),
+      filterFn: (row, id, value) => {
+        if (!value) return true;
+        return row.original.transaction_type === value;
+      },
     },
     {
       accessorKey: "quantity",
       header: ({ column }) => (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-auto p-0 hover:bg-transparent"
+          onClick={() => {
+            if (column.getIsSorted() === "desc") {
+              column.clearSorting();
+            } else {
+              column.toggleSorting(column.getIsSorted() === "asc");
+            }
+          }}
+          className="h-auto p-0 hover:bg-transparent w-full justify-end"
         >
           Quantity
           {column.getIsSorted() === "asc" ? (
@@ -176,20 +199,49 @@ export function TransactionList({
     },
     {
       accessorKey: "price_per_share",
-      header: "Price",
+      header: ({ column }) => (
+        <Button
+          variant="ghost"
+          onClick={() => {
+            if (column.getIsSorted() === "desc") {
+              column.clearSorting();
+            } else {
+              column.toggleSorting(column.getIsSorted() === "asc");
+            }
+          }}
+          className="h-auto p-0 hover:bg-transparent w-full justify-end"
+        >
+          Price
+          {column.getIsSorted() === "asc" ? (
+            <ArrowUp className="ml-2 h-4 w-4" />
+          ) : column.getIsSorted() === "desc" ? (
+            <ArrowDown className="ml-2 h-4 w-4" />
+          ) : (
+            <ArrowUpDown className="ml-2 h-4 w-4" />
+          )}
+        </Button>
+      ),
       cell: ({ row }) => (
         <div className="text-right">
           {formatCurrency(row.original.price_per_share, row.original.currency)}
         </div>
       ),
+      sortingFn: (rowA, rowB) =>
+        parseFloat(rowA.original.price_per_share) - parseFloat(rowB.original.price_per_share),
     },
     {
       id: "total",
       header: ({ column }) => (
         <Button
           variant="ghost"
-          onClick={() => column.toggleSorting(column.getIsSorted() === "asc")}
-          className="h-auto p-0 hover:bg-transparent"
+          onClick={() => {
+            if (column.getIsSorted() === "desc") {
+              column.clearSorting();
+            } else {
+              column.toggleSorting(column.getIsSorted() === "asc");
+            }
+          }}
+          className="h-auto p-0 hover:bg-transparent w-full justify-end"
         >
           Total
           {column.getIsSorted() === "asc" ? (
@@ -280,8 +332,8 @@ export function TransactionList({
 
   return (
     <>
-      {/* Filter */}
-      <div className="mb-4">
+      {/* Filters */}
+      <div className="mb-4 flex gap-2">
         <Input
           placeholder="Filter by ticker..."
           value={
@@ -292,10 +344,27 @@ export function TransactionList({
           }
           className="max-w-sm"
         />
+        <Select
+          onValueChange={(value) =>
+            table.getColumn("transaction_type")?.setFilterValue(value === "all" ? "" : value)
+          }
+        >
+          <SelectTrigger className="w-32">
+            <SelectValue placeholder="All Types" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All Types</SelectItem>
+            <SelectItem value="BUY">Buy</SelectItem>
+            <SelectItem value="SELL">Sell</SelectItem>
+            <SelectItem value="DIVIDEND">Dividend</SelectItem>
+            <SelectItem value="DEPOSIT">Deposit</SelectItem>
+            <SelectItem value="WITHDRAWAL">Withdrawal</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       {/* Desktop table */}
-      <div className="hidden md:block overflow-x-auto border rounded-lg">
+      <div className="hidden md:block border rounded-lg">
         <table className="w-full">
           <thead className="bg-muted/50">
             {table.getHeaderGroups().map((headerGroup) => (

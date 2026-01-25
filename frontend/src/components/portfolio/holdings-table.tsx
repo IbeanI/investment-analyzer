@@ -186,7 +186,7 @@ export function HoldingsTable({ holdings, currency }: HoldingsTableProps) {
       cell: ({ row }) => (
         <div className="text-right">
           {row.original.cost_basis.avg_cost_per_share
-            ? formatNumber(row.original.cost_basis.avg_cost_per_share, 2)
+            ? formatCurrency(row.original.cost_basis.avg_cost_per_share, row.original.cost_basis.local_currency)
             : "—"}
         </div>
       ),

@@ -2,7 +2,7 @@
 
 import { use, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, Plus, Upload, FileSpreadsheet, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Upload, Download, FileSpreadsheet, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -34,6 +34,7 @@ import { TransactionForm, TransactionList, CsvUpload } from "@/components/forms"
 import { PortfolioNav } from "@/components/portfolio";
 import { usePortfolio } from "@/hooks/use-portfolios";
 import { useInfiniteTransactions, useTransactionTypes } from "@/hooks/use-transactions";
+import { getTransactions } from "@/lib/api/transactions";
 import type { Transaction } from "@/types/api";
 
 interface PageProps {
@@ -73,6 +74,7 @@ export default function TransactionsPage({ params }: PageProps) {
 
   const [showAddForm, setShowAddForm] = useState(false);
   const [editTransaction, setEditTransaction] = useState<Transaction | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
 
   // Flatten all pages into a single array
   const transactions = useMemo(() => {
@@ -81,6 +83,57 @@ export default function TransactionsPage({ params }: PageProps) {
 
   // Get total count from first page's pagination
   const totalCount = transactionsData?.pages[0]?.pagination.total || 0;
+
+  // Export all transactions to CSV
+  const handleExportCsv = async () => {
+    if (totalCount === 0) return;
+
+    setIsExporting(true);
+    try {
+      // Fetch all transactions
+      const allTransactions: Transaction[] = [];
+      const pageSize = 100;
+      let offset = 0;
+
+      while (offset < totalCount) {
+        const response = await getTransactions(portfolioId, offset, pageSize);
+        allTransactions.push(...response.items);
+        offset += pageSize;
+      }
+
+      // Generate CSV
+      const headers = ["Date", "Ticker", "Exchange", "Type", "Quantity", "Price", "Currency", "Total"];
+      const rows = allTransactions.map((tx) => {
+        const total = parseFloat(tx.quantity) * parseFloat(tx.price_per_share);
+        return [
+          tx.date,
+          tx.asset?.ticker || "",
+          tx.asset?.exchange || "",
+          tx.transaction_type,
+          tx.quantity,
+          tx.price_per_share,
+          tx.currency,
+          total.toFixed(2),
+        ];
+      });
+
+      const csvContent = [
+        headers.join(","),
+        ...rows.map((row) => row.join(",")),
+      ].join("\n");
+
+      // Download file
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `transactions-${portfolio?.name || portfolioId}-${new Date().toISOString().split("T")[0]}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   if (portfolioLoading) {
     return (
@@ -172,6 +225,21 @@ export default function TransactionsPage({ params }: PageProps) {
             </CardDescription>
           </div>
           <div className="flex gap-2">
+            {/* Export CSV */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportCsv}
+              disabled={totalCount === 0 || isExporting}
+            >
+              {isExporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-2 h-4 w-4" />
+              )}
+              <span className="hidden sm:inline">{isExporting ? "Exporting..." : "Export CSV"}</span>
+            </Button>
+
             {/* CSV Upload Dialog */}
             <Dialog>
               <DialogTrigger asChild>

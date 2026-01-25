@@ -134,14 +134,14 @@ export function TransactionList({
           }}
           className="h-auto p-0 hover:bg-transparent"
         >
-          Date
           {column.getIsSorted() === "asc" ? (
-            <ArrowUp className="ml-2 h-4 w-4" />
+            <ArrowUp className="mr-2 h-4 w-4" />
           ) : column.getIsSorted() === "desc" ? (
-            <ArrowDown className="ml-2 h-4 w-4" />
+            <ArrowDown className="mr-2 h-4 w-4" />
           ) : (
-            <ArrowUpDown className="ml-2 h-4 w-4" />
+            <ArrowUpDown className="mr-2 h-4 w-4" />
           )}
+          Date
         </Button>
       ),
       cell: ({ row }) => formatDate(row.original.date),
@@ -185,14 +185,14 @@ export function TransactionList({
           }}
           className="h-auto p-0 hover:bg-transparent"
         >
-          Quantity
           {column.getIsSorted() === "asc" ? (
-            <ArrowUp className="ml-2 h-4 w-4" />
+            <ArrowUp className="mr-2 h-4 w-4" />
           ) : column.getIsSorted() === "desc" ? (
-            <ArrowDown className="ml-2 h-4 w-4" />
+            <ArrowDown className="mr-2 h-4 w-4" />
           ) : (
-            <ArrowUpDown className="ml-2 h-4 w-4" />
+            <ArrowUpDown className="mr-2 h-4 w-4" />
           )}
+          Quantity
         </Button>
       ),
       cell: ({ row }) => (
@@ -216,14 +216,14 @@ export function TransactionList({
           }}
           className="h-auto p-0 hover:bg-transparent"
         >
-          Price
           {column.getIsSorted() === "asc" ? (
-            <ArrowUp className="ml-2 h-4 w-4" />
+            <ArrowUp className="mr-2 h-4 w-4" />
           ) : column.getIsSorted() === "desc" ? (
-            <ArrowDown className="ml-2 h-4 w-4" />
+            <ArrowDown className="mr-2 h-4 w-4" />
           ) : (
-            <ArrowUpDown className="ml-2 h-4 w-4" />
+            <ArrowUpDown className="mr-2 h-4 w-4" />
           )}
+          Price
         </Button>
       ),
       cell: ({ row }) => (
@@ -249,14 +249,14 @@ export function TransactionList({
           }}
           className="h-auto p-0 hover:bg-transparent"
         >
-          Total
           {column.getIsSorted() === "asc" ? (
-            <ArrowUp className="ml-2 h-4 w-4" />
+            <ArrowUp className="mr-2 h-4 w-4" />
           ) : column.getIsSorted() === "desc" ? (
-            <ArrowDown className="ml-2 h-4 w-4" />
+            <ArrowDown className="mr-2 h-4 w-4" />
           ) : (
-            <ArrowUpDown className="ml-2 h-4 w-4" />
+            <ArrowUpDown className="mr-2 h-4 w-4" />
           )}
+          Total
         </Button>
       ),
       cell: ({ row }) => {

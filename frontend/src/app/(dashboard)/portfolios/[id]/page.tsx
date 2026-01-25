@@ -120,8 +120,8 @@ function MetricCard({ title, value, subValue, trend, infoDescription }: MetricCa
       : "";
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="py-4 gap-2">
+      <CardHeader>
         <div className="flex items-center justify-between">
           <CardDescription>{title}</CardDescription>
           <TooltipProvider>

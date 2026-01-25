@@ -142,63 +142,63 @@ export default function TransactionsPage({ params }: PageProps) {
       {/* Navigation */}
       <PortfolioNav portfolioId={portfolioId} />
 
-      {/* Action Buttons */}
-      <div className="flex justify-end gap-2">
-        {/* CSV Upload Dialog */}
-        <Dialog>
-          <DialogTrigger asChild>
-            <Button variant="outline">
-              <Upload className="mr-2 h-4 w-4" />
-              <span className="hidden sm:inline">Import CSV</span>
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Import Transactions</DialogTitle>
-              <DialogDescription>
-                Upload a CSV file to import multiple transactions at once.
-              </DialogDescription>
-            </DialogHeader>
-            <CsvUpload portfolioId={portfolioId} />
-          </DialogContent>
-        </Dialog>
-
-        {/* Add Transaction Sheet */}
-        <Sheet open={showAddForm} onOpenChange={setShowAddForm}>
-          <SheetTrigger asChild>
-            <Button>
-              <Plus className="mr-2 h-4 w-4" />
-              <span className="hidden sm:inline">Add Transaction</span>
-            </Button>
-          </SheetTrigger>
-          <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
-            <SheetHeader>
-              <SheetTitle>Add Transaction</SheetTitle>
-              <SheetDescription>
-                Record a new buy or sell transaction for {portfolio.name}.
-              </SheetDescription>
-            </SheetHeader>
-            <div className="mt-6">
-              <TransactionForm
-                portfolioId={portfolioId}
-                portfolioCurrency={portfolio.currency}
-                onSuccess={() => setShowAddForm(false)}
-                onCancel={() => setShowAddForm(false)}
-              />
-            </div>
-          </SheetContent>
-        </Sheet>
-      </div>
-
       {/* Content */}
       <Card>
-        <CardHeader>
-          <CardTitle>Transaction History</CardTitle>
-          <CardDescription>
-            {totalCount > 0
-              ? `Showing ${transactions.length} of ${totalCount} transaction${totalCount !== 1 ? "s" : ""}`
-              : "No transactions recorded"}
-          </CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between">
+          <div>
+            <CardTitle>Transaction History</CardTitle>
+            <CardDescription>
+              {totalCount > 0
+                ? `Showing ${transactions.length} of ${totalCount} transaction${totalCount !== 1 ? "s" : ""}`
+                : "No transactions recorded"}
+            </CardDescription>
+          </div>
+          <div className="flex gap-2">
+            {/* CSV Upload Dialog */}
+            <Dialog>
+              <DialogTrigger asChild>
+                <Button variant="outline" size="sm">
+                  <Upload className="mr-2 h-4 w-4" />
+                  <span className="hidden sm:inline">Import CSV</span>
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Import Transactions</DialogTitle>
+                  <DialogDescription>
+                    Upload a CSV file to import multiple transactions at once.
+                  </DialogDescription>
+                </DialogHeader>
+                <CsvUpload portfolioId={portfolioId} />
+              </DialogContent>
+            </Dialog>
+
+            {/* Add Transaction Sheet */}
+            <Sheet open={showAddForm} onOpenChange={setShowAddForm}>
+              <SheetTrigger asChild>
+                <Button size="sm">
+                  <Plus className="mr-2 h-4 w-4" />
+                  <span className="hidden sm:inline">Add</span>
+                </Button>
+              </SheetTrigger>
+              <SheetContent className="w-full sm:max-w-lg overflow-y-auto">
+                <SheetHeader>
+                  <SheetTitle>Add Transaction</SheetTitle>
+                  <SheetDescription>
+                    Record a new buy or sell transaction for {portfolio.name}.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="mt-6">
+                  <TransactionForm
+                    portfolioId={portfolioId}
+                    portfolioCurrency={portfolio.currency}
+                    onSuccess={() => setShowAddForm(false)}
+                    onCancel={() => setShowAddForm(false)}
+                  />
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
         </CardHeader>
         <CardContent>
           {transactionsLoading ? (

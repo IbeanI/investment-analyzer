@@ -462,19 +462,19 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="Total Value"
               value={formatMetric(performance?.end_value, "currency")}
-              description="The market value of your portfolio at the end of this period. This is the closing balance on the last day of the selected time horizon (e.g., today)."
+              description="Liquidation value of your portfolio. The amount you would receive if you sold all holdings today."
               isLoading={isLoading}
             />
             <MetricCard
               title="Net Invested"
               value={formatMetric(performance?.net_invested, "currency")}
-              description="The net cash you added or removed during this specific period. Calculated as Deposits/Buys minus Withdrawals/Sales that occurred strictly between the start and end dates of this timeframe."
+              description="Your total principal capital. Total Deposits/Buys minus Total Withdrawals/Sales."
               isLoading={isLoading}
             />
             <MetricCard
               title="Total P/L"
               value={formatPnlCurrency(performance?.total_gain)}
-              description="The profit or loss generated strictly during this period. It shows how much your portfolio value changed due to market performance in this timeframe, excluding your cash deposits or withdrawals."
+              description="Total profit or loss since inception. The financial growth relative to your Net Invested capital."
               trend={getTrend(performance?.total_gain)}
               isLoading={isLoading}
             />
@@ -486,7 +486,7 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="TWR (Cumulative)"
               subtitle="Strategy Growth"
               value={formatMetric(performance?.twr)}
-              description="The true performance of your investment strategy for this period. Time-Weighted Return removes the distorting effects of cash flows (deposits/withdrawals), allowing you to see how well your assets performed in the market."
+              description="Strategy performance for this period. Measures how your assets performed, ignoring deposit/withdrawal timing."
               trend={getTrend(performance?.twr)}
               isLoading={isLoading}
             />
@@ -494,7 +494,7 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="TWR Annualized"
               subtitle="Yearly Avg"
               value={formatMetric(performance?.twr_annualized)}
-              description="The compound annual growth rate of your strategy. It calculates what your Cumulative TWR would look like if maintained for a full year. Note: This is hidden for periods shorter than 1 year to avoid misleading projections."
+              description="Compound annual growth rate. What your TWR would look like if maintained for a full year."
               trend={getTrend(performance?.twr_annualized)}
               isLoading={isLoading}
             />
@@ -502,7 +502,7 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="XIRR"
               subtitle="Personal ROI"
               value={formatMetric(performance?.xirr)}
-              description="The annualized effective interest rate of your money. Money-Weighted Return takes the timing of your cash flows into account. It answers the question: 'What annual interest rate would I need from a bank to match this result?'"
+              description="Your personal annualized return. Accounts for the timing of every deposit and withdrawal."
               trend={getTrend(performance?.xirr)}
               isLoading={isLoading}
             />
@@ -513,7 +513,7 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="ROI"
               value={formatMetric(performance?.roi)}
-              description="The simple percentage growth of your starting balance. Calculated as Total P/L divided by the Portfolio Value at the Start of the period. It shows the straightforward return on the capital you had available at the beginning."
+              description="Simple period growth. Profit/Loss divided by the starting portfolio value."
               trend={getTrend(performance?.roi)}
               isLoading={isLoading}
             />
@@ -540,18 +540,29 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="Volatility"
               value={formatMetric(risk?.volatility_annualized)}
-              description="Annualized standard deviation of returns. Higher values indicate more price fluctuation."
+              description="Annualized standard deviation of returns. Measures how widely your daily returns swing up and down."
+              trend={
+                risk?.volatility_annualized
+                  ? parseFloat(String(risk.volatility_annualized)) < 0.15
+                    ? "up"
+                    : parseFloat(String(risk.volatility_annualized)) > 0.25
+                      ? "down"
+                      : "neutral"
+                  : "neutral"
+              }
               isLoading={isLoading}
             />
             <MetricCard
               title="Sharpe Ratio"
               value={formatMetric(risk?.sharpe_ratio, "ratio")}
-              description="Risk-adjusted return. Above 1 is good, above 2 is excellent."
+              description="Reward per unit of total risk. Compares your return to the total volatility you endured."
               trend={
                 risk?.sharpe_ratio
                   ? parseFloat(String(risk.sharpe_ratio)) >= 1
                     ? "up"
-                    : "down"
+                    : parseFloat(String(risk.sharpe_ratio)) < 0.5
+                      ? "down"
+                      : "neutral"
                   : "neutral"
               }
               isLoading={isLoading}
@@ -559,12 +570,14 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="Sortino Ratio"
               value={formatMetric(risk?.sortino_ratio, "ratio")}
-              description="Like Sharpe, but only penalizes downside volatility. Higher is better."
+              description="Reward per unit of 'bad' risk. Only penalizes downside volatility (losses), ignoring upside spikes."
               trend={
                 risk?.sortino_ratio
-                  ? parseFloat(String(risk.sortino_ratio)) >= 1
+                  ? parseFloat(String(risk.sortino_ratio)) >= 2
                     ? "up"
-                    : "down"
+                    : parseFloat(String(risk.sortino_ratio)) < 1
+                      ? "down"
+                      : "neutral"
                   : "neutral"
               }
               isLoading={isLoading}
@@ -573,7 +586,15 @@ export default function AnalyticsPage({ params }: PageProps) {
               title="Max Drawdown"
               value={formatMetric(risk?.max_drawdown)}
               description="The largest peak-to-trough decline in portfolio value."
-              trend="down"
+              trend={
+                risk?.max_drawdown
+                  ? parseFloat(String(risk.max_drawdown)) > -0.2
+                    ? "up"
+                    : parseFloat(String(risk.max_drawdown)) < -0.5
+                      ? "down"
+                      : "neutral"
+                  : "neutral"
+              }
               isLoading={isLoading}
             />
           </div>
@@ -582,24 +603,35 @@ export default function AnalyticsPage({ params }: PageProps) {
             <MetricCard
               title="VaR (95%)"
               value={formatMetric(risk?.var_95)}
-              description="Value at Risk: The maximum expected loss over a day with 95% confidence."
+              description="Expected worst-case loss on a typical day. Estimates the maximum loss you might expect with 95% confidence."
+              trend={
+                risk?.var_95
+                  ? parseFloat(String(risk.var_95)) > -0.02
+                    ? "up"
+                    : parseFloat(String(risk.var_95)) < -0.05
+                      ? "down"
+                      : "neutral"
+                  : "neutral"
+              }
               isLoading={isLoading}
             />
             <MetricCard
               title="CVaR (95%)"
               value={formatMetric(risk?.cvar_95)}
-              description="Conditional VaR: The expected loss if VaR is exceeded."
+              description="Average loss during a crash. Shows how bad the average loss is on the worst 5% of days."
               isLoading={isLoading}
             />
             <MetricCard
               title="Win Rate"
               value={formatMetric(risk?.win_rate)}
-              description="Percentage of days with positive returns."
+              description="Consistency of daily gains. The percentage of trading days with a positive return."
               trend={
                 risk?.win_rate
-                  ? parseFloat(String(risk.win_rate)) >= 0.5
+                  ? parseFloat(String(risk.win_rate)) >= 0.55
                     ? "up"
-                    : "down"
+                    : parseFloat(String(risk.win_rate)) < 0.45
+                      ? "down"
+                      : "neutral"
                   : "neutral"
               }
               isLoading={isLoading}

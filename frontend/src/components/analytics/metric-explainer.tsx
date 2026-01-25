@@ -46,7 +46,7 @@ export const PERFORMANCE_METRICS: Record<string, MetricDefinition> = {
     name: "Net Invested",
     shortDescription: "Your total principal capital",
     longDescription:
-      "The total amount of cash you have personally contributed from your bank account (Total Deposits minus Total Withdrawals).",
+      "The total amount of cash you have personally contributed from your bank account (Total Deposits/Buys minus Total Withdrawals/Sales).",
     interpretation: {
       good: "Positive means you have added more money than you have withdrawn.",
       bad: "Negative means you have withdrawn more than you deposited (taking profits out).",
@@ -112,9 +112,9 @@ export const PERFORMANCE_METRICS: Record<string, MetricDefinition> = {
 export const RISK_METRICS: Record<string, MetricDefinition> = {
   volatility: {
     name: "Volatility",
-    shortDescription: "How much your portfolio swings up and down",
+    shortDescription: "Annualized standard deviation of returns.",
     longDescription:
-      "Volatility measures the standard deviation of your returns, annualized. Higher volatility means bigger swings in value—both up and down. It's a key measure of investment risk.",
+      "Measures how widely your daily returns swing up and down.",
     interpretation: {
       good: "Lower volatility (under 15%) means smoother returns with fewer surprises.",
       bad: "High volatility (over 25%) means large swings that can be stressful.",
@@ -125,9 +125,9 @@ export const RISK_METRICS: Record<string, MetricDefinition> = {
   },
   sharpe_ratio: {
     name: "Sharpe Ratio",
-    shortDescription: "Return per unit of risk taken",
+    shortDescription: "Reward per unit of total risk.",
     longDescription:
-      "The Sharpe ratio divides your excess return (above risk-free rate) by your volatility. It tells you if you're being adequately compensated for the risks you're taking.",
+      "Compares your return to the total volatility you endured. It helps answer: \"Was the return worth the stress?\"",
     interpretation: {
       good: "Above 1.0 is good; above 2.0 is excellent.",
       bad: "Below 0.5 suggests you could get similar returns with less risk.",
@@ -139,9 +139,9 @@ export const RISK_METRICS: Record<string, MetricDefinition> = {
   },
   sortino_ratio: {
     name: "Sortino Ratio",
-    shortDescription: "Return per unit of downside risk",
+    shortDescription: "Reward per unit of \"bad\" risk.",
     longDescription:
-      "Like Sharpe, but only considers downside volatility (losses). This is often more relevant since investors care more about losses than gains.",
+      "Similar to the Sharpe Ratio, but only penalizes you for downside volatility (losses). It ignores upside volatility (sudden spikes in profit).",
     interpretation: {
       good: "Above 2.0 is very good—high returns with limited downside.",
       bad: "Below 1.0 suggests excessive downside risk.",
@@ -163,10 +163,10 @@ export const RISK_METRICS: Record<string, MetricDefinition> = {
       "A max drawdown of -30% means at the worst point, your $100,000 would have dropped to $70,000.",
   },
   var_95: {
-    name: "Value at Risk (VaR 95%)",
-    shortDescription: "Worst expected daily loss, 95% confident",
+    name: "VaR (Value at Risk 95%)",
+    shortDescription: "Expected worst-case loss on a typical day.",
     longDescription:
-      "VaR estimates the maximum loss you might experience on a typical bad day. At 95% confidence, losses should exceed this only about 1 day in 20.",
+      "Estimates the maximum loss you might expect on a \"bad day\" with 95% confidence.",
     interpretation: {
       good: "A VaR under 2% means limited daily downside risk.",
       bad: "A VaR over 5% means significant daily swings are possible.",
@@ -176,10 +176,10 @@ export const RISK_METRICS: Record<string, MetricDefinition> = {
     relatedMetrics: ["cvar_95"],
   },
   cvar_95: {
-    name: "Conditional VaR (CVaR 95%)",
-    shortDescription: "Average loss on worst days",
+    name: "CVaR (Conditional VaR 95%)",
+    shortDescription: "Average loss during a crash.",
     longDescription:
-      "CVaR (also called Expected Shortfall) tells you the average loss when VaR is exceeded. It captures tail risk—what happens in worst-case scenarios.",
+      "If the market does break the VaR limit (the worst 5% of days), this metric tells you how bad the average loss is. It is the \"average of the disasters.\"",
     interpretation: {
       good: "CVaR close to VaR means limited tail risk.",
       bad: "CVaR much worse than VaR means rare but severe losses are possible.",
@@ -190,9 +190,9 @@ export const RISK_METRICS: Record<string, MetricDefinition> = {
   },
   win_rate: {
     name: "Win Rate",
-    shortDescription: "Percentage of profitable days",
+    shortDescription: "Consistency of daily gains.",
     longDescription:
-      "Win rate shows how often your portfolio goes up vs. down. While seemingly simple, combined with average win/loss size, it reveals your portfolio's character.",
+      "The percentage of trading days where your portfolio ended with a positive return.",
     interpretation: {
       good: "Above 55% is excellent—you're positive more often than not.",
       bad: "Below 45% means frequent losses (though you can still profit if wins are bigger).",

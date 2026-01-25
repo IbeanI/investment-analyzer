@@ -93,6 +93,12 @@ export function DrawdownChart({
     return [Math.min(minValue * 1.1, -5), 0];
   }, [chartMinDrawdown, maxDrawdownValue]);
 
+  // Generate a key that changes when data changes to trigger full redraw animation
+  const chartKey = useMemo(() => {
+    if (chartData.length === 0) return "empty";
+    return `${chartData[0]?.date}-${chartData[chartData.length - 1]?.date}-${chartData.length}`;
+  }, [chartData]);
+
   if (isLoading) {
     return (
       <Card>
@@ -150,6 +156,7 @@ export function DrawdownChart({
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
+              key={chartKey}
               data={chartData}
               margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
             >

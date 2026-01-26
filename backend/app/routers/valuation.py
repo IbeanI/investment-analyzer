@@ -98,6 +98,8 @@ def _map_holding(holding) -> HoldingValuation:
         cost_basis=_map_cost_basis(holding.cost_basis),
         current_value=_map_current_value(holding.current_value),
         pnl=_map_pnl(holding.pnl),
+        day_change=holding.day_change,
+        day_change_percentage=holding.day_change_percentage,
         warnings=holding.warnings,
         has_complete_data=holding.has_complete_data,
         price_is_synthetic=holding.price_is_synthetic,

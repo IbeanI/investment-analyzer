@@ -302,6 +302,10 @@ class HoldingValuation:
     warnings: list[str] = field(default_factory=list)
     has_complete_data: bool = True
 
+    # Daily change (price change since previous trading day)
+    day_change: Decimal | None = None  # In asset currency
+    day_change_percentage: Decimal | None = None
+
     # Synthetic data tracking (for transparency)
     price_is_synthetic: bool = False
     price_source: str = "market"  # "market" | "proxy_backcast" | "unavailable"

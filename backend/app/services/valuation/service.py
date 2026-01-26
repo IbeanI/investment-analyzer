@@ -739,6 +739,24 @@ class ValuationService:
         else:
             price_source = "market"
 
+        # Calculate day change (price change since previous trading day)
+        day_change: Decimal | None = None
+        day_change_percentage: Decimal | None = None
+
+        if price is not None and price_date is not None:
+            # Look for previous trading day's price (skip current day, look back up to 5 days)
+            prev_price: Decimal | None = None
+            for days_back in range(1, 6):  # Start from 1 to skip current day
+                check_date = price_date - timedelta(days=days_back)
+                price_data = price_map.get((position.asset_id, check_date))
+                if price_data is not None:
+                    prev_price = price_data[0]
+                    break
+
+            if prev_price is not None and prev_price != Decimal("0"):
+                day_change = price - prev_price
+                day_change_percentage = (day_change / prev_price).quantize(Decimal("0.0001"))
+
         return HoldingValuation(
             asset_id=position.asset_id,
             ticker=position.asset.ticker,
@@ -750,6 +768,8 @@ class ValuationService:
             cost_basis=cost_basis,
             current_value=current_value,
             pnl=pnl,
+            day_change=day_change,
+            day_change_percentage=day_change_percentage,
             warnings=warnings,
             has_complete_data=has_complete_data,
             price_is_synthetic=is_synthetic,

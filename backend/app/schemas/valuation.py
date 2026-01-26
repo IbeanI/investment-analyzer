@@ -151,6 +151,16 @@ class HoldingValuation(BaseModel):
     current_value: CurrentValueDetail
     pnl: PnLDetail
 
+    # Daily change
+    day_change: Decimal | None = Field(
+        default=None,
+        description="Price change since previous trading day (in asset currency)"
+    )
+    day_change_percentage: Decimal | None = Field(
+        default=None,
+        description="% price change since previous trading day"
+    )
+
     # Data quality
     warnings: list[str] = Field(
         default_factory=list,

@@ -366,6 +366,8 @@ export interface HoldingValuation {
   cost_basis: CostBasisDetail;
   current_value: CurrentValueDetail;
   pnl: PnLDetail;
+  day_change: string | null;
+  day_change_percentage: string | null;
   warnings: string[];
   has_complete_data: boolean;
   price_is_synthetic: boolean;

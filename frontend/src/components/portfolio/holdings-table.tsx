@@ -70,6 +70,62 @@ export function HoldingsTable({ holdings, currency }: HoldingsTableProps) {
       ),
     },
     {
+      accessorKey: "day_change_percentage",
+      header: ({ column }) => (
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              if (column.getIsSorted() === "desc") {
+                column.clearSorting();
+              } else {
+                column.toggleSorting(column.getIsSorted() === "asc");
+              }
+            }}
+            className="h-auto p-0 hover:bg-transparent"
+          >
+            {column.getIsSorted() === "asc" ? (
+              <ArrowUp className="mr-2 h-4 w-4" />
+            ) : column.getIsSorted() === "desc" ? (
+              <ArrowDown className="mr-2 h-4 w-4" />
+            ) : (
+              <ArrowUpDown className="mr-2 h-4 w-4" />
+            )}
+            Daily P/L
+          </Button>
+        </div>
+      ),
+      cell: ({ row }) => {
+        const dayChangePercent = row.original.day_change_percentage;
+        const dayChangeAmount = row.original.day_change;
+        const numericPercent = dayChangePercent ? parseFloat(dayChangePercent) : null;
+
+        return (
+          <div
+            className={`text-right ${
+              numericPercent && numericPercent > 0
+                ? "text-green-600 dark:text-green-500"
+                : numericPercent && numericPercent < 0
+                  ? "text-red-600 dark:text-red-500"
+                  : ""
+            }`}
+          >
+            <div>{dayChangePercent ? formatPercentage(dayChangePercent) : "—"}</div>
+            {dayChangeAmount && (
+              <div className="text-xs text-muted-foreground">
+                {formatCurrency(dayChangeAmount, row.original.asset_currency)}
+              </div>
+            )}
+          </div>
+        );
+      },
+      sortingFn: (rowA, rowB) => {
+        const a = parseFloat(rowA.original.day_change_percentage || "0");
+        const b = parseFloat(rowB.original.day_change_percentage || "0");
+        return a - b;
+      },
+    },
+    {
       accessorKey: "quantity",
       header: ({ column }) => (
         <div className="flex justify-end">
@@ -364,6 +420,8 @@ export function HoldingsTable({ holdings, currency }: HoldingsTableProps) {
           const pnlPercent = holding.pnl.unrealized_percentage;
           const pnlAmount = holding.pnl.unrealized_amount;
           const numericPercent = pnlPercent ? parseFloat(pnlPercent) : null;
+          const dayChangePercent = holding.day_change_percentage;
+          const numericDayChange = dayChangePercent ? parseFloat(dayChangePercent) : null;
 
           return (
             <Card key={holding.asset_id}>
@@ -439,6 +497,20 @@ export function HoldingsTable({ holdings, currency }: HoldingsTableProps) {
                     {holding.cost_basis.avg_cost_per_share
                       ? formatNumber(holding.cost_basis.avg_cost_per_share, 2)
                       : "—"}
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Daily P/L:</span>{" "}
+                    <span
+                      className={
+                        numericDayChange && numericDayChange > 0
+                          ? "text-green-600 dark:text-green-500"
+                          : numericDayChange && numericDayChange < 0
+                            ? "text-red-600 dark:text-red-500"
+                            : ""
+                      }
+                    >
+                      {dayChangePercent ? formatPercentage(dayChangePercent) : "—"}
+                    </span>
                   </div>
                 </div>
               </CardContent>

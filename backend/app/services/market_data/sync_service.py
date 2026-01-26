@@ -1212,7 +1212,8 @@ class MarketDataSyncService:
         Returns:
             List of (start, end) date ranges to fetch
         """
-        # Get existing dates (exclude no_data_available placeholders)
+        # Get existing dates (INCLUDE no_data_available markers - we already tried those dates)
+        # This prevents re-fetching dates we know have no data from the provider
         query = (
             select(MarketData.date)
             .where(
@@ -1220,7 +1221,7 @@ class MarketDataSyncService:
                     MarketData.asset_id == asset_id,
                     MarketData.date >= start_date,
                     MarketData.date <= end_date,
-                    MarketData.no_data_available == False,  # Exclude placeholders
+                    # Include ALL records - both real prices and no_data markers
                 )
             )
         )
@@ -2076,7 +2077,9 @@ class MarketDataSyncService:
         for txn in buy_transactions:
             txn_date = txn.date.date() if hasattr(txn.date, 'date') else txn.date
             running_shares += txn.quantity
-            running_cost += txn.total_amount
+            # Calculate total cost as quantity * price_per_share (+ fee if applicable)
+            txn_total = txn.quantity * txn.price_per_share + (txn.fee or Decimal("0"))
+            running_cost += txn_total
 
             if running_shares > Decimal("0"):
                 avg_cost = running_cost / running_shares

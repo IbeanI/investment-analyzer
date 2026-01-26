@@ -78,6 +78,10 @@ class SyncStatusResponse(BaseModel):
     last_full_sync: str | None = None
     is_stale: bool = False
     staleness_reason: str | None = None
+    last_error: str | None = Field(
+        default=None,
+        description="Error message from last failed sync (if status is FAILED or PARTIAL)"
+    )
 
     model_config = {"from_attributes": True}
 
@@ -215,6 +219,7 @@ def get_sync_status(
             last_full_sync=sync_status.last_full_sync.isoformat() if sync_status.last_full_sync else None,
             is_stale=is_stale,
             staleness_reason=staleness_reason,
+            last_error=sync_status.last_error,
         )
     else:
         return SyncStatusResponse(
@@ -225,6 +230,7 @@ def get_sync_status(
             last_full_sync=None,
             is_stale=True,
             staleness_reason="Portfolio has never been synced",
+            last_error=None,
         )
 
 

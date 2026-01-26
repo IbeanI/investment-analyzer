@@ -83,10 +83,15 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
             <p>
               {isSyncing
                 ? "Syncing market data..."
-                : syncStatus?.completed_at
-                  ? `Last synced: ${formatDate(syncStatus.completed_at)}`
+                : syncStatus?.last_sync_completed
+                  ? `Last synced: ${formatDate(syncStatus.last_sync_completed)}`
                   : "Sync market data"}
             </p>
+            {syncStatus?.status === "FAILED" && syncStatus?.last_error && (
+              <p className="text-red-400 text-xs mt-1">
+                Error: {syncStatus.last_error}
+              </p>
+            )}
           </TooltipContent>
         </Tooltip>
       </TooltipProvider>
@@ -120,20 +125,27 @@ export function SyncStatus({ portfolioId, compact = false }: SyncStatusProps) {
       )}
 
       {/* Last sync info - always show when available and not syncing */}
-      {syncStatus?.completed_at && !isSyncing && (
+      {syncStatus?.last_sync_completed && !isSyncing && (
         <span className="text-sm text-muted-foreground hidden sm:inline">
-          Last sync: {formatDate(syncStatus.completed_at)}
+          Last sync: {formatDate(syncStatus.last_sync_completed)}
         </span>
       )}
 
-      {/* Sync stats - only show for non-completed states with failures */}
-      {syncStatus?.status !== "COMPLETED" &&
-        syncStatus?.assets_failed !== undefined &&
-        syncStatus.assets_failed > 0 && (
-          <span className="text-sm text-muted-foreground hidden sm:inline">
-            ({syncStatus.assets_failed} failed)
-          </span>
-        )}
+      {/* Error info - show when status is FAILED */}
+      {syncStatus?.status === "FAILED" && syncStatus?.last_error && (
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-sm text-red-500 hidden sm:inline cursor-help">
+                (Error)
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-xs">
+              <p className="text-red-400">{syncStatus.last_error}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
 
       {/* Sync button */}
       <Button

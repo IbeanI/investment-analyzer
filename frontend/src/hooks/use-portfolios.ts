@@ -234,7 +234,8 @@ export function useTriggerSync() {
       } else if (data.status === "partial") {
         toast.warning("Market data sync completed with some failures");
       } else if (data.status === "failed") {
-        toast.error("Market data sync failed");
+        const errorMessage = data.error || "Market data sync failed";
+        toast.error(errorMessage);
       }
 
       // Show warnings if any (e.g., synthetic prices created)

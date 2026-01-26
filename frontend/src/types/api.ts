@@ -624,12 +624,12 @@ export interface AnalyticsQueryParams {
 export interface SyncStatusResponse {
   portfolio_id: number;
   status: SyncStatus;
-  started_at: string | null;
-  completed_at: string | null;
+  last_sync_started: string | null;
+  last_sync_completed: string | null;
   last_full_sync: string | null;
-  assets_synced: number;
-  assets_failed: number;
-  message: string | null;
+  is_stale: boolean;
+  staleness_reason: string | null;
+  last_error: string | null;
 }
 
 export interface FullResyncResponse {
